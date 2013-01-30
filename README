@@ -1,8 +1,29 @@
-iPXE README File
+iPXE README File (as adapted to illumos systems)
 
 Quick start guide:
 
    cd src
-   make
+   gmake AS=/path/to/gnu/as LD=/path/to/gnu/ld AWK=nawk GREP=/usr/xpg4/bin/grep
+
+ipxe, unlike virtually all other software, actually assumes and requires
+GNU ld to build.  This is because of the presence of GNU linker scripts.
+These could be converted to ld, but there's little need; since this does
+not generate anything that actually runs under illumos, the GNU linker's
+deficiencies aren't especially important.
+
+If your system is not SmartOS, or is older than 20121213, your 'awk' is
+most likely 'oawk', which will hang on a construct used by the
+makefiles.  Use nawk or gawk instead.
+
+The build system uses grep -E, supported by the XPG4 grep but not the
+Sun one.  You can also use GNU grep if necessary.
+
+You will need gcc and GNU binutils installed from pkgsrc or some similar
+repository of packages, or to have built your own.  Version requirements
+are very broad and almost anything should suffice.
+
+You may need to obtain and install syslinux, which does build on illumos
+systems.  This utility is used by util/genliso and util/gensdsk.  You
+will need to determine whether your use case requires these utilities.
 
 For any more detailed instructions, see http://ipxe.org

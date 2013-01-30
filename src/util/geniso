@@ -23,7 +23,7 @@ then
 fi
 
 # There should either be mkisofs or the compatible genisoimage program
-mkisofs=`which mkisofs genisoimage 2>/dev/null | head -n1`
+mkisofs=$(type -p mkisofs || type -p genisoimage)
 if [ -z $mkisofs ]
 then
 	echo $0: mkisofs or genisoimage not found, please install or set PATH
@@ -31,7 +31,7 @@ then
 fi
 
 # isohybrid will be used if available
-isohybrid=`which isohybrid 2>/dev/null`
+isohybrid=$(type -p isohybrid)
 
 out=$1
 shift

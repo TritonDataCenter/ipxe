@@ -56,6 +56,8 @@ ifeq ($(HOST_OS),FreeBSD)
 LDFLAGS		+= -m elf_i386_fbsd
 else ifeq ($(HOST_OS),OpenBSD)
 LDFLAGS		+= -m elf_i386_obsd
+else ifeq ($(HOST_OS),SunOS)
+LDFLAGS		+= -m elf_i386_sol2
 else
 LDFLAGS		+= -m elf_i386
 endif
