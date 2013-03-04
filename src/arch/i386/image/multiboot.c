@@ -424,6 +424,13 @@ static int multiboot_exec ( struct image *image ) {
 	snprintf ( mb_bootloader_name, sizeof ( mb_bootloader_name ),
 		   "iPXE %s", product_version );
 	mbinfo.boot_loader_name = virt_to_phys ( mb_bootloader_name );
+
+	/*
+	 * Analogous workaround for firmware bug RICHMOND-16.
+	 */
+	if (max < 0xc800000)
+		max = 0xc800000;
+
 	if ( ( rc = multiboot_add_modules ( image, max, &mbinfo, mbmodules,
 					    ( sizeof ( mbmodules ) /
 					      sizeof ( mbmodules[0] ) ) ) ) !=0)
