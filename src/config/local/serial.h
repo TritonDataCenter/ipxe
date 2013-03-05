@@ -1,0 +1,2 @@
+#undef	COMCONSOLE
+#define	COMCONSOLE	COM2

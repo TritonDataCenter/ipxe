@@ -1,1 +1,9 @@
-*
+colour.h
+entropy.h
+ioapi.h
+nap.h
+sanboot.h
+sideband.h
+time.h
+timer.h
+umalloc.h
