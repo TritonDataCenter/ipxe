@@ -148,6 +148,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define ERRFILE_skeleton	     ( ERRFILE_DRIVER | 0x00640000 )
 #define ERRFILE_intel		     ( ERRFILE_DRIVER | 0x00650000 )
 #define ERRFILE_myson		     ( ERRFILE_DRIVER | 0x00660000 )
+#define ERRFILE_intelx		     ( ERRFILE_DRIVER | 0x00670000 )
 
 #define ERRFILE_scsi		     ( ERRFILE_DRIVER | 0x00700000 )
 #define ERRFILE_arbel		     ( ERRFILE_DRIVER | 0x00710000 )
@@ -265,6 +266,15 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define ERRFILE_nslookup	      ( ERRFILE_OTHER | 0x00300000 )
 #define ERRFILE_efi_snp_hii	      ( ERRFILE_OTHER | 0x00310000 )
 #define ERRFILE_readline	      ( ERRFILE_OTHER | 0x00320000 )
+#define ERRFILE_efi_bofm	      ( ERRFILE_OTHER | 0x00330000 )
+#define ERRFILE_efi_console	      ( ERRFILE_OTHER | 0x00340000 )
+#define ERRFILE_efi_debug	      ( ERRFILE_OTHER | 0x00350000 )
+#define ERRFILE_efi_download	      ( ERRFILE_OTHER | 0x00360000 )
+#define ERRFILE_efi_driver	      ( ERRFILE_OTHER | 0x00370000 )
+#define ERRFILE_efi_file	      ( ERRFILE_OTHER | 0x00380000 )
+#define ERRFILE_efi_init	      ( ERRFILE_OTHER | 0x00390000 )
+#define ERRFILE_efi_timer	      ( ERRFILE_OTHER | 0x003a0000 )
+#define ERRFILE_efi_umalloc	      ( ERRFILE_OTHER | 0x003b0000 )
 
 /** @} */
 
