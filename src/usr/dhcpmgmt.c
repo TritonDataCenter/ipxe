@@ -25,11 +25,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/netdevice.h>
 #include <ipxe/dhcp.h>
 #include <ipxe/monojob.h>
-#include <ipxe/process.h>
 #include <usr/ifmgmt.h>
 #include <usr/dhcpmgmt.h>
-
-#define LINK_WAIT_MS	15000
 
 /** @file
  *
@@ -37,37 +34,13 @@ FILE_LICENCE ( GPL2_OR_LATER );
  *
  */
 
-int dhcp ( struct net_device *netdev ) {
-	int rc;
-
-	/* Check we can open the interface first */
-	if ( ( rc = ifopen ( netdev ) ) != 0 )
-		return rc;
-
-	/* Wait for link-up */
-	if ( ( rc = iflinkwait ( netdev, LINK_WAIT_MS ) ) != 0 )
-		return rc;
-
-	/* Perform DHCP */
-	printf ( "DHCP (%s %s)", netdev->name,
-		 netdev->ll_protocol->ntoa ( netdev->ll_addr ) );
-	if ( ( rc = start_dhcp ( &monojob, netdev ) ) == 0 ) {
-		rc = monojob_wait ( "" );
-	} else if ( rc > 0 ) {
-		printf ( " using cached\n" );
-		rc = 0;
-	}
-
-	return rc;
-}
-
 int pxebs ( struct net_device *netdev, unsigned int pxe_type ) {
 	int rc;
 
 	/* Perform PXE Boot Server Discovery */
 	printf ( "PXEBS (%s type %d)", netdev->name, pxe_type );
 	if ( ( rc = start_pxebs ( &monojob, netdev, pxe_type ) ) == 0 )
-		rc = monojob_wait ( "" );
+		rc = monojob_wait ( "", 0 );
 
 	return rc;
 }

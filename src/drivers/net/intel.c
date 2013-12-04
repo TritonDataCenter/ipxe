@@ -262,10 +262,15 @@ static int intel_fetch_mac ( struct intel_nic *intel, uint8_t *hw_addr ) {
  */
 static void __attribute__ (( unused )) intel_diag ( struct intel_nic *intel ) {
 
-	DBGC ( intel, "INTEL %p TDH=%04x TDT=%04x RDH=%04x RDT=%04x\n", intel,
+	DBGC ( intel, "INTEL %p TX %04x(%02x)/%04x(%02x) "
+	       "RX %04x(%02x)/%04x(%02x)\n", intel,
+	       ( intel->tx.cons & 0xffff ),
 	       readl ( intel->regs + intel->tx.reg + INTEL_xDH ),
+	       ( intel->tx.prod & 0xffff ),
 	       readl ( intel->regs + intel->tx.reg + INTEL_xDT ),
+	       ( intel->rx.cons & 0xffff ),
 	       readl ( intel->regs + intel->rx.reg + INTEL_xDH ),
+	       ( intel->rx.prod & 0xffff ),
 	       readl ( intel->regs + intel->rx.reg + INTEL_xDT ) );
 }
 
@@ -968,6 +973,7 @@ static struct pci_device_id intel_nics[] = {
 	PCI_ROM ( 0x8086, 0x1526, "82576-5", "82576", 0 ),
 	PCI_ROM ( 0x8086, 0x1527, "82580-f2", "82580 Fiber", 0 ),
 	PCI_ROM ( 0x8086, 0x1533, "i210", "I210", 0 ),
+	PCI_ROM ( 0x8086, 0x153b, "i217", "I217", 0 ),
 	PCI_ROM ( 0x8086, 0x294c, "82566dc-2", "82566DC-2", 0 ),
 	PCI_ROM ( 0x8086, 0x2e6e, "cemedia", "CE Media Processor", 0 ),
 };

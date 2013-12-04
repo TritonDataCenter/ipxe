@@ -11,9 +11,12 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stddef.h>
+#include <ipxe/settings.h>
 
 struct net_device;
+struct net_device_configurator;
 struct menu;
+struct parameters;
 
 /** A command-line option descriptor */
 struct option_descriptor {
@@ -31,7 +34,7 @@ struct option_descriptor {
 	 * @v value		Option value to fill in
 	 * @ret rc		Return status code
 	 */
-	int ( * parse ) ( const char *text, void *value );
+	int ( * parse ) ( char *text, void *value );
 };
 
 /**
@@ -43,9 +46,9 @@ struct option_descriptor {
  * @ret _parse		Generic option parser
  */
 #define OPTION_PARSER( _struct, _field, _parse )			      \
-	( ( int ( * ) ( const char *text, void *value ) )		      \
+	( ( int ( * ) ( char *text, void *value ) )			      \
 	  ( ( ( ( typeof ( _parse ) * ) NULL ) ==			      \
-	      ( ( int ( * ) ( const char *text,				      \
+	      ( ( int ( * ) ( char *text,				      \
 			      typeof ( ( ( _struct * ) NULL )->_field ) * ) ) \
 		NULL ) ) ? _parse : _parse ) )
 
@@ -114,12 +117,31 @@ struct command_descriptor {
 		.usage = _usage,					      \
 	 }
 
-extern int parse_string ( const char *text, const char **value );
-extern int parse_integer ( const char *text, unsigned int *value );
-extern int parse_netdev ( const char *text, struct net_device **netdev );
-extern int parse_menu ( const char *text, struct menu **menu );
-extern int parse_flag ( const char *text __unused, int *flag );
-extern int parse_key ( const char *text, unsigned int *key );
+/** A parsed named setting */
+struct named_setting {
+	/** Settings block */
+	struct settings *settings;
+	/** Setting */
+	struct setting setting;
+};
+
+extern int parse_string ( char *text, char **value );
+extern int parse_integer ( char *text, unsigned int *value );
+extern int parse_timeout ( char *text, unsigned long *value );
+extern int parse_netdev ( char *text, struct net_device **netdev );
+extern int
+parse_netdev_configurator ( char *text,
+			    struct net_device_configurator **configurator );
+extern int parse_menu ( char *text, struct menu **menu );
+extern int parse_flag ( char *text __unused, int *flag );
+extern int parse_key ( char *text, unsigned int *key );
+extern int parse_settings ( char *text, struct settings **settings );
+extern int parse_setting ( char *text, struct named_setting *setting,
+			   get_child_settings_t get_child );
+extern int parse_existing_setting ( char *text, struct named_setting *setting );
+extern int parse_autovivified_setting ( char *text,
+					struct named_setting *setting );
+extern int parse_parameters ( char *text, struct parameters **params );
 extern void print_usage ( struct command_descriptor *cmd, char **argv );
 extern int reparse_options ( int argc, char **argv,
 			     struct command_descriptor *cmd, void *opts );

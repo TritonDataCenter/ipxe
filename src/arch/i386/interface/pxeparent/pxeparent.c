@@ -31,6 +31,12 @@ FILE_LICENCE ( GPL2_OR_LATER );
  *
  */
 
+/* Disambiguate the various error causes */
+#define EINFO_EPXECALL							\
+	__einfo_uniqify ( EINFO_EPLATFORM, 0x01,			\
+			  "External PXE API error" )
+#define EPXECALL( status ) EPLATFORM ( EINFO_EPXECALL, status )
+
 /**
  * Name PXE API call
  *
@@ -137,30 +143,24 @@ int pxeparent_call ( SEGOFF16_t entry, unsigned int function,
 	/* Call real-mode entry point.  This calling convention will
 	 * work with both the !PXE and the PXENV+ entry points.
 	 */
-	__asm__ __volatile__ ( REAL_CODE ( "pushw %%es\n\t"
+	__asm__ __volatile__ ( REAL_CODE ( "pushl %%ebp\n\t" /* gcc bug */
+					   "pushw %%es\n\t"
 					   "pushw %%di\n\t"
 					   "pushw %%bx\n\t"
 					   "lcall *pxeparent_entry_point\n\t"
-					   "addw $6, %%sp\n\t" )
+					   "addw $6, %%sp\n\t"
+					   "popl %%ebp\n\t" /* gcc bug */ )
 			       : "=a" ( exit ), "=b" ( discard_b ),
 			         "=D" ( discard_D )
 			       : "b" ( function ),
 			         "D" ( __from_data16 ( &pxeparent_params ) )
-			       : "ecx", "edx", "esi", "ebp" );
+			       : "ecx", "edx", "esi" );
 
 	/* Determine return status code based on PXENV_EXIT and
 	 * PXENV_STATUS
 	 */
-	if ( exit == PXENV_EXIT_SUCCESS ) {
-		rc = 0;
-	} else {
-		rc = -pxeparent_params.Status;
-		/* Paranoia; don't return success for the combination
-		 * of PXENV_EXIT_FAILURE but PXENV_STATUS_SUCCESS
-		 */
-		if ( rc == 0 )
-			rc = -EIO;
-	}
+	rc = ( ( exit == PXENV_EXIT_SUCCESS ) ?
+	       0 : -EPXECALL ( pxeparent_params.Status ) );
 
 	/* If anything goes wrong, print as much debug information as
 	 * it's possible to give.

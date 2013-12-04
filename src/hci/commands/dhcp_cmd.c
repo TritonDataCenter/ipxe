@@ -41,44 +41,6 @@ FILE_LICENCE ( GPL2_OR_LATER );
  *
  */
 
-/** "dhcp" command descriptor */
-static struct command_descriptor dhcp_cmd =
-	COMMAND_DESC ( struct ifcommon_options, ifcommon_opts, 0, MAX_ARGUMENTS,
-		       "[<interface>...]" );
-
-/**
- * Execute "dhcp" command for a network device
- *
- * @v netdev		Network device
- * @ret rc		Return status code
- */
-static int dhcp_payload ( struct net_device *netdev ) {
-	int rc;
-
-	if ( ( rc = dhcp ( netdev ) ) != 0 ) {
-		printf ( "Could not configure %s: %s\n",
-			 netdev->name, strerror ( rc ) );
-
-		/* Close device on failure, to avoid memory exhaustion */
-		netdev_close ( netdev );
-
-		return rc;
-	}
-
-	return 0;
-}
-
-/**
- * The "dhcp" command
- *
- * @v argc		Argument count
- * @v argv		Argument list
- * @ret rc		Return status code
- */
-static int dhcp_exec ( int argc, char **argv ) {
-	return ifcommon_exec ( argc, argv, &dhcp_cmd, dhcp_payload, 1 );
-}
-
 /** "pxebs" options */
 struct pxebs_options {};
 
@@ -129,7 +91,7 @@ static int pxebs_exec ( int argc, char **argv ) {
 struct command dhcp_commands[] __command = {
 	{
 		.name = "dhcp",
-		.exec = dhcp_exec,
+		.exec = ifconf_exec, /* synonym for "ifconf" */
 	},
 	{
 		.name = "pxebs",

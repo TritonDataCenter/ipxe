@@ -40,6 +40,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
  */
 
 #define	NET_PROTO_IPV4		/* IPv4 protocol */
+#undef	NET_PROTO_IPV6		/* IPv6 protocol */
 #undef	NET_PROTO_FCOE		/* Fibre Channel over Ethernet protocol */
 
 /*
@@ -59,6 +60,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #undef	DOWNLOAD_PROTO_HTTPS	/* Secure Hypertext Transfer Protocol */
 #undef	DOWNLOAD_PROTO_FTP	/* File Transfer Protocol */
 #undef	DOWNLOAD_PROTO_SLAM	/* Scalable Local Area Multicast */
+#undef	DOWNLOAD_PROTO_NFS	/* Network File System Protocol */
 
 /*
  * SAN boot protocols
@@ -101,6 +103,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 //#define	IMAGE_COMBOOT		/* SYSLINUX COMBOOT image support */
 //#define	IMAGE_EFI		/* EFI image support */
 //#define	IMAGE_SDI		/* SDI image support */
+//#define	IMAGE_PNM		/* PNM image support */
 
 /*
  * Command-line commands to include
@@ -126,7 +129,13 @@ FILE_LICENCE ( GPL2_OR_LATER );
 //#define VLAN_CMD		/* VLAN commands */
 //#define PXE_CMD		/* PXE commands */
 //#define REBOOT_CMD		/* Reboot command */
+//#define POWEROFF_CMD		/* Power off command */
 //#define IMAGE_TRUST_CMD	/* Image trust management commands */
+//#define PCI_CMD		/* PCI commands */
+//#define PARAM_CMD		/* Form parameter commands */
+//#define NEIGHBOUR_CMD		/* Neighbour management commands */
+//#define PING_CMD		/* Ping command */
+//#define CONSOLE_CMD		/* Console command */
 
 /*
  * ROM-specific options

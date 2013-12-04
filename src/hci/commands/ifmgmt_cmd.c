@@ -34,9 +34,6 @@ FILE_LICENCE ( GPL2_OR_LATER );
  *
  */
 
-/** "if<xxx>" command options */
-struct option_descriptor ifcommon_opts[0];
-
 /**
  * Execute if<xxx> command
  *
@@ -48,26 +45,24 @@ struct option_descriptor ifcommon_opts[0];
  * @ret rc		Return status code
  */
 int ifcommon_exec ( int argc, char **argv,
-		    struct command_descriptor *cmd,
-		    int ( * payload ) ( struct net_device * ),
-		    int stop_on_first_success ) {
-	struct ifcommon_options opts;
+		    struct ifcommon_command_descriptor *ifcmd ) {
+	struct command_descriptor *cmd = &ifcmd->cmd;
+	uint8_t opts[cmd->len];
 	struct net_device *netdev;
+	int i;
 	int rc;
 
 	/* Parse options */
-	if ( ( rc = parse_options ( argc, argv, cmd, &opts ) ) != 0 )
+	if ( ( rc = parse_options ( argc, argv, cmd, opts ) ) != 0 )
 		return rc;
 
 	if ( optind != argc ) {
 		/* Treat arguments as a list of interfaces to try */
-		while ( optind != argc ) {
-			if ( ( rc = parse_netdev ( argv[optind++],
-						   &netdev ) ) != 0 ) {
+		for ( i = optind ; i < argc ; i++ ) {
+			if ( ( rc = parse_netdev ( argv[i], &netdev ) ) != 0 )
 				continue;
-			}
-			if ( ( ( rc = payload ( netdev ) ) == 0 ) &&
-			     stop_on_first_success ) {
+			if ( ( ( rc = ifcmd->payload ( netdev, opts ) ) == 0 )
+			     && ifcmd->stop_on_first_success ) {
 				return 0;
 			}
 		}
@@ -75,8 +70,8 @@ int ifcommon_exec ( int argc, char **argv,
 		/* Try all interfaces */
 		rc = -ENODEV;
 		for_each_netdev ( netdev ) {
-			if ( ( ( rc = payload ( netdev ) ) == 0 ) &&
-			     stop_on_first_success ) {
+			if ( ( ( rc = ifcmd->payload ( netdev, opts ) ) == 0 )
+			     && ifcmd->stop_on_first_success ) {
 				return 0;
 			}
 		}
@@ -85,20 +80,29 @@ int ifcommon_exec ( int argc, char **argv,
 	return rc;
 }
 
-/** "ifopen" command descriptor */
-static struct command_descriptor ifopen_cmd =
-	COMMAND_DESC ( struct ifcommon_options, ifcommon_opts, 0, MAX_ARGUMENTS,
-		       "[<interface>...]" );
+/** "ifopen" options */
+struct ifopen_options {};
+
+/** "ifopen" option list */
+static struct option_descriptor ifopen_opts[] = {};
 
 /**
  * "ifopen" payload
  *
  * @v netdev		Network device
+ * @v opts		Command options
  * @ret rc		Return status code
  */
-static int ifopen_payload ( struct net_device *netdev ) {
+static int ifopen_payload ( struct net_device *netdev,
+			    struct ifopen_options *opts __unused ) {
 	return ifopen ( netdev );
 }
+
+/** "ifopen" command descriptor */
+static struct ifcommon_command_descriptor ifopen_cmd =
+	IFCOMMON_COMMAND_DESC ( struct ifopen_options, ifopen_opts,
+				0, MAX_ARGUMENTS, "[<interface>...]",
+				ifopen_payload, 0 );
 
 /**
  * The "ifopen" command
@@ -108,24 +112,33 @@ static int ifopen_payload ( struct net_device *netdev ) {
  * @ret rc		Return status code
  */
 static int ifopen_exec ( int argc, char **argv ) {
-	return ifcommon_exec ( argc, argv, &ifopen_cmd, ifopen_payload, 0 );
+	return ifcommon_exec ( argc, argv, &ifopen_cmd );
 }
 
-/** "ifclose" command descriptor */
-static struct command_descriptor ifclose_cmd =
-	COMMAND_DESC ( struct ifcommon_options, ifcommon_opts, 0, MAX_ARGUMENTS,
-		       "[<interface>...]" );
+/** "ifclose" options */
+struct ifclose_options {};
+
+/** "ifclose" option list */
+static struct option_descriptor ifclose_opts[] = {};
 
 /**
  * "ifclose" payload
  *
  * @v netdev		Network device
+ * @v opts		Command options
  * @ret rc		Return status code
  */
-static int ifclose_payload ( struct net_device *netdev ) {
+static int ifclose_payload ( struct net_device *netdev,
+			     struct ifclose_options *opts __unused ) {
 	ifclose ( netdev );
 	return 0;
 }
+
+/** "ifclose" command descriptor */
+static struct ifcommon_command_descriptor ifclose_cmd =
+	IFCOMMON_COMMAND_DESC ( struct ifclose_options, ifclose_opts,
+				0, MAX_ARGUMENTS, "[<interface>...]",
+				ifclose_payload, 0 );
 
 /**
  * The "ifclose" command
@@ -135,24 +148,33 @@ static int ifclose_payload ( struct net_device *netdev ) {
  * @ret rc		Return status code
  */
 static int ifclose_exec ( int argc, char **argv ) {
-	return ifcommon_exec ( argc, argv, &ifclose_cmd, ifclose_payload, 0 );
+	return ifcommon_exec ( argc, argv, &ifclose_cmd );
 }
 
-/** "ifstat" command descriptor */
-static struct command_descriptor ifstat_cmd =
-	COMMAND_DESC ( struct ifcommon_options, ifcommon_opts, 0, MAX_ARGUMENTS,
-		       "[<interface>...]" );
+/** "ifstat" options */
+struct ifstat_options {};
+
+/** "ifstat" option list */
+static struct option_descriptor ifstat_opts[] = {};
 
 /**
  * "ifstat" payload
  *
  * @v netdev		Network device
+ * @v opts		Command options
  * @ret rc		Return status code
  */
-static int ifstat_payload ( struct net_device *netdev ) {
+static int ifstat_payload ( struct net_device *netdev,
+			    struct ifstat_options *opts __unused ) {
 	ifstat ( netdev );
 	return 0;
 }
+
+/** "ifstat" command descriptor */
+static struct ifcommon_command_descriptor ifstat_cmd =
+	IFCOMMON_COMMAND_DESC ( struct ifstat_options, ifstat_opts,
+				0, MAX_ARGUMENTS, "[<interface>...]",
+				ifstat_payload, 0 );
 
 /**
  * The "ifstat" command
@@ -162,7 +184,60 @@ static int ifstat_payload ( struct net_device *netdev ) {
  * @ret rc		Return status code
  */
 static int ifstat_exec ( int argc, char **argv ) {
-	return ifcommon_exec ( argc, argv, &ifstat_cmd, ifstat_payload, 0 );
+	return ifcommon_exec ( argc, argv, &ifstat_cmd );
+}
+
+/** "ifconf" options */
+struct ifconf_options {
+	/** Configurator */
+	struct net_device_configurator *configurator;
+};
+
+/** "ifconf" option list */
+static struct option_descriptor ifconf_opts[] = {
+	OPTION_DESC ( "configurator", 'c', required_argument,
+		      struct ifconf_options, configurator,
+		      parse_netdev_configurator ),
+};
+
+/**
+ * "ifconf" payload
+ *
+ * @v netdev		Network device
+ * @v opts		Command options
+ * @ret rc		Return status code
+ */
+static int ifconf_payload ( struct net_device *netdev,
+			    struct ifconf_options *opts ) {
+	int rc;
+
+	/* Attempt configuration */
+	if ( ( rc = ifconf ( netdev, opts->configurator ) ) != 0 ) {
+
+		/* Close device on failure, to avoid memory exhaustion */
+		netdev_close ( netdev );
+
+		return rc;
+	}
+
+	return 0;
+}
+
+/** "ifconf" command descriptor */
+static struct ifcommon_command_descriptor ifconf_cmd =
+	IFCOMMON_COMMAND_DESC ( struct ifconf_options, ifconf_opts,
+				0, MAX_ARGUMENTS, "[<interface>...]",
+				ifconf_payload, 1 );
+
+/**
+ * The "ifconf" command
+ *
+ * @v argc		Argument count
+ * @v argv		Argument list
+ * @ret rc		Return status code
+ */
+int ifconf_exec ( int argc, char **argv ) {
+	return ifcommon_exec ( argc, argv, &ifconf_cmd );
 }
 
 /** Interface management commands */
@@ -178,5 +253,9 @@ struct command ifmgmt_commands[] __command = {
 	{
 		.name = "ifstat",
 		.exec = ifstat_exec,
+	},
+	{
+		.name = "ifconf",
+		.exec = ifconf_exec,
 	},
 };

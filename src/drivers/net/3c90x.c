@@ -346,11 +346,12 @@ static int a3c90x_transmit(struct net_device *netdev,
 	tx_cur_desc->DnNextPtr = 0;
 
 	/* FrameStartHeader differs in 90x and >= 90xB
-	 * It contains length in 90x and a round up boundary and packet ID for
-	 * 90xB and 90xC. We can leave this to 0 for 90xB and 90xC.
+	 * It contains the packet length in 90x and a round up boundary and
+	 * packet ID for 90xB and 90xC. Disable packet length round-up on the
+	 * later revisions.
 	 */
 	tx_cur_desc->FrameStartHeader =
-	    fshTxIndicate | (inf_3c90x->isBrev ? 0x00 : len);
+	    fshTxIndicate | (inf_3c90x->isBrev ? fshRndupDefeat : len);
 
 	tx_cur_desc->DataAddr = virt_to_bus(iob->data);
 	tx_cur_desc->DataLength = len | downLastFrag;
@@ -813,9 +814,17 @@ static int a3c90x_open(struct net_device *netdev)
 		goto error;
 	}
 
+	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdStallCtl, upStall);
+
 	/* send rx_ring address to NIC */
 	outl(virt_to_bus(inf_3c90x->rx_ring),
 	     inf_3c90x->IOAddr + regUpListPtr_l);
+
+	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdStallCtl, upUnStall);
+
+	/* set maximum allowed receive packet length */
+	a3c90x_internal_SetWindow(inf_3c90x, winTxRxOptions3);
+	outl(RX_BUF_SIZE, inf_3c90x->IOAddr + regMaxPktSize_3_w);
 
 	/* enable packet transmission and reception */
 	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdTxEnable, 0);

@@ -38,6 +38,13 @@ typedef struct _curses_screen {
 	void ( *init ) ( struct _curses_screen *scr );
 	void ( *exit ) ( struct _curses_screen *scr );
 	/**
+	 * Erase screen
+	 *
+	 * @v scr	screen on which to operate
+	 * @v attrs	attributes
+	 */
+	void ( * erase ) ( struct _curses_screen *scr, attr_t attrs );
+	/**
 	 * Move cursor to position specified by x,y coords
 	 *
 	 * @v scr	screen on which to operate
@@ -68,6 +75,13 @@ typedef struct _curses_screen {
 	 * @ret FALSE	no character waiting in stream
 	 */
 	bool ( *peek ) ( struct _curses_screen *scr );
+	/**
+	 * Set cursor visibility
+	 *
+	 * @v scr	screen on which to operate
+	 * @v visibility cursor visibility
+	 */
+	void ( * cursor ) ( struct _curses_screen *scr, int visibility );
 } SCREEN;
 
 /** Curses Window struct */
@@ -242,7 +256,7 @@ extern int echo ( void );
 extern int echochar ( const chtype );
 extern int endwin ( void );
 extern char erasechar ( void );
-//extern int erase ( void );
+extern int erase ( void );
 extern void filter ( void );
 extern int flash ( void );
 extern int flushinp ( void );
@@ -550,10 +564,6 @@ static inline int delch ( void ) {
 
 static inline int deleteln ( void ) {
 	return wdeleteln( stdscr );
-}
-
-static inline int erase ( void ) {
-	return werase ( stdscr );
 }
 
 static inline int getch ( void ) {

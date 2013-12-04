@@ -55,12 +55,12 @@ struct interface monojob = INTF_INIT ( monojob_intf_desc );
  * Wait for single foreground job to complete
  *
  * @v string		Job description to display, or NULL to be silent
+ * @v timeout		Timeout period, in ticks (0=indefinite)
  * @ret rc		Job final status code
  */
-int monojob_wait ( const char *string ) {
+int monojob_wait ( const char *string, unsigned long timeout ) {
 	struct job_progress progress;
-	int key;
-	int rc;
+	unsigned long start;
 	unsigned long last_keycheck;
 	unsigned long last_progress;
 	unsigned long now;
@@ -69,11 +69,14 @@ int monojob_wait ( const char *string ) {
 	unsigned long total;
 	unsigned int percentage;
 	int shown_percentage = 0;
+	int ongoing_rc;
+	int key;
+	int rc;
 
 	if ( string )
 		printf ( "%s...", string );
 	monojob_rc = -EINPROGRESS;
-	last_keycheck = last_progress = currticks();
+	last_keycheck = last_progress = start = currticks();
 	while ( monojob_rc == -EINPROGRESS ) {
 
 		/* Allow job to progress */
@@ -83,18 +86,26 @@ int monojob_wait ( const char *string ) {
 		/* Check for keypresses.  This can be time-consuming,
 		 * so check only once per clock tick.
 		 */
-		if ( now != last_keycheck ) {
+		elapsed = ( now - last_keycheck );
+		if ( elapsed ) {
 			if ( iskey() ) {
 				key = getchar();
-				switch ( key ) {
-				case CTRL_C:
-					monojob_close ( &monojob, -ECANCELED );
-					break;
-				default:
+				if ( key == CTRL_C ) {
+					monojob_rc = -ECANCELED;
 					break;
 				}
 			}
 			last_keycheck = now;
+		}
+
+		/* Monitor progress */
+		ongoing_rc = job_progress ( &monojob, &progress );
+
+		/* Check for timeout, if applicable */
+		elapsed = ( now - start );
+		if ( timeout && ( elapsed >= timeout ) ) {
+			monojob_rc = ( ongoing_rc ? ongoing_rc : -ETIMEDOUT );
+			break;
 		}
 
 		/* Display progress, if applicable */
@@ -102,7 +113,6 @@ int monojob_wait ( const char *string ) {
 		if ( string && ( elapsed >= TICKS_PER_SEC ) ) {
 			if ( shown_percentage )
 				printf ( "\b\b\b\b    \b\b\b\b" );
-			job_progress ( &monojob, &progress );
 			/* Normalise progress figures to avoid overflow */
 			completed = ( progress.completed / 128 );
 			total = ( progress.total / 128 );
@@ -118,6 +128,7 @@ int monojob_wait ( const char *string ) {
 		}
 	}
 	rc = monojob_rc;
+	monojob_close ( &monojob, rc );
 
 	if ( shown_percentage )
 		printf ( "\b\b\b\b    \b\b\b\b" );

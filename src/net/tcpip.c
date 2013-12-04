@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <byteswap.h>
@@ -19,6 +20,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 /** Process a received TCP/IP packet
  *
  * @v iobuf		I/O buffer
+ * @v netdev		Network device
  * @v tcpip_proto	Transport-layer protocol number
  * @v st_src		Partially-filled source address
  * @v st_dest		Partially-filled destination address
@@ -31,8 +33,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * address family and the network-layer addresses, but leave the ports
  * and the rest of the structures as zero).
  */
-int tcpip_rx ( struct io_buffer *iobuf, uint8_t tcpip_proto, 
-	       struct sockaddr_tcpip *st_src,
+int tcpip_rx ( struct io_buffer *iobuf, struct net_device *netdev,
+	       uint8_t tcpip_proto, struct sockaddr_tcpip *st_src,
 	       struct sockaddr_tcpip *st_dest,
 	       uint16_t pshdr_csum ) {
 	struct tcpip_protocol *tcpip;
@@ -41,7 +43,8 @@ int tcpip_rx ( struct io_buffer *iobuf, uint8_t tcpip_proto,
 	for_each_table_entry ( tcpip, TCPIP_PROTOCOLS ) {
 		if ( tcpip->tcpip_proto == tcpip_proto ) {
 			DBG ( "TCP/IP received %s packet\n", tcpip->name );
-			return tcpip->rx ( iobuf, st_src, st_dest, pshdr_csum );
+			return tcpip->rx ( iobuf, netdev, st_src, st_dest,
+					   pshdr_csum );
 		}
 	}
 
@@ -132,4 +135,47 @@ uint16_t generic_tcpip_continue_chksum ( uint16_t partial,
  */
 uint16_t tcpip_chksum ( const void *data, size_t len ) {
 	return tcpip_continue_chksum ( TCPIP_EMPTY_CSUM, data, len );
+}
+
+/**
+ * Bind to local TCP/IP port
+ *
+ * @v st_local		Local TCP/IP socket address, or NULL
+ * @v available		Function to check port availability
+ * @ret port		Local port number, or negative error
+ */
+int tcpip_bind ( struct sockaddr_tcpip *st_local,
+		 int ( * available ) ( int port ) ) {
+	uint16_t flags = 0;
+	uint16_t try_port = 0;
+	uint16_t min_port;
+	uint16_t max_port;
+	unsigned int offset;
+	unsigned int i;
+
+	/* Extract parameters from local socket address */
+	if ( st_local ) {
+		flags = st_local->st_flags;
+		try_port = ntohs ( st_local->st_port );
+	}
+
+	/* If an explicit port is specified, check its availability */
+	if ( try_port )
+		return available ( try_port );
+
+	/* Otherwise, find an available port in the range [1,1023] or
+	 * [1025,65535] as appropriate.
+	 */
+	min_port = ( ( ( ! flags ) & TCPIP_BIND_PRIVILEGED ) + 1 );
+	max_port = ( ( flags & TCPIP_BIND_PRIVILEGED ) - 1 );
+	offset = random();
+	for ( i = 0 ; i <= max_port ; i++ ) {
+		try_port = ( ( i + offset ) & max_port );
+		if ( try_port < min_port )
+			continue;
+		if ( available ( try_port ) < 0 )
+			continue;
+		return try_port;
+	}
+	return -EADDRINUSE;
 }

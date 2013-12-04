@@ -208,7 +208,6 @@ struct setting net80211_ssid_setting __setting ( SETTING_NETDEV_EXTRA ) = {
 	.name = "ssid",
 	.description = "Wireless SSID",
 	.type = &setting_type_string,
-	.tag = NET80211_SETTING_TAG_SSID,
 };
 
 /** Whether to use active scanning
@@ -221,7 +220,6 @@ struct setting net80211_active_setting __setting ( SETTING_NETDEV_EXTRA ) = {
 	.name = "active-scan",
 	.description = "Actively scan for wireless networks",
 	.type = &setting_type_int8,
-	.tag = NET80211_SETTING_TAG_ACTIVE_SCAN,
 };
 
 /** The cryptographic key to use
@@ -234,7 +232,6 @@ struct setting net80211_key_setting __setting ( SETTING_NETDEV_EXTRA ) = {
 	.name = "key",
 	.description = "Wireless encryption key",
 	.type = &setting_type_string,
-	.tag = NET80211_SETTING_TAG_KEY,
 };
 
 /** @} */
@@ -602,6 +599,7 @@ static struct ll_protocol net80211_ll_protocol __ll_protocol = {
 	.ntoa = eth_ntoa,
 	.mc_hash = eth_mc_hash,
 	.eth_addr = eth_eth_addr,
+	.eui64 = eth_eui64,
 	.ll_proto = htons ( ARPHRD_ETHER ),	/* "encapsulated Ethernet" */
 	.hw_addr_len = ETH_ALEN,
 	.ll_addr_len = ETH_ALEN,

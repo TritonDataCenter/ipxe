@@ -43,7 +43,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * @ret port		Fibre Channel port
  * @ret rc		Return status code
  */
-static int parse_fc_port ( const char *text, struct fc_port **port ) {
+static int parse_fc_port ( char *text, struct fc_port **port ) {
 
 	/* Sanity check */
 	assert ( text != NULL );
@@ -65,7 +65,7 @@ static int parse_fc_port ( const char *text, struct fc_port **port ) {
  * @ret port_id		Fibre Channel port ID
  * @ret rc		Return status code
  */
-static int parse_fc_port_id ( const char *text, struct fc_port_id *port_id ) {
+static int parse_fc_port_id ( char *text, struct fc_port_id *port_id ) {
 	int rc;
 
 	/* Sanity check */
@@ -87,8 +87,7 @@ static int parse_fc_port_id ( const char *text, struct fc_port_id *port_id ) {
  * @ret handler		Fibre Channel ELS handler
  * @ret rc		Return status code
  */
-static int parse_fc_els_handler ( const char *text,
-				  struct fc_els_handler **handler ) {
+static int parse_fc_els_handler ( char *text, struct fc_els_handler **handler ){
 
 	for_each_table_entry ( (*handler), FC_ELS_HANDLERS ) {
 		if ( strcasecmp ( (*handler)->name, text ) == 0 )
@@ -107,7 +106,7 @@ static struct option_descriptor fcstat_opts[] = {};
 
 /** "fcstat" command descriptor */
 static struct command_descriptor fcstat_cmd =
-	COMMAND_DESC ( struct fcstat_options, fcstat_opts, 0, 0, "" );
+	COMMAND_DESC ( struct fcstat_options, fcstat_opts, 0, 0, NULL );
 
 /**
  * The "fcstat" command
@@ -152,8 +151,7 @@ static struct option_descriptor fcels_opts[] = {
 
 /** "fcels" command descriptor */
 static struct command_descriptor fcels_cmd =
-	COMMAND_DESC ( struct fcels_options, fcels_opts, 1, 1,
-		       "[--port <port>] [--id <peer port id>] <request>" );
+	COMMAND_DESC ( struct fcels_options, fcels_opts, 1, 1, "<request>" );
 
 /**
  * The "fcels" command

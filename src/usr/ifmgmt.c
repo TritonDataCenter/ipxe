@@ -26,8 +26,10 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/console.h>
 #include <ipxe/netdevice.h>
 #include <ipxe/device.h>
-#include <ipxe/process.h>
-#include <ipxe/keys.h>
+#include <ipxe/job.h>
+#include <ipxe/monojob.h>
+#include <ipxe/nap.h>
+#include <ipxe/timer.h>
 #include <usr/ifmgmt.h>
 
 /** @file
@@ -35,6 +37,15 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * Network interface management
  *
  */
+
+/** Default time to wait for link-up */
+#define LINK_WAIT_TIMEOUT ( 15 * TICKS_PER_SEC )
+
+/** Default unsuccessful configuration status code */
+#define EADDRNOTAVAIL_CONFIG __einfo_error ( EINFO_EADDRNOTAVAIL_CONFIG )
+#define EINFO_EADDRNOTAVAIL_CONFIG					\
+	__einfo_uniqify ( EINFO_EADDRNOTAVAIL, 0x01,			\
+			  "No configuration methods succeeded" )
 
 /**
  * Open network device
@@ -104,49 +115,179 @@ void ifstat ( struct net_device *netdev ) {
 	ifstat_errors ( &netdev->rx_stats, "RXE" );
 }
 
+/** Network device poller */
+struct ifpoller {
+	/** Job control interface */
+	struct interface job;
+	/** Network device */
+	struct net_device *netdev;
+	/** Network device configurator (if applicable) */
+	struct net_device_configurator *configurator;
+	/**
+	 * Check progress
+	 *
+	 * @v ifpoller		Network device poller
+	 * @ret ongoing_rc	Ongoing job status code (if known)
+	 */
+	int ( * progress ) ( struct ifpoller *ifpoller );
+};
+
+/**
+ * Report network device poller progress
+ *
+ * @v ifpoller		Network device poller
+ * @v progress		Progress report to fill in
+ * @ret ongoing_rc	Ongoing job status code (if known)
+ */
+static int ifpoller_progress ( struct ifpoller *ifpoller,
+			       struct job_progress *progress __unused ) {
+
+	/* Reduce CPU utilisation */
+	cpu_nap();
+
+	/* Hand off to current progress checker */
+	return ifpoller->progress ( ifpoller );
+}
+
+/** Network device poller operations */
+static struct interface_operation ifpoller_job_op[] = {
+	INTF_OP ( job_progress, struct ifpoller *, ifpoller_progress ),
+};
+
+/** Network device poller descriptor */
+static struct interface_descriptor ifpoller_job_desc =
+	INTF_DESC ( struct ifpoller, job, ifpoller_job_op );
+
+/**
+ * Poll network device until completion
+ *
+ * @v netdev		Network device
+ * @v configurator	Network device configurator (if applicable)
+ * @v timeout		Timeout period, in ticks
+ * @v progress		Method to check progress
+ * @ret rc		Return status code
+ */
+static int ifpoller_wait ( struct net_device *netdev,
+			   struct net_device_configurator *configurator,
+			   unsigned long timeout,
+			   int ( * progress ) ( struct ifpoller *ifpoller ) ) {
+	static struct ifpoller ifpoller = {
+		.job = INTF_INIT ( ifpoller_job_desc ),
+	};
+
+	ifpoller.netdev = netdev;
+	ifpoller.configurator = configurator;
+	ifpoller.progress = progress;
+	intf_plug_plug ( &monojob, &ifpoller.job );
+	return monojob_wait ( "", timeout );
+}
+
+/**
+ * Check link-up progress
+ *
+ * @v ifpoller		Network device poller
+ * @ret ongoing_rc	Ongoing job status code (if known)
+ */
+static int iflinkwait_progress ( struct ifpoller *ifpoller ) {
+	struct net_device *netdev = ifpoller->netdev;
+	int ongoing_rc = netdev->link_rc;
+
+	/* Terminate successfully if link is up */
+	if ( ongoing_rc == 0 )
+		intf_close ( &ifpoller->job, 0 );
+
+	/* Otherwise, report link status as ongoing job status */
+	return ongoing_rc;
+}
+
 /**
  * Wait for link-up, with status indication
  *
  * @v netdev		Network device
- * @v max_wait_ms	Maximum time to wait, in ms
+ * @v timeout		Timeout period, in ticks
  */
-int iflinkwait ( struct net_device *netdev, unsigned int max_wait_ms ) {
-	int key;
+int iflinkwait ( struct net_device *netdev, unsigned long timeout ) {
 	int rc;
 
-	/* Allow link state to be updated */
-	netdev_poll ( netdev );
+	/* Ensure device is open */
+	if ( ( rc = ifopen ( netdev ) ) != 0 )
+		return rc;
 
+	/* Return immediately if link is already up */
+	netdev_poll ( netdev );
 	if ( netdev_link_ok ( netdev ) )
 		return 0;
 
-	printf ( "Waiting for link-up on %s...", netdev->name );
+	/* Wait for link-up */
+	printf ( "Waiting for link-up on %s", netdev->name );
+	return ifpoller_wait ( netdev, NULL, timeout, iflinkwait_progress );
+}
 
-	while ( 1 ) {
-		if ( netdev_link_ok ( netdev ) ) {
-			rc = 0;
-			break;
-		}
-		if ( max_wait_ms-- == 0 ) {
-			rc = netdev->link_rc;
-			break;
-		}
-		step();
-		if ( iskey() ) {
-			key = getchar();
-			if ( key == CTRL_C ) {
-				rc = -ECANCELED;
-				break;
-			}
-		}
-		mdelay ( 1 );
-	}
+/**
+ * Check configuration progress
+ *
+ * @v ifpoller		Network device poller
+ * @ret ongoing_rc	Ongoing job status code (if known)
+ */
+static int ifconf_progress ( struct ifpoller *ifpoller ) {
+	struct net_device *netdev = ifpoller->netdev;
+	struct net_device_configurator *configurator = ifpoller->configurator;
+	struct net_device_configuration *config;
+	int rc;
 
-	if ( rc == 0 ) {
-		printf ( " ok\n" );
+	/* Do nothing unless configuration has completed */
+	if ( netdev_configuration_in_progress ( netdev ) )
+		return 0;
+
+	/* Terminate with appropriate overall return status code */
+	if ( configurator ) {
+		config = netdev_configuration ( netdev, configurator );
+		rc = config->rc;
 	} else {
-		printf ( " failed: %s\n", strerror ( rc ) );
+		rc = ( netdev_configuration_ok ( netdev ) ?
+		       0 : -EADDRNOTAVAIL_CONFIG );
 	}
+	intf_close ( &ifpoller->job, rc );
 
 	return rc;
+}
+
+/**
+ * Perform network device configuration
+ *
+ * @v netdev		Network device
+ * @v configurator	Network device configurator, or NULL to use all
+ * @ret rc		Return status code
+ */
+int ifconf ( struct net_device *netdev,
+	     struct net_device_configurator *configurator ) {
+	int rc;
+
+	/* Ensure device is open and link is up */
+	if ( ( rc = iflinkwait ( netdev, LINK_WAIT_TIMEOUT ) ) != 0 )
+		return rc;
+
+	/* Start configuration */
+	if ( configurator ) {
+		if ( ( rc = netdev_configure ( netdev, configurator ) ) != 0 ) {
+			printf ( "Could not configure %s via %s: %s\n",
+				 netdev->name, configurator->name,
+				 strerror ( rc ) );
+			return rc;
+		}
+	} else {
+		if ( ( rc = netdev_configure_all ( netdev ) ) != 0 ) {
+			printf ( "Could not configure %s: %s\n",
+				 netdev->name, strerror ( rc ) );
+			return rc;
+		}
+	}
+
+	/* Wait for configuration to complete */
+	printf ( "Configuring %s%s%s(%s %s)",
+		 ( configurator ? "[" : "" ),
+		 ( configurator ? configurator->name : "" ),
+		 ( configurator ? "] " : "" ),
+		 netdev->name, netdev->ll_protocol->ntoa ( netdev->ll_addr ) );
+	return ifpoller_wait ( netdev, configurator, 0, ifconf_progress );
 }

@@ -50,6 +50,19 @@ struct in6_addr {
 #define s6_addr32       in6_u.u6_addr32
 };
 
+#define IN6_IS_ADDR_UNSPECIFIED( addr )					\
+	( ( ( ( ( const uint32_t * ) (addr) )[0] ) |			\
+	    ( ( ( const uint32_t * ) (addr) )[1] ) |			\
+	    ( ( ( const uint32_t * ) (addr) )[2] ) |			\
+	    ( ( ( const uint32_t * ) (addr) )[3] ) ) == 0 )
+
+#define IN6_IS_ADDR_MULTICAST( addr )					\
+	( *( ( const uint8_t * ) (addr) ) == 0xff )
+
+#define IN6_IS_ADDR_LINKLOCAL( addr )					\
+	( ( *( ( const uint16_t * ) (addr) ) & htons ( 0xffc0 ) ) ==	\
+	  htonl ( 0xfe80 ) )
+
 /**
  * IPv4 socket address
  */
@@ -59,19 +72,22 @@ struct sockaddr_in {
 	 * Always set to @c AF_INET for IPv4 addresses
 	 */
 	sa_family_t sin_family;
+	/** Flags (part of struct @c sockaddr_tcpip) */
+	uint16_t sin_flags;
 	/** TCP/IP port (part of struct @c sockaddr_tcpip) */
 	uint16_t sin_port;
 	/** IPv4 address */
 	struct in_addr sin_addr;
 	/** Padding
 	 *
-	 * This ensures that a struct @c sockaddr_tcpip is large
-	 * enough to hold a socket address for any TCP/IP address
-	 * family.
+	 * This ensures that a struct @c sockaddr_in is large enough
+	 * to hold a socket address for any TCP/IP address family.
 	 */
-	char pad[ sizeof ( struct sockaddr ) - sizeof ( sa_family_t )
-					     - sizeof ( uint16_t )
-					     - sizeof ( struct in_addr ) ];
+	char pad[ sizeof ( struct sockaddr ) -
+		  ( sizeof ( sa_family_t ) /* sin_family */ +
+		    sizeof ( uint16_t ) /* sin_flags */ +
+		    sizeof ( uint16_t ) /* sin_port */ +
+		    sizeof ( struct in_addr ) /* sin_addr */ ) ];
 } __attribute__ (( may_alias ));
 
 /**
@@ -82,23 +98,35 @@ struct sockaddr_in6 {
 	 *
 	 * Always set to @c AF_INET6 for IPv6 addresses
 	 */
-	sa_family_t sin_family;
+	sa_family_t sin6_family;
+	/** Flags (part of struct @c sockaddr_tcpip) */
+	uint16_t sin6_flags;
 	/** TCP/IP port (part of struct @c sockaddr_tcpip) */
-	uint16_t 	sin_port;
-        uint32_t        sin6_flowinfo;  /* Flow number */
-        struct in6_addr sin6_addr;      /* 128-bit destination address */
-        uint32_t        sin6_scope_id;  /* Scope ID */
+	uint16_t sin6_port;
+	/** Scope ID
+	 *
+	 * For link-local addresses, this is the network device index.
+	 */
+        uint16_t sin6_scope_id;
+	/** IPv6 address */
+        struct in6_addr sin6_addr;
+	/** Padding
+	 *
+	 * This ensures that a struct @c sockaddr_in6 is large
+	 * enough to hold a socket address for any TCP/IP address
+	 * family.
+	 */
+	char pad[ sizeof ( struct sockaddr ) -
+		  ( sizeof ( sa_family_t ) /* sin6_family */ +
+		    sizeof ( uint16_t ) /* sin6_flags */ +
+		    sizeof ( uint16_t ) /* sin6_port */ +
+		    sizeof ( uint16_t ) /* sin6_scope_id */ +
+		    sizeof ( struct in6_addr ) /* sin6_addr */ ) ];
 } __attribute__ (( may_alias ));
 
 extern int inet_aton ( const char *cp, struct in_addr *inp );
 extern char * inet_ntoa ( struct in_addr in );
-
-/* Adding the following for IP6 support
- *
-
-extern int inet6_aton ( const char *cp, struct in6_addr *inp );
-extern char * inet6_ntoa ( struct in_addr in );
-
- */
+extern int inet6_aton ( const char *string, struct in6_addr *in );
+extern char * inet6_ntoa ( const struct in6_addr *in );
 
 #endif	/* _IPXE_IN_H */

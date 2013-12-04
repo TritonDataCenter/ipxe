@@ -51,6 +51,7 @@ ICCFIX		:= ./util/iccfix
 EINFO		:= ./util/einfo
 GENKEYMAP	:= ./util/genkeymap.pl
 DOXYGEN		:= doxygen
+LCAB		:= lcab
 BINUTILS_DIR	:= /usr
 BFD_DIR		:= $(BINUTILS_DIR)
 ZLIB_DIR	:= /usr
@@ -62,7 +63,7 @@ ZLIB_DIR	:= /usr
 SRCDIRS		:=
 SRCDIRS		+= libgcc
 SRCDIRS		+= core
-SRCDIRS		+= net net/tcp net/udp net/infiniband net/80211
+SRCDIRS		+= net net/oncrpc net/tcp net/udp net/infiniband net/80211
 SRCDIRS		+= image
 SRCDIRS		+= drivers/bus
 SRCDIRS		+= drivers/net
@@ -109,7 +110,7 @@ INCDIRS		+= include .
 # helpfully suggestive message
 #
 ALL		:= bin/blib.a bin/ipxe.dsk bin/ipxe.lkrn bin/ipxe.iso \
-		   bin/ipxe.usb bin/undionly.kpxe bin/rtl8139.rom
+		   bin/ipxe.usb bin/ipxe.pxe bin/undionly.kpxe bin/rtl8139.rom
 all : $(ALL)
 	@$(ECHO) '==========================================================='
 	@$(ECHO)

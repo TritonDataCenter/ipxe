@@ -24,6 +24,16 @@ struct net_device;
  */
 #define TCPIP_EMPTY_CSUM 0xffff
 
+/** TCP/IP address flags */
+enum tcpip_st_flags {
+	/** Bind to a privileged port (less than 1024)
+	 *
+	 * This value is chosen as 1024 to optimise the calculations
+	 * in tcpip_bind().
+	 */
+	TCPIP_BIND_PRIVILEGED = 0x0400,
+};
+
 /**
  * TCP/IP socket address
  *
@@ -33,6 +43,8 @@ struct net_device;
 struct sockaddr_tcpip {
 	/** Socket address family (part of struct @c sockaddr) */
 	sa_family_t st_family;
+	/** Flags */
+	uint16_t st_flags;
 	/** TCP/IP port */
 	uint16_t st_port;
 	/** Padding
@@ -42,7 +54,9 @@ struct sockaddr_tcpip {
 	 * family.
 	 */
 	char pad[ sizeof ( struct sockaddr ) -
-		  ( sizeof ( sa_family_t ) + sizeof ( uint16_t ) ) ];
+		  ( sizeof ( sa_family_t ) /* st_family */ +
+		    sizeof ( uint16_t ) /* st_flags */ +
+		    sizeof ( uint16_t ) /* st_port */ ) ];
 } __attribute__ (( may_alias ));
 
 /** 
@@ -55,6 +69,7 @@ struct tcpip_protocol {
          * Process received packet
          *
          * @v iobuf		I/O buffer
+	 * @v netdev		Network device
 	 * @v st_src		Partially-filled source address
 	 * @v st_dest		Partially-filled destination address
 	 * @v pshdr_csum	Pseudo-header checksum
@@ -62,7 +77,8 @@ struct tcpip_protocol {
          *
          * This method takes ownership of the I/O buffer.
          */
-        int ( * rx ) ( struct io_buffer *iobuf, struct sockaddr_tcpip *st_src,
+        int ( * rx ) ( struct io_buffer *iobuf, struct net_device *netdev,
+		       struct sockaddr_tcpip *st_src,
 		       struct sockaddr_tcpip *st_dest, uint16_t pshdr_csum );
         /** 
 	 * Transport-layer protocol number
@@ -114,8 +130,8 @@ struct tcpip_net_protocol {
 /** Declare a TCP/IP network-layer protocol */
 #define __tcpip_net_protocol __table_entry ( TCPIP_NET_PROTOCOLS, 01 )
 
-extern int tcpip_rx ( struct io_buffer *iobuf, uint8_t tcpip_proto,
-		      struct sockaddr_tcpip *st_src,
+extern int tcpip_rx ( struct io_buffer *iobuf, struct net_device *netdev,
+		      uint8_t tcpip_proto, struct sockaddr_tcpip *st_src,
 		      struct sockaddr_tcpip *st_dest, uint16_t pshdr_csum );
 extern int tcpip_tx ( struct io_buffer *iobuf, struct tcpip_protocol *tcpip,
 		      struct sockaddr_tcpip *st_src,
@@ -125,6 +141,8 @@ extern int tcpip_tx ( struct io_buffer *iobuf, struct tcpip_protocol *tcpip,
 extern uint16_t generic_tcpip_continue_chksum ( uint16_t partial,
 						const void *data, size_t len );
 extern uint16_t tcpip_chksum ( const void *data, size_t len );
+extern int tcpip_bind ( struct sockaddr_tcpip *st_local,
+			int ( * available ) ( int port ) );
 
 /* Use generic_tcpip_continue_chksum() if no architecture-specific
  * version is available

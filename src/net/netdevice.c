@@ -31,6 +31,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/tables.h>
 #include <ipxe/process.h>
 #include <ipxe/init.h>
+#include <ipxe/malloc.h>
 #include <ipxe/device.h>
 #include <ipxe/errortab.h>
 #include <ipxe/vlan.h>
@@ -53,6 +54,16 @@ static struct list_head open_net_devices = LIST_HEAD_INIT ( open_net_devices );
 #define EINFO_EUNKNOWN_LINK_STATUS \
 	__einfo_uniqify ( EINFO_EINPROGRESS, 0x01, "Unknown" )
 
+/** Default not-yet-attempted-configuration status code */
+#define EUNUSED_CONFIG __einfo_error ( EINFO_EUNUSED_CONFIG )
+#define EINFO_EUNUSED_CONFIG \
+	__einfo_uniqify ( EINFO_EINPROGRESS, 0x02, "Unused" )
+
+/** Default configuration-in-progress status code */
+#define EINPROGRESS_CONFIG __einfo_error ( EINFO_EINPROGRESS_CONFIG )
+#define EINFO_EINPROGRESS_CONFIG \
+	__einfo_uniqify ( EINFO_EINPROGRESS, 0x03, "Incomplete" )
+
 /** Default link-down status code */
 #define ENOTCONN_LINK_DOWN __einfo_error ( EINFO_ENOTCONN_LINK_DOWN )
 #define EINFO_ENOTCONN_LINK_DOWN \
@@ -62,6 +73,8 @@ static struct list_head open_net_devices = LIST_HEAD_INIT ( open_net_devices );
 struct errortab netdev_errors[] __errortab = {
 	__einfo_errortab ( EINFO_EUNKNOWN_LINK_STATUS ),
 	__einfo_errortab ( EINFO_ENOTCONN_LINK_DOWN ),
+	__einfo_errortab ( EINFO_EUNUSED_CONFIG ),
+	__einfo_errortab ( EINFO_EINPROGRESS_CONFIG ),
 };
 
 /**
@@ -89,8 +102,10 @@ static int netdev_has_ll_addr ( struct net_device *netdev ) {
 static void netdev_notify ( struct net_device *netdev ) {
 	struct net_driver *driver;
 
-	for_each_table_entry ( driver, NET_DRIVERS )
-		driver->notify ( netdev );
+	for_each_table_entry ( driver, NET_DRIVERS ) {
+		if ( driver->notify )
+			driver->notify ( netdev );
+	}
 }
 
 /**
@@ -213,6 +228,43 @@ int netdev_tx ( struct net_device *netdev, struct io_buffer *iobuf ) {
 }
 
 /**
+ * Defer transmitted packet
+ *
+ * @v netdev		Network device
+ * @v iobuf		I/O buffer
+ *
+ * Drivers may call netdev_tx_defer() if there is insufficient space
+ * in the transmit descriptor ring.  Any packets deferred in this way
+ * will be automatically retransmitted as soon as space becomes
+ * available (i.e. as soon as the driver calls netdev_tx_complete()).
+ *
+ * The packet must currently be in the network device's TX queue.
+ *
+ * Drivers utilising netdev_tx_defer() must ensure that space in the
+ * transmit descriptor ring is freed up @b before calling
+ * netdev_tx_complete().  For example, if the ring is modelled using a
+ * producer counter and a consumer counter, then the consumer counter
+ * must be incremented before the call to netdev_tx_complete().
+ * Failure to do this will cause the retransmitted packet to be
+ * immediately redeferred (which will result in out-of-order
+ * transmissions and other nastiness).
+ */
+void netdev_tx_defer ( struct net_device *netdev, struct io_buffer *iobuf ) {
+
+	/* Catch data corruption as early as possible */
+	list_check_contains_entry ( iobuf, &netdev->tx_queue, list );
+
+	/* Remove from transmit queue */
+	list_del ( &iobuf->list );
+
+	/* Add to deferred transmit queue */
+	list_add_tail ( &iobuf->list, &netdev->tx_deferred );
+
+	/* Record "out of space" statistic */
+	netdev_tx_err ( netdev, NULL, -ENOBUFS );
+}
+
+/**
  * Discard transmitted packet
  *
  * @v netdev		Network device
@@ -257,6 +309,13 @@ void netdev_tx_complete_err ( struct net_device *netdev,
 	/* Dequeue and free I/O buffer */
 	list_del ( &iobuf->list );
 	netdev_tx_err ( netdev, iobuf, rc );
+
+	/* Transmit first pending packet, if any */
+	if ( ( iobuf = list_first_entry ( &netdev->tx_deferred,
+					  struct io_buffer, list ) ) != NULL ) {
+		list_del ( &iobuf->list );
+		netdev_tx ( netdev, iobuf );
+	}
 }
 
 /**
@@ -270,9 +329,9 @@ void netdev_tx_complete_err ( struct net_device *netdev,
 void netdev_tx_complete_next_err ( struct net_device *netdev, int rc ) {
 	struct io_buffer *iobuf;
 
-	list_for_each_entry ( iobuf, &netdev->tx_queue, list ) {
+	if ( ( iobuf = list_first_entry ( &netdev->tx_queue, struct io_buffer,
+					  list ) ) != NULL ) {
 		netdev_tx_complete_err ( netdev, iobuf, rc );
-		return;
 	}
 }
 
@@ -283,10 +342,15 @@ void netdev_tx_complete_next_err ( struct net_device *netdev, int rc ) {
  */
 static void netdev_tx_flush ( struct net_device *netdev ) {
 
-	/* Discard any packets in the TX queue */
+	/* Discard any packets in the TX queue.  This will also cause
+	 * any packets in the deferred TX queue to be discarded
+	 * automatically.
+	 */
 	while ( ! list_empty ( &netdev->tx_queue ) ) {
 		netdev_tx_complete_next_err ( netdev, -ECANCELED );
 	}
+	assert ( list_empty ( &netdev->tx_queue ) );
+	assert ( list_empty ( &netdev->tx_deferred ) );
 }
 
 /**
@@ -392,6 +456,41 @@ static void netdev_rx_flush ( struct net_device *netdev ) {
 }
 
 /**
+ * Finish network device configuration
+ *
+ * @v config		Network device configuration
+ * @v rc		Reason for completion
+ */
+static void netdev_config_close ( struct net_device_configuration *config,
+				  int rc ) {
+	struct net_device_configurator *configurator = config->configurator;
+	struct net_device *netdev = config->netdev;
+
+	/* Restart interface */
+	intf_restart ( &config->job, rc );
+
+	/* Record configuration result */
+	config->rc = rc;
+	if ( rc == 0 ) {
+		DBGC ( netdev, "NETDEV %s configured via %s\n",
+		       netdev->name, configurator->name );
+	} else {
+		DBGC ( netdev, "NETDEV %s configuration via %s failed: %s\n",
+		       netdev->name, configurator->name, strerror ( rc ) );
+	}
+}
+
+/** Network device configuration interface operations */
+static struct interface_operation netdev_config_ops[] = {
+	INTF_OP ( intf_close, struct net_device_configuration *,
+		  netdev_config_close ),
+};
+
+/** Network device configuration interface descriptor */
+static struct interface_descriptor netdev_config_desc =
+	INTF_DESC ( struct net_device_configuration, job, netdev_config_ops );
+
+/**
  * Free network device
  *
  * @v refcnt		Network device reference counter
@@ -409,24 +508,41 @@ static void free_netdev ( struct refcnt *refcnt ) {
 /**
  * Allocate network device
  *
- * @v priv_size		Size of private data area (net_device::priv)
+ * @v priv_len		Length of private data area (net_device::priv)
  * @ret netdev		Network device, or NULL
  *
  * Allocates space for a network device and its private data area.
  */
-struct net_device * alloc_netdev ( size_t priv_size ) {
+struct net_device * alloc_netdev ( size_t priv_len ) {
 	struct net_device *netdev;
+	struct net_device_configurator *configurator;
+	struct net_device_configuration *config;
+	unsigned int num_configs;
+	size_t confs_len;
 	size_t total_len;
 
-	total_len = ( sizeof ( *netdev ) + priv_size );
+	num_configs = table_num_entries ( NET_DEVICE_CONFIGURATORS );
+	confs_len = ( num_configs * sizeof ( netdev->configs[0] ) );
+	total_len = ( sizeof ( *netdev ) + confs_len + priv_len );
 	netdev = zalloc ( total_len );
 	if ( netdev ) {
 		ref_init ( &netdev->refcnt, free_netdev );
 		netdev->link_rc = -EUNKNOWN_LINK_STATUS;
 		INIT_LIST_HEAD ( &netdev->tx_queue );
+		INIT_LIST_HEAD ( &netdev->tx_deferred );
 		INIT_LIST_HEAD ( &netdev->rx_queue );
 		netdev_settings_init ( netdev );
-		netdev->priv = ( ( ( void * ) netdev ) + sizeof ( *netdev ) );
+		config = netdev->configs;
+		for_each_table_entry ( configurator, NET_DEVICE_CONFIGURATORS ){
+			config->netdev = netdev;
+			config->configurator = configurator;
+			config->rc = -EUNUSED_CONFIG;
+			intf_init ( &config->job, &netdev_config_desc,
+				    &netdev->refcnt );
+			config++;
+		}
+		netdev->priv = ( ( ( void * ) netdev ) + sizeof ( *netdev ) +
+				 confs_len );
 	}
 	return netdev;
 }
@@ -447,10 +563,11 @@ int register_netdev ( struct net_device *netdev ) {
 	uint32_t seed;
 	int rc;
 
-	/* Create device name */
+	/* Record device index and create device name */
+	netdev->index = ifindex++;
 	if ( netdev->name[0] == '\0' ) {
 		snprintf ( netdev->name, sizeof ( netdev->name ), "net%d",
-			   ifindex++ );
+			   netdev->index );
 	}
 
 	/* Set initial link-layer address, if not already set */
@@ -483,7 +600,7 @@ int register_netdev ( struct net_device *netdev ) {
 
 	/* Probe device */
 	for_each_table_entry ( driver, NET_DRIVERS ) {
-		if ( ( rc = driver->probe ( netdev ) ) != 0 ) {
+		if ( driver->probe && ( rc = driver->probe ( netdev ) ) != 0 ) {
 			DBGC ( netdev, "NETDEV %s could not add %s device: "
 			       "%s\n", netdev->name, driver->name,
 			       strerror ( rc ) );
@@ -494,8 +611,10 @@ int register_netdev ( struct net_device *netdev ) {
 	return 0;
 
  err_probe:
-	for_each_table_entry_continue_reverse ( driver, NET_DRIVERS )
-		driver->remove ( netdev );
+	for_each_table_entry_continue_reverse ( driver, NET_DRIVERS ) {
+		if ( driver->remove )
+			driver->remove ( netdev );
+	}
 	clear_settings ( netdev_settings ( netdev ) );
 	unregister_settings ( netdev_settings ( netdev ) );
  err_register_settings:
@@ -539,12 +658,23 @@ int netdev_open ( struct net_device *netdev ) {
  * @v netdev		Network device
  */
 void netdev_close ( struct net_device *netdev ) {
+	unsigned int num_configs;
+	unsigned int i;
 
 	/* Do nothing if device is already closed */
 	if ( ! ( netdev->state & NETDEV_OPEN ) )
 		return;
 
 	DBGC ( netdev, "NETDEV %s closing\n", netdev->name );
+
+	/* Terminate any ongoing configurations.  Use intf_close()
+	 * rather than intf_restart() to allow the cancellation to be
+	 * reported back to us if a configuration is actually in
+	 * progress.
+	 */
+	num_configs = table_num_entries ( NET_DEVICE_CONFIGURATORS );
+	for ( i = 0 ; i < num_configs ; i++ )
+		intf_close ( &netdev->configs[i].job, -ECANCELED );
 
 	/* Remove from open devices list */
 	list_del ( &netdev->open_list );
@@ -577,17 +707,19 @@ void unregister_netdev ( struct net_device *netdev ) {
 	netdev_close ( netdev );
 
 	/* Remove device */
-	for_each_table_entry_reverse ( driver, NET_DRIVERS )
-		driver->remove ( netdev );
+	for_each_table_entry_reverse ( driver, NET_DRIVERS ) {
+		if ( driver->remove )
+			driver->remove ( netdev );
+	}
 
 	/* Unregister per-netdev configuration settings */
 	clear_settings ( netdev_settings ( netdev ) );
 	unregister_settings ( netdev_settings ( netdev ) );
 
 	/* Remove from device list */
+	DBGC ( netdev, "NETDEV %s unregistered\n", netdev->name );
 	list_del ( &netdev->list );
 	netdev_put ( netdev );
-	DBGC ( netdev, "NETDEV %s unregistered\n", netdev->name );
 }
 
 /** Enable or disable interrupts
@@ -619,8 +751,31 @@ void netdev_irq ( struct net_device *netdev, int enable ) {
 struct net_device * find_netdev ( const char *name ) {
 	struct net_device *netdev;
 
+	/* Allow "netX" shortcut */
+	if ( strcmp ( name, "netX" ) == 0 )
+		return last_opened_netdev();
+
+	/* Identify network device by name */
 	list_for_each_entry ( netdev, &net_devices, list ) {
 		if ( strcmp ( netdev->name, name ) == 0 )
+			return netdev;
+	}
+
+	return NULL;
+}
+
+/**
+ * Get network device by index
+ *
+ * @v index		Network device index
+ * @ret netdev		Network device, or NULL
+ */
+struct net_device * find_netdev_by_index ( unsigned int index ) {
+	struct net_device *netdev;
+
+	/* Identify network device by index */
+	list_for_each_entry ( netdev, &net_devices, list ) {
+		if ( netdev->index == index )
 			return netdev;
 	}
 
@@ -817,3 +972,160 @@ __weak struct net_device * vlan_find ( struct net_device *trunk __unused,
 
 /** Networking stack process */
 PERMANENT_PROCESS ( net_process, net_step );
+
+/**
+ * Discard some cached network device data
+ *
+ * @ret discarded	Number of cached items discarded
+ */
+static unsigned int net_discard ( void ) {
+	struct net_device *netdev;
+	struct io_buffer *iobuf;
+	unsigned int discarded = 0;
+
+	/* Try to drop one deferred TX packet from each network device */
+	for_each_netdev ( netdev ) {
+		if ( ( iobuf = list_first_entry ( &netdev->tx_deferred,
+						  struct io_buffer,
+						  list ) ) != NULL ) {
+
+			/* Discard first deferred packet */
+			list_del ( &iobuf->list );
+			free ( iobuf );
+
+			/* Report discard */
+			discarded++;
+		}
+	}
+
+	return discarded;
+}
+
+/** Network device cache discarder */
+struct cache_discarder net_discarder __cache_discarder ( CACHE_NORMAL ) = {
+	.discard = net_discard,
+};
+
+/**
+ * Find network device configurator
+ *
+ * @v name		Name
+ * @ret configurator	Network device configurator, or NULL
+ */
+struct net_device_configurator * find_netdev_configurator ( const char *name ) {
+	struct net_device_configurator *configurator;
+
+	for_each_table_entry ( configurator, NET_DEVICE_CONFIGURATORS ) {
+		if ( strcmp ( configurator->name, name ) == 0 )
+			return configurator;
+	}
+	return NULL;
+}
+
+/**
+ * Start network device configuration
+ *
+ * @v netdev		Network device
+ * @v configurator	Network device configurator
+ * @ret rc		Return status code
+ */
+int netdev_configure ( struct net_device *netdev,
+		       struct net_device_configurator *configurator ) {
+	struct net_device_configuration *config =
+		netdev_configuration ( netdev, configurator );
+	int rc;
+
+	/* Check applicability of configurator */
+	if ( ! netdev_configurator_applies ( netdev, configurator ) ) {
+		DBGC ( netdev, "NETDEV %s does not support configuration via "
+		       "%s\n", netdev->name, configurator->name );
+		return -ENOTSUP;
+	}
+
+	/* Terminate any ongoing configuration */
+	intf_restart ( &config->job, -ECANCELED );
+
+	/* Mark configuration as being in progress */
+	config->rc = -EINPROGRESS_CONFIG;
+
+	DBGC ( netdev, "NETDEV %s starting configuration via %s\n",
+	       netdev->name, configurator->name );
+
+	/* Start configuration */
+	if ( ( rc = configurator->start ( &config->job, netdev ) ) != 0 ) {
+		DBGC ( netdev, "NETDEV %s could not start configuration via "
+		       "%s: %s\n", netdev->name, configurator->name,
+		       strerror ( rc ) );
+		config->rc = rc;
+		return rc;
+	}
+
+	return 0;
+}
+
+/**
+ * Start network device configuration via all supported configurators
+ *
+ * @v netdev		Network device
+ * @ret rc		Return status code
+ */
+int netdev_configure_all ( struct net_device *netdev ) {
+	struct net_device_configurator *configurator;
+	int rc;
+
+	/* Start configuration for each configurator */
+	for_each_table_entry ( configurator, NET_DEVICE_CONFIGURATORS ) {
+
+		/* Skip any inapplicable configurators */
+		if ( ! netdev_configurator_applies ( netdev, configurator ) )
+			continue;
+
+		/* Start configuration */
+		if ( ( rc = netdev_configure ( netdev, configurator ) ) != 0 )
+			return rc;
+	}
+
+	return 0;
+}
+
+/**
+ * Check if network device has a configuration with a specified status code
+ *
+ * @v netdev		Network device
+ * @v rc		Status code
+ * @ret has_rc		Network device has a configuration with this status code
+ */
+static int netdev_has_configuration_rc ( struct net_device *netdev, int rc ) {
+	unsigned int num_configs;
+	unsigned int i;
+
+	num_configs = table_num_entries ( NET_DEVICE_CONFIGURATORS );
+	for ( i = 0 ; i < num_configs ; i++ ) {
+		if ( netdev->configs[i].rc == rc )
+			return 1;
+	}
+	return 0;
+}
+
+/**
+ * Check if network device configuration is in progress
+ *
+ * @v netdev		Network device
+ * @ret is_in_progress	Network device configuration is in progress
+ */
+int netdev_configuration_in_progress ( struct net_device *netdev ) {
+
+	return netdev_has_configuration_rc ( netdev, -EINPROGRESS_CONFIG );
+}
+
+/**
+ * Check if network device has at least one successful configuration
+ *
+ * @v netdev		Network device
+ * @v configurator	Configurator
+ * @ret rc		Return status code
+ */
+int netdev_configuration_ok ( struct net_device *netdev ) {
+
+	return netdev_has_configuration_rc ( netdev, 0 );
+}
