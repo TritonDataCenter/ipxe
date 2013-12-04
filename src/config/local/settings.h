@@ -1,0 +1,3 @@
+#define	PCI_SETTINGS
+#define	CPUID_SETTINGS
+#define	MEMMAP_SETTINGS

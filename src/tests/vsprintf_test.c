@@ -66,7 +66,8 @@ static void vsprintf_test_exec ( void ) {
 	/* Basic format specifiers */
 	snprintf_ok ( 16, "%", "%%" );
 	snprintf_ok ( 16, "ABC", "%c%c%c", 'A', 'B', 'C' );
-	snprintf_ok ( 16, "abc", "%lc%lc%lc", L'a', L'b', L'c' );
+	snprintf_ok ( 16, "abc", "%lc%lc%lc", (wint_t)'a',
+	    (wint_t)'b', (wint_t)'c' );
 	snprintf_ok ( 16, "Hello world", "%s %s", "Hello", "world" );
 	snprintf_ok ( 16, "Goodbye world", "%ls %s", L"Goodbye", "world" );
 	snprintf_ok ( 16, "0x1234abcd", "%p", ( ( void * ) 0x1234abcd ) );
