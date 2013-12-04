@@ -181,13 +181,28 @@ static int intel_init_eeprom ( struct intel_nic *intel ) {
 static int intel_fetch_mac_eeprom ( struct intel_nic *intel,
 				    uint8_t *hw_addr ) {
 	int rc;
+	unsigned int macoff;
 
 	/* Initialise EEPROM */
 	if ( ( rc = intel_init_eeprom ( intel ) ) != 0 )
 		return rc;
 
+	switch (intel->port) {
+	case 0:
+		macoff = 0;
+		break;
+	case 1:
+	case 2:
+	case 3:
+		macoff = 0x40 * (intel->port + 1);
+		break;
+	default:
+		macoff = 0;
+		break;
+	}
+
 	/* Read base MAC address from EEPROM */
-	if ( ( rc = nvs_read ( &intel->eeprom, INTEL_EEPROM_MAC,
+	if ( ( rc = nvs_read ( &intel->eeprom, macoff + INTEL_EEPROM_MAC,
 			       hw_addr, ETH_ALEN ) ) != 0 ) {
 		DBGC ( intel, "INTEL %p could not read EEPROM base MAC "
 		       "address: %s\n", intel, strerror ( rc ) );
@@ -219,15 +234,15 @@ static int intel_fetch_mac ( struct intel_nic *intel, uint8_t *hw_addr ) {
 	DBGC ( intel, "INTEL %p has autoloaded MAC address %s\n",
 	       intel, eth_ntoa ( mac.raw ) );
 
-	/* Try to read address from EEPROM */
-	if ( ( rc = intel_fetch_mac_eeprom ( intel, hw_addr ) ) == 0 )
-		return 0;
-
 	/* Use current address if valid */
 	if ( is_valid_ether_addr ( mac.raw ) ) {
 		memcpy ( hw_addr, mac.raw, ETH_ALEN );
 		return 0;
 	}
+
+	/* Try to read address from EEPROM */
+	if ( ( rc = intel_fetch_mac_eeprom ( intel, hw_addr ) ) == 0 )
+		return 0;
 
 	DBGC ( intel, "INTEL %p has no MAC address to use\n", intel );
 	return -ENOENT;
