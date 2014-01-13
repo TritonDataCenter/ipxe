@@ -117,7 +117,7 @@ enum cpuid_registers {
 #define CPUID_NUM_REGISTERS( tag ) ( ( ( (tag) >> 16 ) & 0x3 ) + 1 )
 
 /** CPUID settings scope */
-static struct settings_scope cpuid_settings_scope;
+static const struct settings_scope cpuid_settings_scope;
 
 /**
  * Check applicability of CPUID setting
@@ -127,7 +127,7 @@ static struct settings_scope cpuid_settings_scope;
  * @ret applies		Setting applies within this settings block
  */
 static int cpuid_settings_applies ( struct settings *settings __unused,
-				    struct setting *setting ) {
+				    const struct setting *setting ) {
 
 	return ( setting->scope == &cpuid_settings_scope );
 }
@@ -251,22 +251,24 @@ struct init_fn cpuid_settings_init_fn __init_fn ( INIT_NORMAL ) = {
 	.initialise = cpuid_settings_init,
 };
 
-/** CPUID predefined settings */
-struct setting cpuid_predefined_settings[] __setting ( SETTING_HOST_EXTRA ) = {
-	{
-		.name = "cpuvendor",
-		.description = "CPU vendor",
-		.tag = CPUID_TAG ( CPUID_VENDOR_ID, 1, 1, 3,
-				   CPUID_EBX, CPUID_EDX, CPUID_ECX, 0 ),
-		.type = &setting_type_string,
-		.scope = &cpuid_settings_scope,
-	},
-	{
-		.name = "cpumodel",
-		.description = "CPU model",
-		.tag = CPUID_TAG ( CPUID_MODEL, 3, 1, 4,
-				   CPUID_EAX, CPUID_EBX, CPUID_ECX, CPUID_EDX ),
-		.type = &setting_type_string,
-		.scope = &cpuid_settings_scope,
-	},
+/** CPU vendor setting */
+const struct setting cpuvendor_setting __setting ( SETTING_HOST_EXTRA,
+						   cpuvendor ) = {
+	.name = "cpuvendor",
+	.description = "CPU vendor",
+	.tag = CPUID_TAG ( CPUID_VENDOR_ID, 1, 1, 3,
+			   CPUID_EBX, CPUID_EDX, CPUID_ECX, 0 ),
+	.type = &setting_type_string,
+	.scope = &cpuid_settings_scope,
+};
+
+/** CPU model setting */
+const struct setting cpumodel_setting __setting ( SETTING_HOST_EXTRA,
+						  cpumodel ) = {
+	.name = "cpumodel",
+	.description = "CPU model",
+	.tag = CPUID_TAG ( CPUID_MODEL, 3, 1, 4,
+			   CPUID_EAX, CPUID_EBX, CPUID_ECX, CPUID_EDX ),
+	.type = &setting_type_string,
+	.scope = &cpuid_settings_scope,
 };

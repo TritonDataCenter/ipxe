@@ -32,6 +32,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/keys.h>
 #include <ipxe/timer.h>
 #include <ipxe/uri.h>
+#include <ipxe/ansicol.h>
 #include <usr/dhcpmgmt.h>
 #include <usr/autoboot.h>
 
@@ -40,10 +41,6 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * PXE Boot Menus
  *
  */
-
-/* Colour pairs */
-#define CPAIR_NORMAL	1
-#define CPAIR_SELECT	2
 
 /** A PXE boot menu item */
 struct pxe_menu_item {
@@ -101,9 +98,9 @@ static int pxe_menu_parse ( struct pxe_menu **menu ) {
 
 	/* Fetch raw menu */
 	memset ( raw_menu, 0, sizeof ( raw_menu ) );
-	if ( ( raw_menu_len = fetch_setting ( NULL, &pxe_boot_menu_setting,
-					      raw_menu,
-					      sizeof ( raw_menu ) ) ) < 0 ) {
+	if ( ( raw_menu_len = fetch_raw_setting ( NULL, &pxe_boot_menu_setting,
+						  raw_menu,
+						  sizeof ( raw_menu ) ) ) < 0 ){
 		rc = raw_menu_len;
 		DBG ( "Could not retrieve raw PXE boot menu: %s\n",
 		      strerror ( rc ) );
@@ -116,8 +113,9 @@ static int pxe_menu_parse ( struct pxe_menu **menu ) {
 	raw_menu_end = ( raw_menu + raw_menu_len );
 
 	/* Fetch raw prompt length */
-	raw_prompt_len = fetch_setting_len ( NULL,
-					     &pxe_boot_menu_prompt_setting );
+	raw_prompt_len =
+		fetch_raw_setting ( NULL, &pxe_boot_menu_prompt_setting,
+				    NULL, 0 );
 	if ( raw_prompt_len < 0 )
 		raw_prompt_len = 0;
 
@@ -168,8 +166,8 @@ static int pxe_menu_parse ( struct pxe_menu **menu ) {
 	if ( raw_prompt_len ) {
 		raw_menu_prompt = ( ( ( void * ) raw_menu_item ) +
 				    1 /* NUL */ );
-		fetch_setting ( NULL, &pxe_boot_menu_prompt_setting,
-				raw_menu_prompt, raw_prompt_len );
+		fetch_raw_setting ( NULL, &pxe_boot_menu_prompt_setting,
+				    raw_menu_prompt, raw_prompt_len );
 		(*menu)->timeout =
 			( ( raw_menu_prompt->timeout == 0xff ) ?
 			  -1 : raw_menu_prompt->timeout );
@@ -203,7 +201,7 @@ static void pxe_menu_draw_item ( struct pxe_menu *menu,
 
 	/* Draw row */
 	row = ( LINES - menu->num_items + index );
-	color_set ( ( selected ? CPAIR_SELECT : CPAIR_NORMAL ), NULL );
+	color_set ( ( selected ? CPAIR_PXE : CPAIR_DEFAULT ), NULL );
 	mvprintw ( row, 0, "%s", buf );
 	move ( row, 1 );
 }
@@ -223,9 +221,7 @@ static int pxe_menu_select ( struct pxe_menu *menu ) {
 	/* Initialise UI */
 	initscr();
 	start_color();
-	init_pair ( CPAIR_NORMAL, COLOR_WHITE, COLOR_BLACK );
-	init_pair ( CPAIR_SELECT, COLOR_BLACK, COLOR_WHITE );
-	color_set ( CPAIR_NORMAL, NULL );
+	color_set ( CPAIR_DEFAULT, NULL );
 
 	/* Draw initial menu */
 	for ( i = 0 ; i < menu->num_items ; i++ )

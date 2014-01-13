@@ -31,28 +31,23 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/keys.h>
 #include <ipxe/timer.h>
 #include <ipxe/console.h>
+#include <ipxe/ansicol.h>
 #include <ipxe/menu.h>
-#include <config/colour.h>
-
-/* Colour pairs */
-#define CPAIR_NORMAL	1
-#define CPAIR_SELECT	2
-#define CPAIR_SEPARATOR	3
 
 /* Screen layout */
-#define TITLE_ROW	1
-#define MENU_ROW	3
-#define MENU_COL	1
-#define MENU_ROWS	18
-#define MENU_COLS	78
-#define MENU_PAD	2
+#define TITLE_ROW	1U
+#define MENU_ROW	3U
+#define MENU_COL	1U
+#define MENU_ROWS	( LINES - 2U - MENU_ROW )
+#define MENU_COLS	( COLS - 2U )
+#define MENU_PAD	2U
 
 /** A menu user interface */
 struct menu_ui {
 	/** Menu */
 	struct menu *menu;
 	/** Number of menu items */
-	int count;
+	unsigned int count;
 	/** Currently selected item */
 	int selected;
 	/** First visible item */
@@ -269,7 +264,7 @@ static int menu_loop ( struct menu_ui *ui, struct menu_item **selected ) {
 			if ( ui->selected < 0 ) {
 				ui->selected = 0;
 				move = +1;
-			} else if ( ui->selected >= ui->count ) {
+			} else if ( ui->selected >= ( int ) ui->count ) {
 				ui->selected = ( ui->count - 1 );
 				move = -1;
 			}
@@ -345,9 +340,6 @@ int show_menu ( struct menu *menu, unsigned long timeout,
 	/* Initialise screen */
 	initscr();
 	start_color();
-	init_pair ( CPAIR_NORMAL, COLOR_NORMAL_FG, COLOR_NORMAL_BG );
-	init_pair ( CPAIR_SELECT, COLOR_SELECT_FG, COLOR_SELECT_BG );
-	init_pair ( CPAIR_SEPARATOR, COLOR_SEPARATOR_FG, COLOR_SEPARATOR_BG );
 	color_set ( CPAIR_NORMAL, NULL );
 	curs_set ( 0 );
 	erase();

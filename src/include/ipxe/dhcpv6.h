@@ -11,6 +11,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <ipxe/in.h>
+#include <ipxe/uuid.h>
 
 /** DHCPv6 server port */
 #define DHCPV6_SERVER_PORT 547
@@ -31,18 +32,16 @@ struct dhcpv6_option {
 	uint8_t data[0];
 } __attribute__ (( packed ));
 
-/** DHCP unique identifier based on link-layer address (DUID-LL) */
-struct dhcpv6_duid_ll {
+/** DHCP unique identifier based on UUID (DUID-UUID) */
+struct dhcpv6_duid_uuid {
 	/** Type */
 	uint16_t type;
-	/** Hardware type */
-	uint16_t htype;
-	/** Link-layer address */
-	uint8_t ll_addr[0];
+	/** UUID */
+	union uuid uuid;
 } __attribute__ (( packed ));
 
-/** DHCP unique identifier based on link-layer address (DUID-LL) */
-#define DHCPV6_DUID_LL 3
+/** DHCP unique identifier based on UUID (DUID-UUID) */
+#define DHCPV6_DUID_UUID 4
 
 /** DHCPv6 client or server identifier option */
 struct dhcpv6_duid_option {
@@ -147,10 +146,23 @@ struct dhcpv6_user_class_option {
 #define DHCPV6_USER_CLASS 15
 
 /** DHCPv6 DNS recursive name server option */
-#define DHCPV6_DNS_SERVER 23
+#define DHCPV6_DNS_SERVERS 23
 
 /** DHCPv6 domain search list option */
-#define DHCPV6_DOMAIN_SEARCH 24
+#define DHCPV6_DOMAIN_LIST 24
+
+/** DHCPv6 bootfile URI option */
+#define DHCPV6_BOOTFILE_URL 59
+
+/** DHCPv6 bootfile parameters option */
+#define DHCPV6_BOOTFILE_PARAM 60
+
+/** DHCPv6 syslog server option
+ *
+ * This option code has not yet been assigned by IANA.  Please update
+ * this definition once an option code has been assigned.
+ */
+#define DHCPV6_LOG_SERVERS 0xffffffffUL
 
 /**
  * Any DHCPv6 option

@@ -28,6 +28,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <errno.h>
 #include <assert.h>
 #include <ipxe/in.h>
+#include <ipxe/ip.h>
+#include <ipxe/ipv6.h>
 #include <ipxe/vsprintf.h>
 #include <ipxe/dhcp.h>
 #include <ipxe/uuid.h>
@@ -96,7 +98,7 @@ static inline void * generic_setting_data ( struct generic_setting *generic ) {
  */
 static struct generic_setting *
 find_generic_setting ( struct generic_settings *generics,
-		       struct setting *setting ) {
+		       const struct setting *setting ) {
 	struct generic_setting *generic;
 
 	list_for_each_entry ( generic, &generics->list, list ) {
@@ -116,7 +118,7 @@ find_generic_setting ( struct generic_settings *generics,
  * @ret rc		Return status code
  */
 int generic_settings_store ( struct settings *settings,
-			     struct setting *setting,
+			     const struct setting *setting,
 			     const void *data, size_t len ) {
 	struct generic_settings *generics =
 		container_of ( settings, struct generic_settings, settings );
@@ -551,7 +553,8 @@ struct settings * settings_target ( struct settings *settings ) {
  * @v setting		Setting
  * @ret applies		Setting applies within this settings block
  */
-int setting_applies ( struct settings *settings, struct setting *setting ) {
+int setting_applies ( struct settings *settings,
+		      const struct setting *setting ) {
 
 	/* Find target settings block */
 	settings = settings_target ( settings );
@@ -559,6 +562,31 @@ int setting_applies ( struct settings *settings, struct setting *setting ) {
 	/* Check applicability of setting */
 	return ( settings->op->applies ?
 		 settings->op->applies ( settings, setting ) : 1 );
+}
+
+/**
+ * Find setting applicable to settings block, if any
+ *
+ * @v settings		Settings block
+ * @v setting		Setting
+ * @ret setting		Applicable setting, if any
+ */
+static const struct setting *
+applicable_setting ( struct settings *settings, const struct setting *setting ){
+	const struct setting *applicable;
+
+	/* If setting is already applicable, use it */
+	if ( setting_applies ( settings, setting ) )
+		return setting;
+
+	/* Otherwise, look for a matching predefined setting which does apply */
+	for_each_table_entry ( applicable, SETTINGS ) {
+		if ( ( setting_cmp ( setting, applicable ) == 0 ) &&
+		     ( setting_applies ( settings, applicable ) ) )
+			return applicable;
+	}
+
+	return NULL;
 }
 
 /**
@@ -570,14 +598,14 @@ int setting_applies ( struct settings *settings, struct setting *setting ) {
  * @v len		Length of setting data
  * @ret rc		Return status code
  */
-int store_setting ( struct settings *settings, struct setting *setting,
+int store_setting ( struct settings *settings, const struct setting *setting,
 		    const void *data, size_t len ) {
 	int rc;
 
 	/* Find target settings block */
 	settings = settings_target ( settings );
 
-	/* Fail if tag does not apply to this settings block */
+	/* Fail if setting does not apply to this settings block */
 	if ( ! setting_applies ( settings, setting ) )
 		return -ENOTTY;
 
@@ -609,11 +637,12 @@ int store_setting ( struct settings *settings, struct setting *setting,
 }
 
 /**
- * Fetch value and origin of setting
+ * Fetch setting
  *
  * @v settings		Settings block, or NULL to search all blocks
  * @v setting		Setting to fetch
- * @v origin		Origin of setting to fill in
+ * @v origin		Origin of setting to fill in, or NULL
+ * @v fetched		Fetched setting to fill in, or NULL
  * @v data		Buffer to fill with setting data
  * @v len		Length of buffer
  * @ret len		Length of setting data, or negative error
@@ -621,17 +650,20 @@ int store_setting ( struct settings *settings, struct setting *setting,
  * The actual length of the setting will be returned even if
  * the buffer was too small.
  */
-static int fetch_setting_and_origin ( struct settings *settings,
-				      struct setting *setting,
-				      struct settings **origin,
-				      void *data, size_t len ) {
+int fetch_setting ( struct settings *settings, const struct setting *setting,
+		    struct settings **origin, struct setting *fetched,
+		    void *data, size_t len ) {
+	const struct setting *applicable;
 	struct settings *child;
+	struct setting tmp;
 	int ret;
 
 	/* Avoid returning uninitialised data on error */
 	memset ( data, 0, len );
 	if ( origin )
 		*origin = NULL;
+	if ( fetched )
+		memcpy ( fetched, setting, sizeof ( *fetched ) );
 
 	/* Find target settings block */
 	settings = settings_target ( settings );
@@ -640,23 +672,34 @@ static int fetch_setting_and_origin ( struct settings *settings,
 	if ( ! settings->op->fetch )
 		return -ENOTSUP;
 
-	/* Try this block first, if applicable */
-	if ( setting_applies ( settings, setting ) &&
-	     ( ( ret = settings->op->fetch ( settings, setting,
-					     data, len ) ) >= 0 ) ) {
-		/* Record origin, if applicable */
-		if ( origin )
-			*origin = settings;
-		/* Default to string setting type, if not yet specified */
-		if ( ! setting->type )
-			setting->type = &setting_type_string;
-		return ret;
+	/* Try this block first, if an applicable setting exists */
+	if ( ( applicable = applicable_setting ( settings, setting ) ) ) {
+
+		/* Create modifiable copy of setting */
+		memcpy ( &tmp, applicable, sizeof ( tmp ) );
+		if ( ( ret = settings->op->fetch ( settings, &tmp,
+						   data, len ) ) >= 0 ) {
+
+			/* Default to string type, if not yet specified */
+			if ( ! tmp.type )
+				tmp.type = &setting_type_string;
+
+			/* Record origin, if applicable */
+			if ( origin )
+				*origin = settings;
+
+			/* Record fetched setting, if applicable */
+			if ( fetched )
+				memcpy ( fetched, &tmp, sizeof ( *fetched ) );
+
+			return ret;
+		}
 	}
 
 	/* Recurse into each child block in turn */
 	list_for_each_entry ( child, &settings->children, siblings ) {
-		if ( ( ret = fetch_setting_and_origin ( child, setting, origin,
-							data, len ) ) >= 0 )
+		if ( ( ret = fetch_setting ( child, setting, origin, fetched,
+					     data, len ) ) >= 0 )
 			return ret;
 	}
 
@@ -664,56 +707,95 @@ static int fetch_setting_and_origin ( struct settings *settings,
 }
 
 /**
- * Fetch value of setting
+ * Fetch allocated copy of setting
  *
  * @v settings		Settings block, or NULL to search all blocks
  * @v setting		Setting to fetch
- * @v data		Buffer to fill with setting data
- * @v len		Length of buffer
- * @ret len		Length of setting data, or negative error
+ * @v origin		Origin of setting to fill in, or NULL
+ * @v fetched		Fetched setting to fill in, or NULL
+ * @v data		Buffer to allocate and fill with setting data
+ * @v alloc		Allocation function
+ * @ret len		Length of setting, or negative error
  *
- * The actual length of the setting will be returned even if
- * the buffer was too small.
+ * The caller is responsible for eventually freeing the allocated
+ * buffer.
  */
-int fetch_setting ( struct settings *settings, struct setting *setting,
-		    void *data, size_t len ) {
-	return fetch_setting_and_origin ( settings, setting, NULL, data, len );
-}
+static int fetch_setting_alloc ( struct settings *settings,
+				 const struct setting *setting,
+				 struct settings **origin,
+				 struct setting *fetched,
+				 void **data,
+				 void * ( * alloc ) ( size_t len ) ) {
+	struct settings *tmp_origin;
+	struct setting tmp_fetched;
+	int len;
+	int check_len;
 
-/**
- * Fetch origin of setting
- *
- * @v settings		Settings block, or NULL to search all blocks
- * @v setting		Setting to fetch
- * @ret origin		Origin of setting, or NULL if not found
- *
- * This function can also be used as an existence check for the
- * setting.
- */
-struct settings * fetch_setting_origin ( struct settings *settings,
-					 struct setting *setting ) {
-	struct settings *origin;
+	/* Use local buffers if necessary */
+	if ( ! origin )
+		origin = &tmp_origin;
+	if ( ! fetched )
+		fetched = &tmp_fetched;
 
-	fetch_setting_and_origin ( settings, setting, &origin, NULL, 0 );
-	return origin;
-}
+	/* Avoid returning uninitialised data on error */
+	*data = NULL;
 
-/**
- * Fetch length of setting
- *
- * @v settings		Settings block, or NULL to search all blocks
- * @v setting		Setting to fetch
- * @ret len		Length of setting data, or negative error
- *
- * This function can also be used as an existence check for the
- * setting.
- */
-int fetch_setting_len ( struct settings *settings, struct setting *setting ) {
-	return fetch_setting ( settings, setting, NULL, 0 );
+	/* Check existence, and fetch setting length */
+	len = fetch_setting ( settings, setting, origin, fetched, NULL, 0 );
+	if ( len < 0 )
+		return len;
+
+	/* Allocate buffer */
+	*data = alloc ( len );
+	if ( ! *data )
+		return -ENOMEM;
+
+	/* Fetch setting value */
+	check_len = fetch_setting ( *origin, fetched, NULL, NULL, *data, len );
+	assert ( check_len == len );
+	return len;
 }
 
 /**
  * Fetch copy of setting
+ *
+ * @v settings		Settings block, or NULL to search all blocks
+ * @v setting		Setting to fetch
+ * @v origin		Origin of setting to fill in, or NULL
+ * @v fetched		Fetched setting to fill in, or NULL
+ * @v data		Buffer to allocate and fill with setting data
+ * @ret len		Length of setting, or negative error
+ *
+ * The caller is responsible for eventually freeing the allocated
+ * buffer.
+ */
+int fetch_setting_copy ( struct settings *settings,
+			 const struct setting *setting,
+			 struct settings **origin, struct setting *fetched,
+			 void **data ) {
+
+	return fetch_setting_alloc ( settings, setting, origin, fetched,
+				     data, malloc );
+}
+
+/**
+ * Fetch value of setting
+ *
+ * @v settings		Settings block, or NULL to search all blocks
+ * @v setting		Setting to fetch
+ * @v data		Buffer to fill with setting string data
+ * @v len		Length of buffer
+ * @ret len		Length of setting, or negative error
+ */
+int fetch_raw_setting ( struct settings *settings,
+			const struct setting *setting,
+			void *data, size_t len ) {
+
+	return fetch_setting ( settings, setting, NULL, NULL, data, len );
+}
+
+/**
+ * Fetch value of setting
  *
  * @v settings		Settings block, or NULL to search all blocks
  * @v setting		Setting to fetch
@@ -723,28 +805,11 @@ int fetch_setting_len ( struct settings *settings, struct setting *setting ) {
  * The caller is responsible for eventually freeing the allocated
  * buffer.
  */
-int fetch_setting_copy ( struct settings *settings, struct setting *setting,
-			 void **data ) {
-	int len;
-	int check_len;
+int fetch_raw_setting_copy ( struct settings *settings,
+			     const struct setting *setting,
+			     void **data ) {
 
-	/* Avoid returning uninitialised data on error */
-	*data = NULL;
-
-	/* Check existence, and fetch setting length */
-	len = fetch_setting_len ( settings, setting );
-	if ( len < 0 )
-		return len;
-
-	/* Allocate buffer */
-	*data = malloc ( len );
-	if ( ! *data )
-		return -ENOMEM;
-
-	/* Fetch setting */
-	check_len = fetch_setting ( settings, setting, *data, len );
-	assert ( check_len == len );
-	return len;
+	return fetch_setting_copy ( settings, setting, NULL, NULL, data );
 }
 
 /**
@@ -760,11 +825,23 @@ int fetch_setting_copy ( struct settings *settings, struct setting *setting,
  * The returned length will be the length of the underlying setting
  * data.
  */
-int fetch_string_setting ( struct settings *settings, struct setting *setting,
+int fetch_string_setting ( struct settings *settings,
+			   const struct setting *setting,
 			   char *data, size_t len ) {
+
 	memset ( data, 0, len );
-	return fetch_setting ( settings, setting, data,
-			       ( ( len > 0 ) ? ( len - 1 ) : 0 ) );
+	return fetch_raw_setting ( settings, setting, data,
+				   ( ( len > 0 ) ? ( len - 1 ) : 0 ) );
+}
+
+/**
+ * Allocate memory for copy of string setting
+ *
+ * @v len		Length of setting
+ * @ret ptr		Allocated memory
+ */
+static void * fetch_string_setting_copy_alloc ( size_t len ) {
+	return zalloc ( len + 1 /* NUL */ );
 }
 
 /**
@@ -779,36 +856,13 @@ int fetch_string_setting ( struct settings *settings, struct setting *setting,
  * The returned length will be the length of the underlying setting
  * data.  The caller is responsible for eventually freeing the
  * allocated buffer.
- *
- * To allow the caller to distinguish between a non-existent setting
- * and an error in allocating memory for the copy, this function will
- * return success (and a NULL buffer pointer) for a non-existent
- * setting.
  */
 int fetch_string_setting_copy ( struct settings *settings,
-				struct setting *setting,
-				char **data ) {
-	int len;
-	int check_len = 0;
+				const struct setting *setting, char **data ) {
 
-	/* Avoid returning uninitialised data on error */
-	*data = NULL;
-
-	/* Fetch setting length, and return success if non-existent */
-	len = fetch_setting_len ( settings, setting );
-	if ( len < 0 )
-		return 0;
-
-	/* Allocate string buffer */
-	*data = malloc ( len + 1 );
-	if ( ! *data )
-		return -ENOMEM;
-
-	/* Fetch setting */
-	check_len = fetch_string_setting ( settings, setting, *data,
-					   ( len + 1 ) );
-	assert ( check_len == len );
-	return len;
+	return fetch_setting_alloc ( settings, setting, NULL, NULL,
+				     ( ( void ** ) data ),
+				     fetch_string_setting_copy_alloc );
 }
 
 /**
@@ -821,12 +875,12 @@ int fetch_string_setting_copy ( struct settings *settings,
  * @ret len		Length of setting, or negative error
  */
 int fetch_ipv4_array_setting ( struct settings *settings,
-			       struct setting *setting,
+			       const struct setting *setting,
 			       struct in_addr *inp, unsigned int count ) {
 	int len;
 
-	len = fetch_setting ( settings, setting, inp,
-			      ( sizeof ( *inp ) * count ) );
+	len = fetch_raw_setting ( settings, setting, inp,
+				  ( sizeof ( *inp ) * count ) );
 	if ( len < 0 )
 		return len;
 	if ( ( len % sizeof ( *inp ) ) != 0 )
@@ -842,9 +896,49 @@ int fetch_ipv4_array_setting ( struct settings *settings,
  * @v inp		IPv4 address to fill in
  * @ret len		Length of setting, or negative error
  */
-int fetch_ipv4_setting ( struct settings *settings, struct setting *setting,
+int fetch_ipv4_setting ( struct settings *settings,
+			 const struct setting *setting,
 			 struct in_addr *inp ) {
+
 	return fetch_ipv4_array_setting ( settings, setting, inp, 1 );
+}
+
+/**
+ * Fetch value of IPv6 address setting
+ *
+ * @v settings		Settings block, or NULL to search all blocks
+ * @v setting		Setting to fetch
+ * @v inp		IPv6 addresses to fill in
+ * @v count		Maximum number of IPv6 addresses
+ * @ret len		Length of setting, or negative error
+ */
+int fetch_ipv6_array_setting ( struct settings *settings,
+			       const struct setting *setting,
+			       struct in6_addr *inp, unsigned int count ) {
+	int len;
+
+	len = fetch_raw_setting ( settings, setting, inp,
+				  ( sizeof ( *inp ) * count ) );
+	if ( len < 0 )
+		return len;
+	if ( ( len % sizeof ( *inp ) ) != 0 )
+		return -ERANGE;
+	return len;
+}
+
+/**
+ * Fetch value of IPv6 address setting
+ *
+ * @v settings		Settings block, or NULL to search all blocks
+ * @v setting		Setting to fetch
+ * @v inp		IPv6 address to fill in
+ * @ret len		Length of setting, or negative error
+ */
+int fetch_ipv6_setting ( struct settings *settings,
+			 const struct setting *setting,
+			 struct in6_addr *inp ) {
+
+	return fetch_ipv6_array_setting ( settings, setting, inp, 1 );
 }
 
 /**
@@ -887,7 +981,8 @@ static int numeric_setting_value ( int is_signed, const void *raw, size_t len,
  * @v value		Integer value to fill in
  * @ret len		Length of setting, or negative error
  */
-int fetch_numeric_setting ( struct settings *settings, struct setting *setting,
+int fetch_numeric_setting ( struct settings *settings,
+			    const struct setting *setting,
 			    unsigned long *value, int is_signed ) {
 	unsigned long tmp;
 	int len;
@@ -896,7 +991,7 @@ int fetch_numeric_setting ( struct settings *settings, struct setting *setting,
 	*value = 0;
 
 	/* Fetch raw (network-ordered, variable-length) setting */
-	len = fetch_setting ( settings, setting, &tmp, sizeof ( tmp ) );
+	len = fetch_raw_setting ( settings, setting, &tmp, sizeof ( tmp ) );
 	if ( len < 0 )
 		return len;
 
@@ -912,7 +1007,8 @@ int fetch_numeric_setting ( struct settings *settings, struct setting *setting,
  * @v value		Integer value to fill in
  * @ret len		Length of setting, or negative error
  */
-int fetch_int_setting ( struct settings *settings, struct setting *setting,
+int fetch_int_setting ( struct settings *settings,
+			const struct setting *setting,
 			long *value ) {
 
 	return fetch_numeric_setting ( settings, setting,
@@ -927,7 +1023,8 @@ int fetch_int_setting ( struct settings *settings, struct setting *setting,
  * @v value		Integer value to fill in
  * @ret len		Length of setting, or negative error
  */
-int fetch_uint_setting ( struct settings *settings, struct setting *setting,
+int fetch_uint_setting ( struct settings *settings,
+			 const struct setting *setting,
 			 unsigned long *value ) {
 
 	return fetch_numeric_setting ( settings, setting, value, 0 );
@@ -940,7 +1037,8 @@ int fetch_uint_setting ( struct settings *settings, struct setting *setting,
  * @v setting		Setting to fetch
  * @ret value		Setting value, or zero
  */
-long fetch_intz_setting ( struct settings *settings, struct setting *setting ){
+long fetch_intz_setting ( struct settings *settings,
+			  const struct setting *setting ) {
 	unsigned long value;
 
 	fetch_numeric_setting ( settings, setting, &value, 1 );
@@ -955,7 +1053,7 @@ long fetch_intz_setting ( struct settings *settings, struct setting *setting ){
  * @ret value		Setting value, or zero
  */
 unsigned long fetch_uintz_setting ( struct settings *settings,
-				    struct setting *setting ) {
+				    const struct setting *setting ) {
 	unsigned long value;
 
 	fetch_numeric_setting ( settings, setting, &value, 0 );
@@ -970,11 +1068,12 @@ unsigned long fetch_uintz_setting ( struct settings *settings,
  * @v uuid		UUID to fill in
  * @ret len		Length of setting, or negative error
  */
-int fetch_uuid_setting ( struct settings *settings, struct setting *setting,
+int fetch_uuid_setting ( struct settings *settings,
+			 const struct setting *setting,
 			 union uuid *uuid ) {
 	int len;
 
-	len = fetch_setting ( settings, setting, uuid, sizeof ( *uuid ) );
+	len = fetch_raw_setting ( settings, setting, uuid, sizeof ( *uuid ) );
 	if ( len < 0 )
 		return len;
 	if ( len != sizeof ( *uuid ) )
@@ -1005,7 +1104,7 @@ void clear_settings ( struct settings *settings ) {
  * @ret 0		Settings are the same
  * @ret non-zero	Settings are not the same
  */
-int setting_cmp ( struct setting *a, struct setting *b ) {
+int setting_cmp ( const struct setting *a, const struct setting *b ) {
 
 	/* If the settings have tags, compare them */
 	if ( a->tag && ( a->tag == b->tag ) && ( a->scope == b->scope ) )
@@ -1036,7 +1135,7 @@ int setting_cmp ( struct setting *a, struct setting *b ) {
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-int setting_format ( struct setting_type *type, const void *raw,
+int setting_format ( const struct setting_type *type, const void *raw,
 		     size_t raw_len, char *buf, size_t len ) {
 
 	/* Sanity check */
@@ -1055,7 +1154,7 @@ int setting_format ( struct setting_type *type, const void *raw,
  * @v len		Length of buffer
  * @ret len		Length of raw value, or negative error
  */
-int setting_parse ( struct setting_type *type, const char *value,
+int setting_parse ( const struct setting_type *type, const char *value,
 		    void *buf, size_t len ) {
 
 	/* Sanity check */
@@ -1074,7 +1173,7 @@ int setting_parse ( struct setting_type *type, const char *value,
  * @ret value		Numeric value
  * @ret rc		Return status code
  */
-int setting_numerate ( struct setting_type *type, const void *raw,
+int setting_numerate ( const struct setting_type *type, const void *raw,
 		       size_t raw_len, unsigned long *value ) {
 
 	/* Sanity check */
@@ -1093,7 +1192,7 @@ int setting_numerate ( struct setting_type *type, const void *raw,
  * @v len		Length of buffer
  * @ret len		Length of raw value, or negative error
  */
-int setting_denumerate ( struct setting_type *type, unsigned long value,
+int setting_denumerate ( const struct setting_type *type, unsigned long value,
 			 void *buf, size_t len ) {
 
 	/* Sanity check */
@@ -1108,28 +1207,37 @@ int setting_denumerate ( struct setting_type *type, unsigned long value,
  *
  * @v settings		Settings block, or NULL to search all blocks
  * @v setting		Setting to fetch
+ * @v origin		Origin of setting to fill in, or NULL
+ * @v fetched		Fetched setting to fill in, or NULL
  * @v buf		Buffer to contain formatted value
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-int fetchf_setting ( struct settings *settings, struct setting *setting,
+int fetchf_setting ( struct settings *settings, const struct setting *setting,
+		     struct settings **origin, struct setting *fetched,
 		     char *buf, size_t len ) {
+	struct setting tmp_fetched;
 	void *raw;
 	int raw_len;
 	int ret;
 
+	/* Use local buffers if necessary */
+	if ( ! fetched )
+		fetched = &tmp_fetched;
+
 	/* Fetch raw value */
-	raw_len = fetch_setting_copy ( settings, setting, &raw );
+	raw_len = fetch_setting_copy ( settings, setting, origin, fetched,
+				       &raw );
 	if ( raw_len < 0 ) {
 		ret = raw_len;
 		goto err_fetch_copy;
 	}
 
 	/* Sanity check */
-	assert ( setting->type != NULL );
+	assert ( fetched->type != NULL );
 
 	/* Format setting */
-	if ( ( ret = setting_format ( setting->type, raw, raw_len, buf,
+	if ( ( ret = setting_format ( fetched->type, raw, raw_len, buf,
 				      len ) ) < 0 )
 		goto err_format;
 
@@ -1144,22 +1252,34 @@ int fetchf_setting ( struct settings *settings, struct setting *setting,
  *
  * @v settings		Settings block, or NULL to search all blocks
  * @v setting		Setting to fetch
+ * @v origin		Origin of setting to fill in, or NULL
+ * @v fetched		Fetched setting to fill in, or NULL
  * @v value		Buffer to allocate and fill with formatted value
  * @ret len		Length of formatted value, or negative error
  *
  * The caller is responsible for eventually freeing the allocated
  * buffer.
  */
-int fetchf_setting_copy ( struct settings *settings, struct setting *setting,
+int fetchf_setting_copy ( struct settings *settings,
+			  const struct setting *setting,
+			  struct settings **origin, struct setting *fetched,
 			  char **value ) {
+	struct settings *tmp_origin;
+	struct setting tmp_fetched;
 	int len;
 	int check_len;
+
+	/* Use local buffers if necessary */
+	if ( ! origin )
+		origin = &tmp_origin;
+	if ( ! fetched )
+		fetched = &tmp_fetched;
 
 	/* Avoid returning uninitialised data on error */
 	*value = NULL;
 
 	/* Check existence, and fetch formatted value length */
-	len = fetchf_setting ( settings, setting, NULL, 0 );
+	len = fetchf_setting ( settings, setting, origin, fetched, NULL, 0 );
 	if ( len < 0 )
 		return len;
 
@@ -1169,7 +1289,7 @@ int fetchf_setting_copy ( struct settings *settings, struct setting *setting,
 		return -ENOMEM;
 
 	/* Fetch formatted value */
-	check_len = fetchf_setting ( settings, setting, *value,
+	check_len = fetchf_setting ( *origin, fetched, NULL, NULL, *value,
 				     ( len + 1 /* NUL */ ) );
 	assert ( check_len == len );
 	return len;
@@ -1183,7 +1303,7 @@ int fetchf_setting_copy ( struct settings *settings, struct setting *setting,
  * @v value		Formatted setting data, or NULL
  * @ret rc		Return status code
  */
-int storef_setting ( struct settings *settings, struct setting *setting,
+int storef_setting ( struct settings *settings, const struct setting *setting,
 		     const char *value ) {
 	void *raw;
 	int raw_len;
@@ -1231,27 +1351,36 @@ int storef_setting ( struct settings *settings, struct setting *setting,
  *
  * @v settings		Settings block, or NULL to search all blocks
  * @v setting		Setting to fetch
+ * @v origin		Origin of setting to fill in, or NULL
+ * @v fetched		Fetched setting to fill in, or NULL
  * @v value		Numeric value to fill in
  * @ret rc		Return status code
  */
-int fetchn_setting ( struct settings *settings, struct setting *setting,
+int fetchn_setting ( struct settings *settings, const struct setting *setting,
+		     struct settings **origin, struct setting *fetched,
 		     unsigned long *value ) {
+	struct setting tmp_fetched;
 	void *raw;
 	int raw_len;
 	int rc;
 
+	/* Use local buffers if necessary */
+	if ( ! fetched )
+		fetched = &tmp_fetched;
+
 	/* Fetch raw value */
-	raw_len = fetch_setting_copy ( settings, setting, &raw );
+	raw_len = fetch_setting_copy ( settings, setting, origin, fetched,
+				       &raw );
 	if ( raw_len < 0 ) {
 		rc = raw_len;
 		goto err_fetch_copy;
 	}
 
 	/* Sanity check */
-	assert ( setting->type != NULL );
+	assert ( fetched->type != NULL );
 
 	/* Numerate setting */
-	if ( ( rc = setting_numerate ( setting->type, raw, raw_len,
+	if ( ( rc = setting_numerate ( fetched->type, raw, raw_len,
 				       value ) ) < 0 )
 		goto err_numerate;
 
@@ -1269,7 +1398,7 @@ int fetchn_setting ( struct settings *settings, struct setting *setting,
  * @v value		Numeric value
  * @ret rc		Return status code
  */
-int storen_setting ( struct settings *settings, struct setting *setting,
+int storen_setting ( struct settings *settings, const struct setting *setting,
 		     unsigned long value ) {
 	void *raw;
 	int raw_len;
@@ -1357,8 +1486,8 @@ static unsigned int parse_setting_tag ( const char *name ) {
  * @v name		Name
  * @ret type		Setting type, or NULL
  */
-static struct setting_type * find_setting_type ( const char *name ) {
-	struct setting_type *type;
+static const struct setting_type * find_setting_type ( const char *name ) {
+	const struct setting_type *type;
 
 	for_each_table_entry ( type, SETTING_TYPES ) {
 		if ( strcmp ( name, type->name ) == 0 )
@@ -1461,7 +1590,7 @@ int parse_setting_name ( char *name, get_child_settings_t get_child,
  * @v len		Length of buffer
  * @ret len		Length of setting name, or negative error
  */
-int setting_name ( struct settings *settings, struct setting *setting,
+int setting_name ( struct settings *settings, const struct setting *setting,
 		   char *buf, size_t len ) {
 	const char *name;
 
@@ -1487,7 +1616,7 @@ int setting_name ( struct settings *settings, struct setting *setting,
  * @v len		Length of buffer
  * @ret len		Length of raw value, or negative error
  */
-static int parse_string_setting ( struct setting_type *type __unused,
+static int parse_string_setting ( const struct setting_type *type __unused,
 				  const char *value, void *buf, size_t len ) {
 	size_t raw_len = strlen ( value ); /* Exclude terminating NUL */
 
@@ -1509,7 +1638,7 @@ static int parse_string_setting ( struct setting_type *type __unused,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_string_setting ( struct setting_type *type __unused,
+static int format_string_setting ( const struct setting_type *type __unused,
 				   const void *raw, size_t raw_len, char *buf,
 				   size_t len ) {
 
@@ -1523,7 +1652,7 @@ static int format_string_setting ( struct setting_type *type __unused,
 }
 
 /** A string setting type */
-struct setting_type setting_type_string __setting_type = {
+const struct setting_type setting_type_string __setting_type = {
 	.name = "string",
 	.parse = parse_string_setting,
 	.format = format_string_setting,
@@ -1538,7 +1667,7 @@ struct setting_type setting_type_string __setting_type = {
  * @v len		Length of buffer
  * @ret len		Length of raw value, or negative error
  */
-static int parse_uristring_setting ( struct setting_type *type __unused,
+static int parse_uristring_setting ( const struct setting_type *type __unused,
 				     const char *value, void *buf, size_t len ){
 	char tmp[ len + 1 /* NUL */ ];
 	size_t raw_len;
@@ -1564,7 +1693,7 @@ static int parse_uristring_setting ( struct setting_type *type __unused,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_uristring_setting ( struct setting_type *type __unused,
+static int format_uristring_setting ( const struct setting_type *type __unused,
 				      const void *raw, size_t raw_len,
 				      char *buf, size_t len ) {
 	char tmp[ raw_len + 1 /* NUL */ ];
@@ -1578,14 +1707,14 @@ static int format_uristring_setting ( struct setting_type *type __unused,
 }
 
 /** A URI-encoded string setting type */
-struct setting_type setting_type_uristring __setting_type = {
+const struct setting_type setting_type_uristring __setting_type = {
 	.name = "uristring",
 	.parse = parse_uristring_setting,
 	.format = format_uristring_setting,
 };
 
 /**
- * Parse IPv4 address setting value
+ * Parse IPv4 address setting value (when IPv4 support is not present)
  *
  * @v type		Setting type
  * @v value		Formatted setting value
@@ -1593,24 +1722,14 @@ struct setting_type setting_type_uristring __setting_type = {
  * @v len		Length of buffer
  * @ret len		Length of raw value, or negative error
  */
-static int parse_ipv4_setting ( struct setting_type *type __unused,
-				const char *value, void *buf, size_t len ) {
-	struct in_addr ipv4;
-
-	/* Parse IPv4 address */
-	if ( inet_aton ( value, &ipv4 ) == 0 )
-		return -EINVAL;
-
-	/* Copy to buffer */
-	if ( len > sizeof ( ipv4 ) )
-		len = sizeof ( ipv4 );
-	memcpy ( buf, &ipv4, len );
-
-	return ( sizeof ( ipv4 ) );
+__weak int parse_ipv4_setting ( const struct setting_type *type __unused,
+				const char *value __unused, void *buf __unused,
+				size_t len __unused ) {
+	return -ENOTSUP;
 }
 
 /**
- * Format IPv4 address setting value
+ * Format IPv4 address setting value (when IPv4 support is not present)
  *
  * @v type		Setting type
  * @v raw		Raw setting value
@@ -1619,22 +1738,61 @@ static int parse_ipv4_setting ( struct setting_type *type __unused,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_ipv4_setting ( struct setting_type *type __unused,
-				 const void *raw, size_t raw_len, char *buf,
-				 size_t len ) {
-	const struct in_addr *ipv4 = raw;
-
-	if ( raw_len < sizeof ( *ipv4 ) )
-		return -EINVAL;
-	return snprintf ( buf, len, "%s", inet_ntoa ( *ipv4 ) );
+__weak int format_ipv4_setting ( const struct setting_type *type __unused,
+				 const void *raw __unused,
+				 size_t raw_len __unused, char *buf __unused,
+				 size_t len __unused ) {
+	return -ENOTSUP;
 }
 
 /** An IPv4 address setting type */
-struct setting_type setting_type_ipv4 __setting_type = {
+const struct setting_type setting_type_ipv4 __setting_type = {
 	.name = "ipv4",
 	.parse = parse_ipv4_setting,
 	.format = format_ipv4_setting,
 };
+
+/**
+ * Parse IPv6 address setting value (when IPv6 support is not present)
+ *
+ * @v type		Setting type
+ * @v value		Formatted setting value
+ * @v buf		Buffer to contain raw value
+ * @v len		Length of buffer
+ * @ret len		Length of raw value, or negative error
+ */
+__weak int parse_ipv6_setting ( const struct setting_type *type __unused,
+				const char *value __unused, void *buf __unused,
+				size_t len __unused ) {
+	return -ENOTSUP;
+}
+
+/**
+ * Format IPv6 address setting value (when IPv6 support is not present)
+ *
+ * @v type		Setting type
+ * @v raw		Raw setting value
+ * @v raw_len		Length of raw setting value
+ * @v buf		Buffer to contain formatted value
+ * @v len		Length of buffer
+ * @ret len		Length of formatted value, or negative error
+ */
+__weak int format_ipv6_setting ( const struct setting_type *type __unused,
+				 const void *raw __unused,
+				 size_t raw_len __unused, char *buf __unused,
+				 size_t len __unused ) {
+	return -ENOTSUP;
+}
+
+/** An IPv6 address setting type */
+const struct setting_type setting_type_ipv6 __setting_type = {
+	.name = "ipv6",
+	.parse = parse_ipv6_setting,
+	.format = format_ipv6_setting,
+};
+
+/** IPv6 settings scope */
+const struct settings_scope ipv6_scope;
 
 /**
  * Integer setting type indices
@@ -1685,7 +1843,7 @@ static const char setting_type_int_name[][8] = {
  * @v type		Setting type
  * @ret index		Integer setting type index
  */
-static unsigned int setting_type_int_index ( struct setting_type *type ) {
+static unsigned int setting_type_int_index ( const struct setting_type *type ) {
 
 	return ( ( type->name - setting_type_int_name[0] ) /
 		 sizeof ( setting_type_int_name[0] ) );
@@ -1697,7 +1855,7 @@ static unsigned int setting_type_int_index ( struct setting_type *type ) {
  * @v type		Setting type
  * @ret index		Integer setting type width
  */
-static unsigned int setting_type_int_width ( struct setting_type *type ) {
+static unsigned int setting_type_int_width ( const struct setting_type *type ) {
 
 	return ( 1 << setting_type_int_index ( type ) );
 }
@@ -1708,7 +1866,7 @@ static unsigned int setting_type_int_width ( struct setting_type *type ) {
  * @v type		Setting type
  * @ret is_signed	Integer setting type is signed
  */
-static int setting_type_int_is_signed ( struct setting_type *type ) {
+static int setting_type_int_is_signed ( const struct setting_type *type ) {
 	return ( ( type->name - setting_type_int_name[0] ) & 1 );
 }
 
@@ -1721,7 +1879,7 @@ static int setting_type_int_is_signed ( struct setting_type *type ) {
  * @v len		Length of buffer
  * @ret len		Length of raw value, or negative error
  */
-static int denumerate_int_setting ( struct setting_type *type,
+static int denumerate_int_setting ( const struct setting_type *type,
 				    unsigned long value, void *buf,
 				    size_t len ) {
 	unsigned int size = setting_type_int_width ( type );
@@ -1747,7 +1905,7 @@ static int denumerate_int_setting ( struct setting_type *type,
  * @v value		Numeric value to fill in
  * @ret rc		Return status code
  */
-static int numerate_int_setting ( struct setting_type *type,
+static int numerate_int_setting ( const struct setting_type *type,
 				  const void *raw, size_t raw_len,
 				  unsigned long *value ) {
 	int is_signed = setting_type_int_is_signed ( type );
@@ -1771,8 +1929,8 @@ static int numerate_int_setting ( struct setting_type *type,
  * @v len		Length of buffer
  * @ret len		Length of raw value, or negative error
  */
-static int parse_int_setting ( struct setting_type *type, const char *value,
-			       void *buf, size_t len ) {
+static int parse_int_setting ( const struct setting_type *type,
+			       const char *value, void *buf, size_t len ) {
 	char *endp;
 	unsigned long num_value;
 
@@ -1794,8 +1952,9 @@ static int parse_int_setting ( struct setting_type *type, const char *value,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_int_setting ( struct setting_type *type, const void *raw,
-				size_t raw_len, char *buf, size_t len ) {
+static int format_int_setting ( const struct setting_type *type,
+				const void *raw, size_t raw_len,
+				char *buf, size_t len ) {
 	unsigned long value;
 	int ret;
 
@@ -1817,8 +1976,9 @@ static int format_int_setting ( struct setting_type *type, const void *raw,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_uint_setting ( struct setting_type *type, const void *raw,
-				 size_t raw_len, char *buf, size_t len ) {
+static int format_uint_setting ( const struct setting_type *type,
+				 const void *raw, size_t raw_len,
+				 char *buf, size_t len ) {
 	unsigned long value;
 	int ret;
 
@@ -1859,27 +2019,27 @@ static int format_uint_setting ( struct setting_type *type, const void *raw,
 }
 
 /** A signed 8-bit integer setting type */
-struct setting_type setting_type_int8 __setting_type =
+const struct setting_type setting_type_int8 __setting_type =
 	SETTING_TYPE_INT ( SETTING_TYPE_INT8 );
 
 /** A signed 16-bit integer setting type */
-struct setting_type setting_type_int16 __setting_type =
+const struct setting_type setting_type_int16 __setting_type =
 	SETTING_TYPE_INT ( SETTING_TYPE_INT16 );
 
 /** A signed 32-bit integer setting type */
-struct setting_type setting_type_int32 __setting_type =
+const struct setting_type setting_type_int32 __setting_type =
 	SETTING_TYPE_INT ( SETTING_TYPE_INT32 );
 
 /** An unsigned 8-bit integer setting type */
-struct setting_type setting_type_uint8 __setting_type =
+const struct setting_type setting_type_uint8 __setting_type =
 	SETTING_TYPE_UINT ( SETTING_TYPE_INT8 );
 
 /** An unsigned 16-bit integer setting type */
-struct setting_type setting_type_uint16 __setting_type =
+const struct setting_type setting_type_uint16 __setting_type =
 	SETTING_TYPE_UINT ( SETTING_TYPE_INT16 );
 
 /** An unsigned 32-bit integer setting type */
-struct setting_type setting_type_uint32 __setting_type =
+const struct setting_type setting_type_uint32 __setting_type =
 	SETTING_TYPE_UINT ( SETTING_TYPE_INT32 );
 
 /**
@@ -1918,7 +2078,7 @@ static int format_hex_setting ( const char *delimiter, const void *raw,
  * @v size		Integer size, in bytes
  * @ret len		Length of raw value, or negative error
  */
-static int parse_hex_setting ( struct setting_type *type __unused,
+static int parse_hex_setting ( const struct setting_type *type __unused,
 			       const char *value, void *buf, size_t len ) {
 	return hex_decode ( value, ':', buf, len );
 }
@@ -1933,7 +2093,7 @@ static int parse_hex_setting ( struct setting_type *type __unused,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_hex_colon_setting ( struct setting_type *type __unused,
+static int format_hex_colon_setting ( const struct setting_type *type __unused,
 				      const void *raw, size_t raw_len,
 				      char *buf, size_t len ) {
 	return format_hex_setting ( ":", raw, raw_len, buf, len );
@@ -1949,7 +2109,7 @@ static int format_hex_colon_setting ( struct setting_type *type __unused,
  * @v size		Integer size, in bytes
  * @ret len		Length of raw value, or negative error
  */
-static int parse_hex_hyphen_setting ( struct setting_type *type __unused,
+static int parse_hex_hyphen_setting ( const struct setting_type *type __unused,
 				      const char *value, void *buf,
 				      size_t len ) {
 	return hex_decode ( value, '-', buf, len );
@@ -1965,7 +2125,7 @@ static int parse_hex_hyphen_setting ( struct setting_type *type __unused,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_hex_hyphen_setting ( struct setting_type *type __unused,
+static int format_hex_hyphen_setting ( const struct setting_type *type __unused,
 				       const void *raw, size_t raw_len,
 				       char *buf, size_t len ) {
 	return format_hex_setting ( "-", raw, raw_len, buf, len );
@@ -1981,7 +2141,7 @@ static int format_hex_hyphen_setting ( struct setting_type *type __unused,
  * @v size		Integer size, in bytes
  * @ret len		Length of raw value, or negative error
  */
-static int parse_hex_raw_setting ( struct setting_type *type __unused,
+static int parse_hex_raw_setting ( const struct setting_type *type __unused,
 				   const char *value, void *buf, size_t len ) {
 	return hex_decode ( value, 0, buf, len );
 }
@@ -1996,28 +2156,28 @@ static int parse_hex_raw_setting ( struct setting_type *type __unused,
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_hex_raw_setting ( struct setting_type *type __unused,
+static int format_hex_raw_setting ( const struct setting_type *type __unused,
 				    const void *raw, size_t raw_len,
 				    char *buf, size_t len ) {
 	return format_hex_setting ( "", raw, raw_len, buf, len );
 }
 
 /** A hex-string setting (colon-delimited) */
-struct setting_type setting_type_hex __setting_type = {
+const struct setting_type setting_type_hex __setting_type = {
 	.name = "hex",
 	.parse = parse_hex_setting,
 	.format = format_hex_colon_setting,
 };
 
 /** A hex-string setting (hyphen-delimited) */
-struct setting_type setting_type_hexhyp __setting_type = {
+const struct setting_type setting_type_hexhyp __setting_type = {
 	.name = "hexhyp",
 	.parse = parse_hex_hyphen_setting,
 	.format = format_hex_hyphen_setting,
 };
 
 /** A hex-string setting (non-delimited) */
-struct setting_type setting_type_hexraw __setting_type = {
+const struct setting_type setting_type_hexraw __setting_type = {
 	.name = "hexraw",
 	.parse = parse_hex_raw_setting,
 	.format = format_hex_raw_setting,
@@ -2033,7 +2193,7 @@ struct setting_type setting_type_hexraw __setting_type = {
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_uuid_setting ( struct setting_type *type __unused,
+static int format_uuid_setting ( const struct setting_type *type __unused,
 				 const void *raw, size_t raw_len, char *buf,
 				 size_t len ) {
 	const union uuid *uuid = raw;
@@ -2047,7 +2207,7 @@ static int format_uuid_setting ( struct setting_type *type __unused,
 }
 
 /** UUID setting type */
-struct setting_type setting_type_uuid __setting_type = {
+const struct setting_type setting_type_uuid __setting_type = {
 	.name = "uuid",
 	.format = format_uuid_setting,
 };
@@ -2062,7 +2222,7 @@ struct setting_type setting_type_uuid __setting_type = {
  * @v len		Length of buffer
  * @ret len		Length of formatted value, or negative error
  */
-static int format_busdevfn_setting ( struct setting_type *type __unused,
+static int format_busdevfn_setting ( const struct setting_type *type __unused,
 				     const void *raw, size_t raw_len, char *buf,
 				     size_t len ) {
 	unsigned long busdevfn;
@@ -2080,7 +2240,7 @@ static int format_busdevfn_setting ( struct setting_type *type __unused,
 }
 
 /** PCI bus:dev.fn setting type */
-struct setting_type setting_type_busdevfn __setting_type = {
+const struct setting_type setting_type_busdevfn __setting_type = {
 	.name = "busdevfn",
 	.format = format_busdevfn_setting,
 };
@@ -2153,7 +2313,8 @@ char * expand_settings ( const char *string ) {
 			/* Fetch and format setting value.  Ignore
 			 * errors; treat non-existent settings as empty.
 			 */
-			fetchf_setting_copy ( settings, &setting, &value );
+			fetchf_setting_copy ( settings, &setting, NULL, NULL,
+					      &value );
 		}
 
 		/* Construct expanded string and discard old string */
@@ -2177,7 +2338,7 @@ char * expand_settings ( const char *string ) {
  */
 
 /** Hostname setting */
-struct setting hostname_setting __setting ( SETTING_HOST ) = {
+const struct setting hostname_setting __setting ( SETTING_HOST, hostname ) = {
 	.name = "hostname",
 	.description = "Host name",
 	.tag = DHCP_HOST_NAME,
@@ -2185,7 +2346,7 @@ struct setting hostname_setting __setting ( SETTING_HOST ) = {
 };
 
 /** Domain name setting */
-struct setting domain_setting __setting ( SETTING_IPv4_EXTRA ) = {
+const struct setting domain_setting __setting ( SETTING_IP_EXTRA, domain ) = {
 	.name = "domain",
 	.description = "DNS domain",
 	.tag = DHCP_DOMAIN_NAME,
@@ -2193,7 +2354,7 @@ struct setting domain_setting __setting ( SETTING_IPv4_EXTRA ) = {
 };
 
 /** TFTP server setting */
-struct setting next_server_setting __setting ( SETTING_BOOT ) = {
+const struct setting next_server_setting __setting ( SETTING_BOOT,next-server)={
 	.name = "next-server",
 	.description = "TFTP server",
 	.tag = DHCP_EB_SIADDR,
@@ -2201,7 +2362,7 @@ struct setting next_server_setting __setting ( SETTING_BOOT ) = {
 };
 
 /** Filename setting */
-struct setting filename_setting __setting ( SETTING_BOOT ) = {
+const struct setting filename_setting __setting ( SETTING_BOOT, filename ) = {
 	.name = "filename",
 	.description = "Boot filename",
 	.tag = DHCP_BOOTFILE_NAME,
@@ -2209,7 +2370,7 @@ struct setting filename_setting __setting ( SETTING_BOOT ) = {
 };
 
 /** Root path setting */
-struct setting root_path_setting __setting ( SETTING_SANBOOT ) = {
+const struct setting root_path_setting __setting ( SETTING_SANBOOT, root-path)={
 	.name = "root-path",
 	.description = "SAN root path",
 	.tag = DHCP_ROOT_PATH,
@@ -2217,7 +2378,7 @@ struct setting root_path_setting __setting ( SETTING_SANBOOT ) = {
 };
 
 /** Username setting */
-struct setting username_setting __setting ( SETTING_AUTH ) = {
+const struct setting username_setting __setting ( SETTING_AUTH, username ) = {
 	.name = "username",
 	.description = "User name",
 	.tag = DHCP_EB_USERNAME,
@@ -2225,7 +2386,7 @@ struct setting username_setting __setting ( SETTING_AUTH ) = {
 };
 
 /** Password setting */
-struct setting password_setting __setting ( SETTING_AUTH ) = {
+const struct setting password_setting __setting ( SETTING_AUTH, password ) = {
 	.name = "password",
 	.description = "Password",
 	.tag = DHCP_EB_PASSWORD,
@@ -2233,7 +2394,7 @@ struct setting password_setting __setting ( SETTING_AUTH ) = {
 };
 
 /** Priority setting */
-struct setting priority_setting __setting ( SETTING_MISC ) = {
+const struct setting priority_setting __setting ( SETTING_MISC, priority ) = {
 	.name = "priority",
 	.description = "Settings priority",
 	.tag = DHCP_EB_PRIORITY,
@@ -2241,7 +2402,8 @@ struct setting priority_setting __setting ( SETTING_MISC ) = {
 };
 
 /** DHCP user class setting */
-struct setting user_class_setting __setting ( SETTING_HOST_EXTRA ) = {
+const struct setting user_class_setting __setting ( SETTING_HOST_EXTRA,
+						    user-class ) = {
 	.name = "user-class",
 	.description = "DHCP user class",
 	.tag = DHCP_USER_CLASS_ID,
@@ -2256,7 +2418,7 @@ struct setting user_class_setting __setting ( SETTING_HOST_EXTRA ) = {
  */
 
 /** Built-in setting scope */
-struct settings_scope builtin_scope;
+const struct settings_scope builtin_scope;
 
 /**
  * Fetch error number setting
@@ -2277,7 +2439,7 @@ static int errno_fetch ( void *data, size_t len ) {
 }
 
 /** Error number setting */
-struct setting errno_setting __setting ( SETTING_MISC ) = {
+const struct setting errno_setting __setting ( SETTING_MISC, errno ) = {
 	.name = "errno",
 	.description = "Last error",
 	.type = &setting_type_uint32,
@@ -2305,7 +2467,7 @@ static int buildarch_fetch ( void *data, size_t len ) {
 }
 
 /** Build architecture setting */
-struct setting buildarch_setting __setting ( SETTING_MISC ) = {
+const struct setting buildarch_setting __setting ( SETTING_MISC, buildarch ) = {
 	.name = "buildarch",
 	.description = "Build architecture",
 	.type = &setting_type_string,
@@ -2333,7 +2495,7 @@ static int platform_fetch ( void *data, size_t len ) {
 }
 
 /** Platform setting */
-struct setting platform_setting __setting ( SETTING_MISC ) = {
+const struct setting platform_setting __setting ( SETTING_MISC, platform ) = {
 	.name = "platform",
 	.description = "Platform",
 	.type = &setting_type_string,
@@ -2359,7 +2521,7 @@ static int version_fetch ( void *data, size_t len ) {
 }
 
 /** Version setting */
-struct setting version_setting __setting ( SETTING_MISC ) = {
+const struct setting version_setting __setting ( SETTING_MISC, version ) = {
 	.name = "version",
 	.description = "Version",
 	.type = &setting_type_string,
@@ -2401,7 +2563,7 @@ static int builtin_fetch ( struct settings *settings __unused,
  * @ret applies		Setting applies within this settings block
  */
 static int builtin_applies ( struct settings *settings __unused,
-			     struct setting *setting ) {
+			     const struct setting *setting ) {
 
 	return ( setting->scope == &builtin_scope );
 }

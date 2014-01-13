@@ -58,7 +58,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 static const uint8_t fingerprints[] = { TRUSTED };
 
 /** Root certificate fingerprint setting */
-static struct setting trust_setting __setting ( SETTING_CRYPTO ) = {
+static struct setting trust_setting __setting ( SETTING_CRYPTO, trust ) = {
 	.name = "trust",
 	.description = "Trusted root certificate fingerprints",
 	.tag = DHCP_EB_TRUST,
@@ -100,8 +100,8 @@ static void rootcert_init ( void ) {
 		/* Fetch copy of "trust" setting, if it exists.  This
 		 * memory will never be freed.
 		 */
-		if ( ( len = fetch_setting_copy ( NULL, &trust_setting,
-						  &external ) ) >= 0 ) {
+		if ( ( len = fetch_raw_setting_copy ( NULL, &trust_setting,
+						      &external ) ) >= 0 ) {
 			root_certificates.fingerprints = external;
 			root_certificates.count = ( len / FINGERPRINT_LEN );
 		}

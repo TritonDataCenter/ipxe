@@ -32,21 +32,17 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/settings.h>
 #include <ipxe/editbox.h>
 #include <ipxe/keys.h>
+#include <ipxe/ansicol.h>
 #include <ipxe/login_ui.h>
-#include <config/colour.h>
-
-/* Colour pairs */
-#define CPAIR_NORMAL		1
-#define CPAIR_EDIT		2
 
 /* Screen layout */
-#define USERNAME_LABEL_ROW	8
-#define USERNAME_ROW		10
-#define PASSWORD_LABEL_ROW	14
-#define PASSWORD_ROW		16
-#define LABEL_COL		36
-#define EDITBOX_COL		30
-#define EDITBOX_WIDTH		20
+#define USERNAME_LABEL_ROW	( ( LINES / 2U ) - 4U )
+#define USERNAME_ROW		( ( LINES / 2U ) - 2U )
+#define PASSWORD_LABEL_ROW	( ( LINES / 2U ) + 2U )
+#define PASSWORD_ROW		( ( LINES / 2U ) + 4U )
+#define LABEL_COL		( ( COLS / 2U ) - 4U )
+#define EDITBOX_COL		( ( COLS / 2U ) - 10U )
+#define EDITBOX_WIDTH		20U
 
 int login_ui ( void ) {
 	char username[64];
@@ -66,8 +62,6 @@ int login_ui ( void ) {
 	/* Initialise UI */
 	initscr();
 	start_color();
-	init_pair ( CPAIR_NORMAL, COLOR_NORMAL_FG, COLOR_NORMAL_BG );
-	init_pair ( CPAIR_EDIT, COLOR_EDIT_FG, COLOR_EDIT_BG );
 	init_editbox ( &username_box, username, sizeof ( username ), NULL,
 		       USERNAME_ROW, EDITBOX_COL, EDITBOX_WIDTH, 0 );
 	init_editbox ( &password_box, password, sizeof ( password ), NULL,

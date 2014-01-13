@@ -33,6 +33,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/image.h>
 #include <ipxe/pixbuf.h>
 #include <ipxe/umalloc.h>
+#include <ipxe/console.h>
 #include <ipxe/fbcon.h>
 
 /**
@@ -339,16 +340,14 @@ static void fbcon_scroll ( struct fbcon *fbcon ) {
 static void fbcon_draw_cursor ( struct fbcon *fbcon, int show_cursor ) {
 	struct fbcon_text_cell cell;
 	size_t offset;
-	uint32_t background;
 
 	offset = ( ( ( fbcon->ypos * fbcon->character.width ) + fbcon->xpos ) *
 		   sizeof ( cell ) );
 	copy_from_user ( &cell, fbcon->text.start, offset, sizeof ( cell ) );
 	if ( show_cursor ) {
-		background = cell.background;
-		cell.background = cell.foreground;
-		cell.foreground = ( ( background == FBCON_TRANSPARENT ) ?
-				    0 : background );
+		cell.background = fbcon->foreground;
+		cell.foreground = ( ( fbcon->background == FBCON_TRANSPARENT ) ?
+				    0 : fbcon->background );
 	}
 	fbcon_draw_character ( fbcon, &cell, fbcon->xpos, fbcon->ypos );
 }
@@ -780,6 +779,9 @@ int fbcon_init ( struct fbcon *fbcon, userptr_t start,
 
 	/* Clear screen */
 	fbcon_clear ( fbcon, 0 );
+
+	/* Update console width and height */
+	console_set_size ( fbcon->character.width, fbcon->character.height );
 
 	return 0;
 
