@@ -124,6 +124,36 @@ static void string_test_exec ( void ) {
 		memswap ( ( test + 1 ), ( test + 4 ), 3 );
 		ok ( memcmp ( test, expected, sizeof ( test ) ) == 0 );
 	}
+
+	/* Test strdup() */
+	{
+		const char *orig = "testing testing";
+		char *dup = strdup ( orig );
+		ok ( dup != NULL );
+		ok ( dup != orig );
+		ok ( strcmp ( dup, orig ) == 0 );
+		free ( dup );
+	}
+
+	/* Test strndup() */
+	{
+		const char *normal = "testing testing";
+		const char unterminated[6] = { 'h', 'e', 'l', 'l', 'o', '!' };
+		char *dup;
+		dup = strndup ( normal, 32 );
+		ok ( dup != NULL );
+		ok ( dup != normal );
+		ok ( strcmp ( dup, normal ) == 0 );
+		free ( dup );
+		dup = strndup ( normal, 4 );
+		ok ( dup != NULL );
+		ok ( strcmp ( dup, "test" ) == 0 );
+		free ( dup );
+		dup = strndup ( unterminated, 5 );
+		ok ( dup != NULL );
+		ok ( strcmp ( dup, "hello" ) == 0 );
+		free ( dup );
+	}
 }
 
 /** String self-test */

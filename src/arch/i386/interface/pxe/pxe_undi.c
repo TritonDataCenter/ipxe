@@ -38,6 +38,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/ip.h>
 #include <ipxe/arp.h>
 #include <ipxe/rarp.h>
+#include <ipxe/profile.h>
 #include "pxe.h"
 
 /**
@@ -52,6 +53,9 @@ FILE_LICENCE ( GPL2_OR_LATER );
 static int undi_tx_count = 0;
 
 struct net_device *pxe_netdev = NULL;
+
+/** Transmit profiler */
+static struct profiler undi_tx_profiler __profiler = { .name = "undi.tx" };
 
 /**
  * Set network device as current PXE network device
@@ -309,6 +313,9 @@ pxenv_undi_transmit ( struct s_PXENV_UNDI_TRANSMIT *undi_transmit ) {
 	unsigned int i;
 	int rc;
 
+	/* Start profiling */
+	profile_start ( &undi_tx_profiler );
+
 	/* Sanity check */
 	if ( ! pxe_netdev ) {
 		DBGC ( &pxe_netdev, "PXENV_UNDI_TRANSMIT called with no "
@@ -323,8 +330,10 @@ pxenv_undi_transmit ( struct s_PXENV_UNDI_TRANSMIT *undi_transmit ) {
 	 * processing at this point, to work around callers that never
 	 * call PXENV_UNDI_OPEN before attempting to use the UNDI API.
 	 */
-	netdev_rx_freeze ( pxe_netdev );
-	netdev_irq ( pxe_netdev, 1 );
+	if ( ! netdev_rx_frozen ( pxe_netdev ) ) {
+		netdev_rx_freeze ( pxe_netdev );
+		netdev_irq ( pxe_netdev, 1 );
+	}
 
 	/* Identify network-layer protocol */
 	switch ( undi_transmit->Protocol ) {
@@ -422,6 +431,7 @@ pxenv_undi_transmit ( struct s_PXENV_UNDI_TRANSMIT *undi_transmit ) {
 		return PXENV_EXIT_FAILURE;
 	}
 
+	profile_stop ( &undi_tx_profiler );
 	undi_transmit->Status = PXENV_STATUS_SUCCESS;
 	return PXENV_EXIT_SUCCESS;
 }

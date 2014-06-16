@@ -9,72 +9,181 @@
 
 FILE_LICENCE ( GPL2_OR_LATER );
 
-#include <stdint.h>
+#include <bits/profile.h>
+#include <ipxe/tables.h>
+
+#ifdef NDEBUG
+#define PROFILING 0
+#else
+#define PROFILING 1
+#endif
 
 /**
  * A data structure for storing profiling information
  */
-union profiler {
-	/** Timestamp (in CPU-specific "ticks") */
-	uint64_t timestamp;
-	/** Registers returned by rdtsc.
+struct profiler {
+	/** Name */
+	const char *name;
+	/** Start timestamp */
+	unsigned long started;
+	/** Stop timestamp */
+	unsigned long stopped;
+	/** Number of samples */
+	unsigned int count;
+	/** Mean sample value (scaled) */
+	unsigned long mean;
+	/** Mean sample value MSB
 	 *
-	 * This part should really be architecture-specific code.
+	 * This is the highest bit set in the raw (unscaled) value
+	 * (i.e. one less than would be returned by flsl(raw_mean)).
 	 */
-	struct {
-		uint32_t eax;
-		uint32_t edx;
-	} rdtsc;
+	unsigned int mean_msb;
+	/** Accumulated variance (scaled) */
+	unsigned long long accvar;
+	/** Accumulated variance MSB
+	 *
+	 * This is the highest bit set in the raw (unscaled) value
+	 * (i.e. one less than would be returned by flsll(raw_accvar)).
+	 */
+	unsigned int accvar_msb;
 };
 
-/**
- * Static per-object profiler, for use with simple_profile()
- */
-static union profiler simple_profiler;
+/** Profiler table */
+#define PROFILERS __table ( struct profiler, "profilers" )
+
+/** Declare a profiler */
+#if PROFILING
+#define __profiler __table_entry ( PROFILERS, 01 )
+#else
+#define __profiler
+#endif
+
+extern unsigned long profile_excluded;
+
+extern void profile_update ( struct profiler *profiler, unsigned long sample );
+extern unsigned long profile_mean ( struct profiler *profiler );
+extern unsigned long profile_variance ( struct profiler *profiler );
+extern unsigned long profile_stddev ( struct profiler *profiler );
 
 /**
- * Perform profiling
+ * Get start time
  *
- * @v profiler		Profiler data structure
- * @ret delta		Elapsed ticks since last call to profile().
- *
- * Call profile() both before and after the code you wish to measure.
- * The "after" call will return the measurement.  For example:
- *
- * @code
- *
- *     profile ( &profiler );
- *     ... do something here ...
- *     printf ( "It took %ld ticks to execute\n", profile ( &profiler ) );
- *
- * @endcode
+ * @v profiler		Profiler
+ * @ret started		Start time
  */
 static inline __attribute__ (( always_inline )) unsigned long
-profile ( union profiler *profiler ) {
-	uint64_t last_timestamp = profiler->timestamp;
+profile_started ( struct profiler *profiler ) {
 
-	__asm__ __volatile__ ( "rdtsc" :
-			       "=a" ( profiler->rdtsc.eax ),
-			       "=d" ( profiler->rdtsc.edx ) );
-	return ( profiler->timestamp - last_timestamp );
+	/* If profiling is active then return start time */
+	if ( PROFILING ) {
+		return ( profiler->started + profile_excluded );
+	} else {
+		return 0;
+	}
 }
 
 /**
- * Perform profiling
+ * Get stop time
  *
- * @ret delta		Elapsed ticks since last call to profile().
- *
- * When you only need one profiler, you can avoid the hassle of
- * creating your own @c profiler data structure by using
- * simple_profile() instead.
- *
- * simple_profile() is equivalent to profile(&simple_profiler), where
- * @c simple_profiler is a @c profiler data structure that is static
- * to each object which includes @c profile.h.
+ * @v profiler		Profiler
+ * @ret stopped		Stop time
  */
 static inline __attribute__ (( always_inline )) unsigned long
-simple_profile ( void ) {
-	return profile ( &simple_profiler );
+profile_stopped ( struct profiler *profiler ) {
+
+	/* If profiling is active then return start time */
+	if ( PROFILING ) {
+		return ( profiler->stopped + profile_excluded );
+	} else {
+		return 0;
+	}
+}
+
+/**
+ * Get elapsed time
+ *
+ * @v profiler		Profiler
+ * @ret elapsed		Elapsed time
+ */
+static inline __attribute__ (( always_inline )) unsigned long
+profile_elapsed ( struct profiler *profiler ) {
+
+	/* If profiling is active then return elapsed time */
+	if ( PROFILING ) {
+		return ( profile_stopped ( profiler ) -
+			 profile_started ( profiler ) );
+	} else {
+		return 0;
+	}
+}
+
+/**
+ * Start profiling
+ *
+ * @v profiler		Profiler
+ * @v started		Start timestamp
+ */
+static inline __attribute__ (( always_inline )) void
+profile_start_at ( struct profiler *profiler, unsigned long started ) {
+
+	/* If profiling is active then record start timestamp */
+	if ( PROFILING )
+		profiler->started = ( started - profile_excluded );
+}
+
+/**
+ * Stop profiling
+ *
+ * @v profiler		Profiler
+ * @v stopped		Stop timestamp
+ */
+static inline __attribute__ (( always_inline )) void
+profile_stop_at ( struct profiler *profiler, unsigned long stopped ) {
+
+	/* If profiling is active then record end timestamp and update stats */
+	if ( PROFILING ) {
+		profiler->stopped = ( stopped - profile_excluded );
+		profile_update ( profiler, profile_elapsed ( profiler ) );
+	}
+}
+
+/**
+ * Start profiling
+ *
+ * @v profiler		Profiler
+ */
+static inline __attribute__ (( always_inline )) void
+profile_start ( struct profiler *profiler ) {
+
+	/* If profiling is active then record start timestamp */
+	if ( PROFILING )
+		profile_start_at ( profiler, profile_timestamp() );
+}
+
+/**
+ * Stop profiling
+ *
+ * @v profiler		Profiler
+ */
+static inline __attribute__ (( always_inline )) void
+profile_stop ( struct profiler *profiler ) {
+
+	/* If profiling is active then record end timestamp and update stats */
+	if ( PROFILING )
+		profile_stop_at ( profiler, profile_timestamp() );
+}
+
+/**
+ * Exclude time from other ongoing profiling results
+ *
+ * @v profiler		Profiler
+ */
+static inline __attribute__ (( always_inline )) void
+profile_exclude ( struct profiler *profiler ) {
+
+	/* If profiling is active then update accumulated excluded time */
+	if ( PROFILING )
+		profile_excluded += profile_elapsed ( profiler );
 }
 
 #endif /* _IPXE_PROFILE_H */

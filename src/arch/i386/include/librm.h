@@ -165,8 +165,8 @@ extern char *text16;
 /* Variables in librm.S, present in the normal data segment */
 extern uint16_t rm_sp;
 extern uint16_t rm_ss;
-extern uint16_t __data16 ( rm_cs );
-#define rm_cs __use_data16 ( rm_cs )
+extern uint16_t __text16 ( rm_cs );
+#define rm_cs __use_text16 ( rm_cs )
 extern uint16_t __text16 ( rm_ds );
 #define rm_ds __use_text16 ( rm_ds )
 
@@ -208,6 +208,71 @@ extern void remove_user_from_rm_stack ( userptr_t data, size_t size );
 	"call _virt_to_phys\n\t"			\
 	asm_code_str					\
 	"call _phys_to_virt\n\t"
+
+/** Number of interrupts */
+#define NUM_INT 256
+
+/** An interrupt descriptor table register */
+struct idtr {
+	/** Limit */
+	uint16_t limit;
+	/** Base */
+	uint32_t base;
+} __attribute__ (( packed ));
+
+/** An interrupt descriptor table entry */
+struct interrupt_descriptor {
+	/** Low 16 bits of address */
+	uint16_t low;
+	/** Code segment */
+	uint16_t segment;
+	/** Unused */
+	uint8_t unused;
+	/** Type and attributes */
+	uint8_t attr;
+	/** High 16 bits of address */
+	uint16_t high;
+} __attribute__ (( packed ));
+
+/** Interrupt descriptor is present */
+#define IDTE_PRESENT 0x80
+
+/** Interrupt descriptor 32-bit interrupt gate type */
+#define IDTE_TYPE_IRQ32 0x0e
+
+/** An interrupt vector
+ *
+ * Each interrupt vector comprises an eight-byte fragment of code:
+ *
+ *   60			pushal
+ *   b0 xx		movb $INT, %al
+ *   e9 xx xx xx xx	jmp interrupt_wrapper
+ */
+struct interrupt_vector {
+	/** "pushal" instruction */
+	uint8_t pushal;
+	/** "movb" instruction */
+	uint8_t movb;
+	/** Interrupt number */
+	uint8_t intr;
+	/** "jmp" instruction */
+	uint8_t jmp;
+	/** Interrupt wrapper address offset */
+	uint32_t offset;
+	/** Next instruction after jump */
+	uint8_t next[0];
+} __attribute__ (( packed ));
+
+/** "pushal" instruction */
+#define PUSHAL_INSN 0x60
+
+/** "movb" instruction */
+#define MOVB_INSN 0xb0
+
+/** "jmp" instruction */
+#define JMP_INSN 0xe9
+
+extern void set_interrupt_vector ( unsigned int intr, void *vector );
 
 #endif /* ASSEMBLY */
 

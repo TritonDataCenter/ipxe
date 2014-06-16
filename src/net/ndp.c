@@ -120,7 +120,6 @@ static int ndp_tx_request ( struct net_device *netdev,
 	sin6_src.sin6_family = AF_INET6;
 	memcpy ( &sin6_src.sin6_addr, net_source,
 		 sizeof ( sin6_src.sin6_addr ) );
-	sin6_src.sin6_scope_id = netdev->index;
 
 	/* Construct multicast destination address */
 	memset ( &sin6_dest, 0, sizeof ( sin6_dest ) );
@@ -783,6 +782,16 @@ const struct setting ndp_dns6_setting __setting ( SETTING_IP_EXTRA, dns6 ) = {
 	.tag = NDP_TAG ( NDP_OPT_RDNSS,
 			 offsetof ( struct ndp_rdnss_option, addresses ) ),
 	.type = &setting_type_ipv6,
+	.scope = &ndp_settings_scope,
+};
+
+/** DNS search list setting */
+const struct setting ndp_dnssl_setting __setting ( SETTING_IP_EXTRA, dnssl ) = {
+	.name = "dnssl",
+	.description = "DNS search list",
+	.tag = NDP_TAG ( NDP_OPT_DNSSL,
+			 offsetof ( struct ndp_dnssl_option, names ) ),
+	.type = &setting_type_dnssl,
 	.scope = &ndp_settings_scope,
 };
 

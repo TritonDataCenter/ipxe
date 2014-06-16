@@ -66,15 +66,15 @@ physical_ds:	/* 32 bit protected mode data segment, physical addresses */
 	.byte	0, 0x93, 0xcf, 0	
 
 	.org	gdt + REAL_CS, 0
-real_cs: 	/* 16 bit flat real mode code segment */
+real_cs: 	/* 16 bit real mode code segment */
 	.word	0xffff, 0
-	.byte	0, 0x9b, 0x8f, 0
+	.byte	0, 0x9b, 0x00, 0
 
 	.org	gdt + REAL_DS	
-real_ds:	/* 16 bit flat real mode data segment */
-	.word	0xffff, 0
-	.byte	0, 0x93, 0x8f, 0
-	
+real_ds:	/* 16 bit real mode data segment */
+	.word	0xffff, ( REAL_DS << 4 )
+	.byte	0, 0x93, 0x00, 0
+
 gdt_end:
 	.equ	gdt_length, gdt_end - gdt
 
@@ -111,27 +111,30 @@ init_librm:
 	/* Store rm_cs and text16, set up real_cs segment */
 	xorl	%eax, %eax
 	movw	%cs, %ax
-	movw	%ax, rm_cs
+	movw	%ax, %cs:rm_cs
 	shll	$4, %eax
 	movw	$real_cs, %bx
 	call	set_seg_base
 	addr32 leal	(%eax, %edi), %ebx
 	movl	%ebx, rm_text16
 
-	/* Store rm_ds and data16, set up real_ds segment */
+	/* Store rm_ds and data16 */
 	xorl	%eax, %eax
 	movw	%ds, %ax
 	movw	%ax, %cs:rm_ds
 	shll	$4, %eax
-	movw	$real_ds, %bx
-	call	set_seg_base
 	addr32 leal	(%eax, %edi), %ebx
 	movl	%ebx, rm_data16
 
-	/* Set GDT and IDT base */
+	/* Set GDT base */
 	movl	%eax, gdt_base
 	addl	$gdt, gdt_base
-	call	idt_init
+
+	/* Initialise IDT */
+	pushl	$init_idt
+	pushw	%cs
+	call	prot_call
+	popl	%eax /* discard */
 
 	/* Restore registers */
 	negl	%edi
@@ -141,14 +144,12 @@ init_librm:
 
 	.section ".text16", "ax", @progbits
 	.code16
-	.weak idt_init
 set_seg_base:
 1:	movw	%ax, 2(%bx)
 	rorl	$16, %eax
 	movb	%al, 4(%bx)
 	movb	%ah, 7(%bx)
 	roll	$16, %eax
-idt_init: /* Reuse the return opcode here */
 	ret
 
 /****************************************************************************
@@ -199,17 +200,29 @@ real_to_prot:
 	addr32 leal (%eax,%edx), %esi
 	subl	rm_virt_offset, %esi
 
+	/* Load protected-mode global descriptor table */
+	data32 lgdt gdtr
+
+	/* Zero segment registers.  This wastes around 12 cycles on
+	 * real hardware, but saves a substantial number of emulated
+	 * instructions under KVM.
+	 */
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movw	%ax, %es
+	movw	%ax, %fs
+	movw	%ax, %gs
+	movw	%ax, %ss
+
 	/* Switch to protected mode */
 	cli
-	data32 lgdt gdtr
-	data32 lidt idtr
 	movl	%cr0, %eax
 	orb	$CR0_PE, %al
 	movl	%eax, %cr0
-	data32 ljmp	$VIRTUAL_CS, $1f
+	data32 ljmp	$VIRTUAL_CS, $r2p_pmode
 	.section ".text", "ax", @progbits
 	.code32
-1:
+r2p_pmode:
 	/* Set up protected-mode data segments and stack pointer */
 	movw	$VIRTUAL_DS, %ax
 	movw	%ax, %ds
@@ -218,6 +231,9 @@ real_to_prot:
 	movw	%ax, %gs
 	movw	%ax, %ss
 	movl	pm_esp, %esp
+
+	/* Load protected-mode interrupt descriptor table */
+	lidt	idtr
 
 	/* Record real-mode %ss:sp (after removal of data) */
 	movw	%bp, rm_ss
@@ -237,14 +253,6 @@ real_to_prot:
 	/* Return to virtual address */
 	ret
 
-	/* Default IDTR with no interrupts */
-	.section ".data16", "aw", @progbits
-	.weak idtr
-idtr:
-rm_idtr:
-	.word 0xffff /* limit */
-	.long 0 /* base */
-
 /****************************************************************************
  * prot_to_real (protected-mode near call, 32-bit real-mode return address)
  *
@@ -261,12 +269,22 @@ rm_idtr:
  *
  * Parameters: 
  *   %ecx : number of bytes to move from PM stack to RM stack
+ *   %esi : real-mode global and interrupt descriptor table registers
  *
  ****************************************************************************
  */
 	.section ".text", "ax", @progbits
 	.code32
 prot_to_real:
+	/* Copy real-mode global descriptor table register to RM code segment */
+	movl	text16, %edi
+	leal	rm_gdtr(%edi), %edi
+	movsw
+	movsl
+
+	/* Load real-mode interrupt descriptor table register */
+	lidt	(%esi)
+
 	/* Add return address to data to be moved to RM stack */
 	addl	$4, %ecx
 	
@@ -293,17 +311,19 @@ prot_to_real:
 	movw	%ax, %fs
 	movw	%ax, %gs
 	movw	%ax, %ss
-	ljmp	$REAL_CS, $1f
+	ljmp	$REAL_CS, $p2r_rmode
 	.section ".text16", "ax", @progbits
 	.code16
-1:
+p2r_rmode:
+	/* Load real-mode GDT */
+	data32 lgdt %cs:rm_gdtr
 	/* Switch to real mode */
 	movl	%cr0, %eax
 	andb	$0!CR0_PE, %al
 	movl	%eax, %cr0
-	ljmp	*p2r_jump_vector
-p2r_jump_target:
-
+p2r_ljmp_rm_cs:
+	ljmp	$0, $1f
+1:
 	/* Set up real-mode data segments and stack pointer */
 	movw	%cs:rm_ds, %ax
 	movw	%ax, %ds
@@ -313,27 +333,30 @@ p2r_jump_target:
 	movw	%bp, %ss
 	movl	%edx, %esp
 
-	/* Reset IDTR to the real-mode defaults */
-	data32 lidt rm_idtr
-
 	/* Return to real-mode address */
 	data32 ret
 
 
 	/* Real-mode code and data segments.  Assigned by the call to
 	 * init_librm.  rm_cs doubles as the segment part of the jump
-	 * vector used by prot_to_real.  rm_ds is located in .text16
-	 * rather than .data16 because code needs to be able to locate
-	 * the data segment.
+	 * instruction used by prot_to_real.  Both are located in
+	 * .text16 rather than .data16: rm_cs since it forms part of
+	 * the jump instruction within the code segment, and rm_ds
+	 * since real-mode code needs to be able to locate the data
+	 * segment with no other reference available.
 	 */
-	.section ".data16", "aw", @progbits
-p2r_jump_vector:
-	.word	p2r_jump_target
 	.globl rm_cs
-rm_cs:	.word 0
-	.globl rm_ds
+	.equ	rm_cs, ( p2r_ljmp_rm_cs + 3 )
+
 	.section ".text16.data", "aw", @progbits
+	.globl rm_ds
 rm_ds:	.word 0
+
+	/* Real-mode global and interrupt descriptor table registers */
+	.section ".text16.data", "aw", @progbits
+rm_gdtr:
+	.word 0 /* Limit */
+	.long 0 /* Base */
 
 /****************************************************************************
  * prot_call (real-mode far call, 16-bit real-mode far return address)
@@ -370,8 +393,8 @@ rm_ds:	.word 0
  */
 
 #define PC_OFFSET_GDT ( 0 )
-#define PC_OFFSET_IDT ( PC_OFFSET_GDT + 8 /* pad to 8 to keep alignment */ )
-#define PC_OFFSET_IX86 ( PC_OFFSET_IDT + 8 /* pad to 8 to keep alignment */ )
+#define PC_OFFSET_IDT ( PC_OFFSET_GDT + 6 )
+#define PC_OFFSET_IX86 ( PC_OFFSET_IDT + 6 )
 #define PC_OFFSET_RETADDR ( PC_OFFSET_IX86 + SIZEOF_I386_ALL_REGS )
 #define PC_OFFSET_FUNCTION ( PC_OFFSET_RETADDR + 4 )
 #define PC_OFFSET_END ( PC_OFFSET_FUNCTION + 4 )
@@ -389,21 +412,21 @@ prot_call:
 	pushw	%ds
 	pushw	%ss
 	pushw	%cs
-	subw	$16, %sp
+	subw	$PC_OFFSET_IX86, %sp
 	movw	%sp, %bp
-	sidt	8(%bp)
-	sgdt	(%bp)
+	sidt	PC_OFFSET_IDT(%bp)
+	sgdt	PC_OFFSET_GDT(%bp)
 
 	/* For sanity's sake, clear the direction flag as soon as possible */
 	cld
 
 	/* Switch to protected mode and move register dump to PM stack */
 	movl	$PC_OFFSET_END, %ecx
-	pushl	$1f
+	pushl	$pc_pmode
 	jmp	real_to_prot
 	.section ".text", "ax", @progbits
 	.code32
-1:
+pc_pmode:
 	/* Call function */
 	leal	PC_OFFSET_IX86(%esp), %eax
 	pushl	%eax
@@ -412,16 +435,14 @@ prot_call:
 
 	/* Switch to real mode and move register dump back to RM stack */
 	movl	$PC_OFFSET_END, %ecx
-	pushl	$1f
+	movl	%esp, %esi
+	pushl	$pc_rmode
 	jmp	prot_to_real
 	.section ".text16", "ax", @progbits
 	.code16
-1:	
-	/* Reload GDT and IDT, restore registers and flags and return */
-	movw	%sp, %bp
-	data32 lgdt (%bp)
-	data32 lidt 8(%bp)
-	addw	$20, %sp /* also skip %cs and %ss */
+pc_rmode:
+	/* Restore registers and flags and return */
+	addw	$( PC_OFFSET_IX86 + 4 /* also skip %cs and %ss */ ), %sp
 	popw	%ds
 	popw	%es
 	popw	%fs
@@ -474,11 +495,12 @@ real_call:
 
 	/* Switch to real mode and move register dump to RM stack  */
 	movl	$( RC_OFFSET_RETADDR + 4 /* function pointer copy */ ), %ecx
-	pushl	$1f
+	pushl	$rc_rmode
+	movl	$rm_default_gdtr_idtr, %esi
 	jmp	prot_to_real
 	.section ".text16", "ax", @progbits
 	.code16
-1:
+rc_rmode:
 	/* Call real-mode function */
 	popl	rc_function
 	popal
@@ -490,11 +512,11 @@ real_call:
 
 	/* Switch to protected mode and move register dump back to PM stack */
 	movl	$RC_OFFSET_RETADDR, %ecx
-	pushl	$1f
+	pushl	$rc_pmode
 	jmp	real_to_prot
 	.section ".text", "ax", @progbits
 	.code32
-1:
+rc_pmode:
 	/* Restore registers and return */
 	popal
 	ret
@@ -505,6 +527,84 @@ real_call:
 	 */
 	.section ".data16", "aw", @progbits
 rc_function:	.word 0, 0
+
+	/* Default real-mode global and interrupt descriptor table registers */
+	.section ".data", "aw", @progbits
+rm_default_gdtr_idtr:
+	.word 0		/* Global descriptor table limit */
+	.long 0		/* Global descriptor table base */
+	.word 0x03ff	/* Interrupt descriptor table limit */
+	.long 0		/* Interrupt descriptor table base */
+
+/****************************************************************************
+ * flatten_real_mode (real-mode near call)
+ *
+ * Switch to flat real mode
+ *
+ ****************************************************************************
+ */
+	.section ".text16", "ax", @progbits
+	.code16
+	.globl flatten_real_mode
+flatten_real_mode:
+	/* Modify GDT to use flat real mode */
+	movb	$0x8f, real_cs + 6
+	movb	$0x8f, real_ds + 6
+	/* Call dummy protected-mode function */
+	pushl	$flatten_dummy
+	pushw	%cs
+	call	prot_call
+	addw	$4, %sp
+	/* Restore GDT */
+	movb	$0x00, real_cs + 6
+	movb	$0x00, real_ds + 6
+	/* Return */
+	ret
+
+	.section ".text", "ax", @progbits
+	.code32
+flatten_dummy:
+	ret
+
+/****************************************************************************
+ * Interrupt wrapper
+ *
+ * Used by the protected-mode interrupt vectors to call the
+ * interrupt() function.
+ *
+ * May be entered with either physical or virtual stack segment.
+ ****************************************************************************
+ */
+	.globl interrupt_wrapper
+interrupt_wrapper:
+	/* Preserve segment registers and original %esp */
+	pushl	%ds
+	pushl	%es
+	pushl	%fs
+	pushl	%gs
+	pushl	%ss
+	pushl	%esp
+
+	/* Switch to virtual addressing */
+	call	_intr_to_virt
+
+	/* Expand IRQ number to whole %eax register */
+	movzbl	%al, %eax
+
+	/* Call interrupt handler */
+	call	interrupt
+
+	/* Restore original stack and segment registers */
+	lss	(%esp), %esp
+	popl	%ss
+	popl	%gs
+	popl	%fs
+	popl	%es
+	popl	%ds
+
+	/* Restore registers and return */
+	popal
+	iret
 
 /****************************************************************************
  * Stored real-mode and protected-mode stack pointers

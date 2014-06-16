@@ -33,6 +33,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/netdevice.h>
 #include <ipxe/if_ether.h>
 #include <ipxe/ethernet.h>
+#include <ipxe/profile.h>
 #include <undi.h>
 #include <undinet.h>
 #include <pxeparent.h>
@@ -71,6 +72,9 @@ struct undi_nic {
 /** Delay between retries of PXENV_UNDI_INITIALIZE */
 #define UNDI_INITIALIZE_RETRY_DELAY_MS 200
 
+/** Maximum number of received packets per poll */
+#define UNDI_RX_QUOTA 4
+
 /** Alignment of received frame payload */
 #define UNDI_RX_ALIGN 16
 
@@ -78,6 +82,26 @@ static void undinet_close ( struct net_device *netdev );
 
 /** Address of UNDI entry point */
 static SEGOFF16_t undinet_entry;
+
+/** Transmit profiler */
+static struct profiler undinet_tx_profiler __profiler =
+	{ .name = "undinet.tx" };
+
+/** Transmit call profiler */
+static struct profiler undinet_tx_call_profiler __profiler =
+	{ .name = "undinet.tx_call" };
+
+/** IRQ profiler */
+static struct profiler undinet_irq_profiler __profiler =
+	{ .name = "undinet.irq" };
+
+/** ISR call profiler */
+static struct profiler undinet_isr_call_profiler __profiler =
+	{ .name = "undinet.isr_call" };
+
+/** Receive profiler */
+static struct profiler undinet_rx_profiler __profiler =
+	{ .name = "undinet.rx" };
 
 /*****************************************************************************
  *
@@ -194,6 +218,9 @@ static int undinet_transmit ( struct net_device *netdev,
 	size_t len;
 	int rc;
 
+	/* Start profiling */
+	profile_start ( &undinet_tx_profiler );
+
 	/* Technically, we ought to make sure that the previous
 	 * transmission has completed before we re-use the buffer.
 	 * However, many PXE stacks (including at least some Intel PXE
@@ -256,14 +283,16 @@ static int undinet_transmit ( struct net_device *netdev,
 	undinet_tbd.Xmit.offset = __from_data16 ( basemem_packet );
 
 	/* Issue PXE API call */
+	profile_start ( &undinet_tx_call_profiler );
 	if ( ( rc = pxeparent_call ( undinet_entry, PXENV_UNDI_TRANSMIT,
 				     &undi_transmit,
 				     sizeof ( undi_transmit ) ) ) != 0 )
 		goto done;
+	profile_stop ( &undinet_tx_call_profiler );
 
 	/* Free I/O buffer */
 	netdev_tx_complete ( netdev, iobuf );
-
+	profile_stop ( &undinet_tx_profiler );
  done:
 	return rc;
 }
@@ -302,6 +331,7 @@ static void undinet_poll ( struct net_device *netdev ) {
 	struct undi_nic *undinic = netdev->priv;
 	struct s_PXENV_UNDI_ISR undi_isr;
 	struct io_buffer *iobuf = NULL;
+	unsigned int quota = UNDI_RX_QUOTA;
 	size_t len;
 	size_t reserve_len;
 	size_t frag_len;
@@ -316,10 +346,12 @@ static void undinet_poll ( struct net_device *netdev ) {
 		 */
 		if ( ! undinet_isr_triggered() ) {
 			/* Allow interrupt to occur */
-			__asm__ __volatile__ ( REAL_CODE ( "sti\n\t"
-							   "nop\n\t"
-							   "nop\n\t"
-							   "cli\n\t" ) : : );
+			profile_start ( &undinet_irq_profiler );
+			__asm__ __volatile__ ( "sti\n\t"
+					       "nop\n\t"
+					       "nop\n\t"
+					       "cli\n\t" );
+			profile_stop ( &undinet_irq_profiler );
 
 			/* If interrupts are known to be supported,
 			 * then do nothing on this poll; wait for the
@@ -338,17 +370,22 @@ static void undinet_poll ( struct net_device *netdev ) {
 	}
 
 	/* Run through the ISR loop */
-	while ( 1 ) {
+	while ( quota ) {
+		profile_start ( &undinet_isr_call_profiler );
 		if ( ( rc = pxeparent_call ( undinet_entry, PXENV_UNDI_ISR,
 					     &undi_isr,
-					     sizeof ( undi_isr ) ) ) != 0 )
+					     sizeof ( undi_isr ) ) ) != 0 ) {
+			netdev_rx_err ( netdev, NULL, rc );
 			break;
+		}
+		profile_stop ( &undinet_isr_call_profiler );
 		switch ( undi_isr.FuncFlag ) {
 		case PXENV_UNDI_ISR_OUT_TRANSMIT:
 			/* We don't care about transmit completions */
 			break;
 		case PXENV_UNDI_ISR_OUT_RECEIVE:
 			/* Packet fragment received */
+			profile_start ( &undinet_rx_profiler );
 			len = undi_isr.FrameLength;
 			frag_len = undi_isr.BufferLength;
 			reserve_len = ( -undi_isr.FrameHeaderLength &
@@ -387,12 +424,14 @@ static void undinet_poll ( struct net_device *netdev ) {
 			if ( iob_len ( iobuf ) == len ) {
 				/* Whole packet received; deliver it */
 				netdev_rx ( netdev, iob_disown ( iobuf ) );
+				quota--;
 				/* Etherboot 5.4 fails to return all packets
 				 * under mild load; pretend it retriggered.
 				 */
 				if ( undinic->hacks & UNDI_HACK_EB54 )
 					--last_trigger_count;
 			}
+			profile_stop ( &undinet_rx_profiler );
 			break;
 		case PXENV_UNDI_ISR_OUT_DONE:
 			/* Processing complete */

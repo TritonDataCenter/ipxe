@@ -138,10 +138,10 @@ enum intel_descriptor_status {
  * Minimum value is 8, since the descriptor ring length must be a
  * multiple of 128.
  */
-#define INTEL_NUM_RX_DESC 8
+#define INTEL_NUM_RX_DESC 16
 
 /** Receive descriptor ring fill level */
-#define INTEL_RX_FILL 4
+#define INTEL_RX_FILL 8
 
 /** Receive buffer length */
 #define INTEL_RX_MAX_LEN 2048
@@ -155,6 +155,9 @@ enum intel_descriptor_status {
  * requires a minimum of 16 TX descriptors.
  */
 #define INTEL_NUM_TX_DESC 16
+
+/** Transmit descriptor ring maximum fill level */
+#define INTEL_TX_FILL ( INTEL_NUM_TX_DESC - 1 )
 
 /** Receive/Transmit Descriptor Base Address Low (offset) */
 #define INTEL_xDBAL 0x00
