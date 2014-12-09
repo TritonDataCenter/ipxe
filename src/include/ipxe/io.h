@@ -511,7 +511,7 @@ struct memory_region {
 };
 
 /** Maximum number of memory regions we expect to encounter */
-#define MAX_MEMORY_REGIONS 8
+#define MAX_MEMORY_REGIONS 32
 
 /** A memory map */
 struct memory_map {
