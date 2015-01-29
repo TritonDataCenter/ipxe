@@ -29,6 +29,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
+#include <unistd.h>
 #include <realmode.h>
 #include <multiboot.h>
 #include <ipxe/uaccess.h>
@@ -40,6 +41,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/features.h>
 #include <ipxe/uri.h>
 #include <ipxe/version.h>
+#include <ipxe/reboot.h>
 
 FEATURE ( FEATURE_IMAGE, "MBOOT", DHCP_EB_FEATURE_MULTIBOOT, 1 );
 
@@ -53,7 +55,7 @@ FEATURE ( FEATURE_IMAGE, "MBOOT", DHCP_EB_FEATURE_MULTIBOOT, 1 );
  * physical addressing as per the multiboot specification.
  *
  */
-#define MAX_MODULES 8
+#define MAX_MODULES 16
 
 /**
  * Maximum combined length of command lines
@@ -63,7 +65,7 @@ FEATURE ( FEATURE_IMAGE, "MBOOT", DHCP_EB_FEATURE_MULTIBOOT, 1 );
  * virt_to_phys(cmdline) to point to the command lines, even though
  * this would comply with the Multiboot spec.
  */
-#define MB_MAX_CMDLINE 512
+#define MB_MAX_CMDLINE 4096
 
 /** Multiboot flags that we support */
 #define MB_SUPPORTED_FLAGS ( MB_FLAG_PGALIGN | MB_FLAG_MEMMAP | \
@@ -99,6 +101,37 @@ static char __bss16_array ( mb_cmdlines, [MB_MAX_CMDLINE] );
 static unsigned int mb_cmdline_offset;
 
 /**
+ * There are various conditions during multiboot that are related to the
+ * unfortunate static sizing that we would rather not carry forward on. Instead,
+ * the caller should have logged a message to the operator about why this
+ * happened. We're going to inform them of what's about to happen and then we're
+ * going to wait a few minutes for them to read this and pull the ripcord, thus
+ * rebooting.
+ */
+static void multiboot_panic (void ) {
+	int i = 120;
+	static const char *err = "\n"
+"The system has encountered an error in the handling of multiboot images.\n"
+"The system cannot make forward progress and faithfully boot according to the\n"
+"operator's intentions.\n"
+"\n"
+"To correct this error, you likely need to change the iPXE script that was\n"
+"passed into this machine. If you are operating in an SDC environment, please\n"
+"check the dhcpd zone and inspect the gpxe file that corresponds to this CN's\n"
+"mac address.\n"
+"\n"
+"\n";
+
+
+	for (; i > 0; i -= 15) {
+		printf( "%s", err);
+		printf("The system will reboot in %d seconds.\n", i);
+		sleep(15);
+	}
+	reboot(0);
+}
+
+/**
  * Build multiboot memory map
  *
  * @v image		Multiboot image
@@ -120,8 +153,9 @@ static void multiboot_build_memmap ( struct image *image,
 	memset ( mbmemmap, 0, sizeof ( *mbmemmap ) );
 	for ( i = 0 ; i < memmap.count ; i++ ) {
 		if ( i >= limit ) {
-			DBGC ( image, "MULTIBOOT %p limit of %d memmap "
+			printf ( "MULTIBOOT %p limit of %d memmap "
 			       "entries reached\n", image, limit );
+			multiboot_panic();
 			break;
 		}
 		mbmemmap[i].size = ( sizeof ( mbmemmap[i] ) -
@@ -153,8 +187,11 @@ static physaddr_t multiboot_add_cmdline ( struct image *image ) {
 
 	/* Copy image URI to base memory buffer as start of command line */
 	len = ( format_uri ( image->uri, buf, remaining ) + 1 /* NUL */ );
-	if ( len > remaining )
-		len = remaining;
+	if ( len > remaining ) {
+		printf ( "MULTIBOOT %p limit of %d cmdline characters "
+		       "reached\n", image, sizeof (mb_cmdlines));
+		multiboot_panic();
+	}
 	mb_cmdline_offset += len;
 	buf += len;
 	remaining -= len;
@@ -195,8 +232,9 @@ static int multiboot_add_modules ( struct image *image, physaddr_t start,
 	for_each_image ( module_image ) {
 
 		if ( mbinfo->mods_count >= limit ) {
-			DBGC ( image, "MULTIBOOT %p limit of %d modules "
+			printf ( "MULTIBOOT %p limit of %d modules "
 			       "reached\n", image, limit );
+			multiboot_panic();
 			break;
 		}
 
