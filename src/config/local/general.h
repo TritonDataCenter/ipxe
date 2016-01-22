@@ -10,8 +10,5 @@
 #define	VLAN_CMD
 #define	PXE_CMD
 
-#undef	PRODUCT_NAME
-#define	PRODUCT_NAME "Joyent"
-
 #undef	BANNER_TIMEOUT
 #define	BANNER_TIMEOUT	50
