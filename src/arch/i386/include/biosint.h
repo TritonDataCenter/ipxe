@@ -6,7 +6,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <realmode.h>
 
@@ -29,5 +29,6 @@ extern void hook_bios_interrupt ( unsigned int interrupt, unsigned int handler,
 extern int unhook_bios_interrupt ( unsigned int interrupt,
 				   unsigned int handler,
 				   struct segoff *chain_vector );
+extern void check_bios_interrupts ( void );
 
 #endif /* BIOSINT_H */

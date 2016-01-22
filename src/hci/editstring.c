@@ -15,12 +15,17 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <assert.h>
 #include <string.h>
+#include <ctype.h>
 #include <ipxe/keys.h>
 #include <ipxe/editstring.h>
 
@@ -37,6 +42,8 @@ static void insert_character ( struct edit_string *string,
                                unsigned int character ) __nonnull;
 static void delete_character ( struct edit_string *string ) __nonnull;
 static void backspace ( struct edit_string *string ) __nonnull;
+static void previous_word ( struct edit_string *string ) __nonnull;
+static void kill_word ( struct edit_string *string ) __nonnull;
 static void kill_sol ( struct edit_string *string ) __nonnull;
 static void kill_eol ( struct edit_string *string ) __nonnull;
 
@@ -111,9 +118,36 @@ static void backspace ( struct edit_string *string ) {
 }
 
 /**
+ * Move to start of previous word
+ *
+ * @v string		Editable string
+ */
+static void previous_word ( struct edit_string *string ) {
+	while ( string->cursor &&
+		isspace ( string->buf[ string->cursor - 1 ] ) ) {
+		string->cursor--;
+	}
+	while ( string->cursor &&
+		( ! isspace ( string->buf[ string->cursor - 1 ] ) ) ) {
+		string->cursor--;
+	}
+}
+
+/**
+ * Delete to end of previous word
+ *
+ * @v string		Editable string
+ */
+static void kill_word ( struct edit_string *string ) {
+	size_t old_cursor = string->cursor;
+	previous_word ( string );
+	insert_delete ( string, ( old_cursor - string->cursor ), NULL );
+}
+
+/**
  * Delete to start of line
  *
- * @v string           Editable string
+ * @v string		Editable string
  */
 static void kill_sol ( struct edit_string *string ) {
 	size_t old_cursor = string->cursor;
@@ -180,6 +214,10 @@ int edit_string ( struct edit_string *string, int key ) {
 	case CTRL_D:
 		/* Delete character */
 		delete_character ( string );
+		break;
+	case CTRL_W:
+		/* Delete word */
+		kill_word ( string );
 		break;
 	case CTRL_U:
 		/* Delete to start of line */

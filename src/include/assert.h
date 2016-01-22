@@ -10,7 +10,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #ifdef NDEBUG
 #define ASSERTING 0
@@ -19,6 +19,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #endif
 
 extern unsigned int assertion_failures;
+
+#define ASSERTED ( ASSERTING && ( assertion_failures != 0 ) )
 
 /** printf() for assertions
  *

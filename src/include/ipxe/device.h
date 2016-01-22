@@ -8,7 +8,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <ipxe/list.h>
 #include <ipxe/tables.h>
@@ -57,10 +57,22 @@ struct device_description {
 /** TAP bus type */
 #define BUS_TYPE_TAP 6
 
+/** EFI bus type */
+#define BUS_TYPE_EFI 7
+
+/** Xen bus type */
+#define BUS_TYPE_XEN 8
+
+/** Hyper-V bus type */
+#define BUS_TYPE_HV 9
+
+/** USB bus type */
+#define BUS_TYPE_USB 10
+
 /** A hardware device */
 struct device {
 	/** Name */
-	char name[16];
+	char name[32];
 	/** Driver name */
 	const char *driver_name;
 	/** Device description */
@@ -87,6 +99,8 @@ struct root_device {
 	struct device dev;
 	/** Root device driver */
 	struct root_driver *driver;
+	/** Driver-private data */
+	void *priv;
 };
 
 /** A root device driver */
@@ -116,6 +130,27 @@ struct root_driver {
 
 /** Declare a root device */
 #define __root_device __table_entry ( ROOT_DEVICES, 01 )
+
+/**
+ * Set root device driver-private data
+ *
+ * @v rootdev		Root device
+ * @v priv		Private data
+ */
+static inline void rootdev_set_drvdata ( struct root_device *rootdev,
+					 void *priv ){
+	rootdev->priv = priv;
+}
+
+/**
+ * Get root device driver-private data
+ *
+ * @v rootdev		Root device
+ * @ret priv		Private data
+ */
+static inline void * rootdev_get_drvdata ( struct root_device *rootdev ) {
+	return rootdev->priv;
+}
 
 extern int device_keep_count;
 

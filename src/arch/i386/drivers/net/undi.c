@@ -68,10 +68,6 @@ static int undipci_probe ( struct pci_device *pci ) {
 	struct undi_rom *undirom;
 	int rc;
 
-	/* Ignore non-network devices */
-	if ( PCI_BASE_CLASS ( pci->class ) != PCI_BASE_CLASS_NETWORK )
-		return -ENOTTY;
-
 	/* Allocate UNDI device structure */
 	undi = zalloc ( sizeof ( *undi ) );
 	if ( ! undi )
@@ -143,6 +139,7 @@ static struct pci_device_id undipci_nics[] = {
 struct pci_driver undipci_driver __pci_driver_fallback = {
 	.ids = undipci_nics,
 	.id_count = ( sizeof ( undipci_nics ) / sizeof ( undipci_nics[0] ) ),
+	.class = PCI_CLASS_ID ( PCI_CLASS_NETWORK, PCI_ANY_ID, PCI_ANY_ID ),
 	.probe = undipci_probe,
 	.remove = undipci_remove,
 };

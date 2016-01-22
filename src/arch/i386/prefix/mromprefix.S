@@ -16,9 +16,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
  *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
+ *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER )
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
 
 #define PCIBIOS_READ_CONFIG_WORD	0xb109
 #define PCIBIOS_READ_CONFIG_DWORD	0xb10a
@@ -30,10 +34,12 @@ FILE_LICENCE ( GPL2_OR_LATER )
 #define PCI_BAR_5			0x24
 #define PCI_BAR_EXPROM			0x30
 
+#define PCIR_SIGNATURE ( 'P' + ( 'C' << 8 ) + ( 'I' << 16 ) + ( 'R' << 24 ) )
+
 #define ROMPREFIX_EXCLUDE_PAYLOAD 1
 #define ROMPREFIX_MORE_IMAGES 1
-#define _rom_start _mrom_start
-#include "romprefix.S"
+#define _pcirom_start _mrom_start
+#include "pciromprefix.S"
 
 	.text
 	.arch i386
@@ -99,6 +105,7 @@ find_mem_bar:
 	jle	1f
 	stc
 	movl	$0xbabababa, %esi	/* Report "No suitable BAR" */
+	movl	rom_bar_size, %ecx
 	jmp	99f
 1:	movw	$4, %bp
 
@@ -157,17 +164,26 @@ find_mem_bar:
 	call	pci_write_config_dword
 
 	/* Locate our ROM image */
-1:	addr32 es cmpw $0xaa55, (%eax)
-	je	2f
-	stc
-	movl	%eax, %esi		/* Report failure address */
-	jmp	99f
-2:	addr32 es cmpl $_build_id, build_id(%eax)
+1:	movl	$0xaa55, %ecx				/* 55aa signature */
+	addr32 es cmpw %cx, (%eax)
+	jne	2f
+	movl	$PCIR_SIGNATURE, %ecx			/* PCIR signature */
+	addr32 es movzwl 0x18(%eax), %edx
+	addr32 es cmpl %ecx, (%eax,%edx)
+	jne	2f
+	addr32 es cmpl $_build_id, build_id(%eax)	/* iPXE build ID */
 	je	3f
-	addr32 es movzbl 2(%eax), %ecx
+	movl	$0x80, %ecx				/* Last image */
+	addr32 es testb %cl, 0x15(%eax,%edx)
+	jnz	2f
+	addr32 es movzwl 0x10(%eax,%edx), %ecx		/* PCIR image length */
 	shll	$9, %ecx
 	addl	%ecx, %eax
 	jmp	1b
+2:	/* Failure */
+	stc
+	movl	%eax, %esi		/* Report failure address */
+	jmp	99f
 3:
 
 	/* Copy payload to buffer, or set buffer address to BAR address */
@@ -184,7 +200,7 @@ find_mem_bar:
 	movl	%eax, %esi
 	addr32 es movzbl 2(%esi), %ecx
 	shll	$7, %ecx
-	addr32 es movzbl 2(%esi,%ecx,4), %edx
+	addr32 es movzwl mpciheader_image_length(%esi,%ecx,4), %edx
 	shll	$7, %edx
 	addl	%edx, %ecx
 	addr32 es rep movsl
@@ -451,19 +467,12 @@ pci_set_mem_access:
 	.org	0x00
 mromheader:
 	.word	0xaa55			/* BIOS extension signature */
-mromheader_size: .byte 0		/* Size in 512-byte blocks */
+	.byte	0x01			/* Dummy size (BIOS bug workaround) */
 	.org	0x18
 	.word	mpciheader
 	.org	0x1a
 	.word	0
 	.size	mromheader, . - mromheader
-
-	.section ".zinfo.fixup", "a", @progbits	/* Compressor fixups */
-	.ascii	"APPB"
-	.long	mromheader_size
-	.long	512
-	.long	0
-	.previous
 
 mpciheader:
 	.ascii	"PCIR"			/* Signature */

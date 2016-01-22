@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/pci.h>
@@ -38,7 +42,11 @@ static int pcibios_num_bus ( void ) {
 	int discard_a, discard_D;
 	uint8_t max_bus;
 
-	__asm__ __volatile__ ( REAL_CODE ( "stc\n\t"
+	/* We issue this call using flat real mode, to work around a
+	 * bug in some HP BIOSes.
+	 */
+	__asm__ __volatile__ ( REAL_CODE ( "call flatten_real_mode\n\t"
+					   "stc\n\t"
 					   "int $0x1a\n\t"
 					   "jnc 1f\n\t"
 					   "xorw %%cx, %%cx\n\t"

@@ -12,13 +12,13 @@ Literature dealing with the network protocols:
 
 **************************************************************************/
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stddef.h>
 #include <stdio.h>
 #include <ipxe/init.h>
+#include <ipxe/version.h>
 #include <usr/autoboot.h>
-#include <config/general.h>
 
 /**
  * Main entry point
@@ -26,18 +26,21 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * @ret rc		Return status code
  */
 __asmcall int main ( void ) {
+	int rc;
 
 	/* Perform one-time-only initialisation (e.g. heap) */
 	initialise();
 
 	/* Some devices take an unreasonably long time to initialise */
-	printf ( PRODUCT_SHORT_NAME " initialising devices..." );
+	printf ( "%s initialising devices...", product_short_name );
 	startup();
 	printf ( "ok\n" );
 
-	ipxe ( NULL );
+	/* Attempt to boot */
+	if ( ( rc = ipxe ( NULL ) ) != 0 )
+		goto err_ipxe;
 
+ err_ipxe:
 	shutdown_exit();
-
-	return 0;
+	return rc;
 }

@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <sys/time.h>
 #include <ipxe/api.h>
@@ -44,6 +44,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 /* Include all architecture-independent time API headers */
 #include <ipxe/null_time.h>
+#include <ipxe/efi/efi_time.h>
 #include <ipxe/linux/linux_time.h>
 
 /* Include all architecture-dependent time API headers */

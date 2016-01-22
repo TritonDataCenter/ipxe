@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stddef.h>
 #include <stdint.h>
@@ -106,6 +110,7 @@ static char heap[HEAP_SIZE] __attribute__ (( aligned ( __alignof__(void *) )));
 static inline void valgrind_make_blocks_defined ( void ) {
 	struct memory_block *block;
 
+	/* Do nothing unless running under Valgrind */
 	if ( RUNNING_ON_VALGRIND <= 0 )
 		return;
 
@@ -147,6 +152,7 @@ static inline void valgrind_make_blocks_noaccess ( void ) {
 	struct memory_block *block;
 	struct memory_block *prev = NULL;
 
+	/* Do nothing unless running under Valgrind */
 	if ( RUNNING_ON_VALGRIND <= 0 )
 		return;
 
@@ -184,6 +190,42 @@ static inline void valgrind_make_blocks_noaccess ( void ) {
 
 	/* Mark block list itself as inaccessible */
 	VALGRIND_MAKE_MEM_NOACCESS ( &free_blocks, sizeof ( free_blocks ) );
+}
+
+/**
+ * Check integrity of the blocks in the free list
+ *
+ */
+static inline void check_blocks ( void ) {
+	struct memory_block *block;
+	struct memory_block *prev = NULL;
+
+	if ( ! ASSERTING )
+		return;
+
+	list_for_each_entry ( block, &free_blocks, list ) {
+
+		/* Check that list structure is intact */
+		list_check ( &block->list );
+
+		/* Check that block size is not too small */
+		assert ( block->size >= sizeof ( *block ) );
+		assert ( block->size >= MIN_MEMBLOCK_SIZE );
+
+		/* Check that block does not wrap beyond end of address space */
+		assert ( ( ( void * ) block + block->size ) >
+			 ( ( void * ) block ) );
+
+		/* Check that blocks remain in ascending order, and
+		 * that adjacent blocks have been merged.
+		 */
+		if ( prev ) {
+			assert ( ( ( void * ) block ) > ( ( void * ) prev ) );
+			assert ( ( ( void * ) block ) >
+				 ( ( ( void * ) prev ) + prev->size ) );
+		}
+		prev = block;
+	}
 }
 
 /**
@@ -231,84 +273,97 @@ static void discard_all_cache ( void ) {
 void * alloc_memblock ( size_t size, size_t align, size_t offset ) {
 	struct memory_block *block;
 	size_t align_mask;
+	size_t actual_size;
 	size_t pre_size;
-	ssize_t post_size;
+	size_t post_size;
 	struct memory_block *pre;
 	struct memory_block *post;
-	struct memory_block *ptr;
+	void *ptr;
 
+	/* Sanity checks */
+	assert ( size != 0 );
+	assert ( ( align == 0 ) || ( ( align & ( align - 1 ) ) == 0 ) );
 	valgrind_make_blocks_defined();
+	check_blocks();
 
 	/* Round up size to multiple of MIN_MEMBLOCK_SIZE and
 	 * calculate alignment mask.
 	 */
-	size = ( size + MIN_MEMBLOCK_SIZE - 1 ) & ~( MIN_MEMBLOCK_SIZE - 1 );
-	align_mask = ( align - 1 ) | ( MIN_MEMBLOCK_SIZE - 1 );
+	actual_size = ( ( size + MIN_MEMBLOCK_SIZE - 1 ) &
+			~( MIN_MEMBLOCK_SIZE - 1 ) );
+	assert ( actual_size >= size );
+	align_mask = ( ( align - 1 ) | ( MIN_MEMBLOCK_SIZE - 1 ) );
+	assert ( ( actual_size + align_mask ) > actual_size );
 
-	DBG ( "Allocating %#zx (aligned %#zx+%zx)\n", size, align, offset );
+	DBGC2 ( &heap, "Allocating %#zx (aligned %#zx+%zx)\n",
+		size, align, offset );
 	while ( 1 ) {
 		/* Search through blocks for the first one with enough space */
 		list_for_each_entry ( block, &free_blocks, list ) {
 			pre_size = ( ( offset - virt_to_phys ( block ) )
 				     & align_mask );
-			post_size = ( block->size - pre_size - size );
-			if ( post_size >= 0 ) {
-				/* Split block into pre-block, block, and
-				 * post-block.  After this split, the "pre"
-				 * block is the one currently linked into the
-				 * free list.
-				 */
-				pre   = block;
-				block = ( ( ( void * ) pre   ) + pre_size );
-				post  = ( ( ( void * ) block ) + size     );
-				DBG ( "[%p,%p) -> [%p,%p) + [%p,%p)\n", pre,
-				      ( ( ( void * ) pre ) + pre->size ),
-				      pre, block, post,
-				      ( ( ( void * ) pre ) + pre->size ) );
-				/* If there is a "post" block, add it in to
-				 * the free list.  Leak it if it is too small
-				 * (which can happen only at the very end of
-				 * the heap).
-				 */
-				if ( (size_t) post_size >= MIN_MEMBLOCK_SIZE ) {
-					VALGRIND_MAKE_MEM_DEFINED ( post,
-							     sizeof ( *post ) );
-					post->size = post_size;
-					list_add ( &post->list, &pre->list );
-				}
-				/* Shrink "pre" block, leaving the main block
-				 * isolated and no longer part of the free
-				 * list.
-				 */
-				pre->size = pre_size;
-				/* If there is no "pre" block, remove it from
-				 * the list.  Also remove it (i.e. leak it) if
-				 * it is too small, which can happen only at
-				 * the very start of the heap.
-				 */
-				if ( pre_size < MIN_MEMBLOCK_SIZE )
-					list_del ( &pre->list );
-				/* Update total free memory */
-				freemem -= size;
-				/* Return allocated block */
-				DBG ( "Allocated [%p,%p)\n", block,
-				      ( ( ( void * ) block ) + size ) );
-				ptr = block;
-				goto done;
+			if ( block->size < ( pre_size + actual_size ) )
+				continue;
+			post_size = ( block->size - pre_size - actual_size );
+			/* Split block into pre-block, block, and
+			 * post-block.  After this split, the "pre"
+			 * block is the one currently linked into the
+			 * free list.
+			 */
+			pre   = block;
+			block = ( ( ( void * ) pre   ) + pre_size );
+			post  = ( ( ( void * ) block ) + actual_size );
+			DBGC2 ( &heap, "[%p,%p) -> [%p,%p) + [%p,%p)\n", pre,
+				( ( ( void * ) pre ) + pre->size ), pre, block,
+				post, ( ( ( void * ) pre ) + pre->size ) );
+			/* If there is a "post" block, add it in to
+			 * the free list.  Leak it if it is too small
+			 * (which can happen only at the very end of
+			 * the heap).
+			 */
+			if ( post_size >= MIN_MEMBLOCK_SIZE ) {
+				VALGRIND_MAKE_MEM_UNDEFINED ( post,
+							      sizeof ( *post ));
+				post->size = post_size;
+				list_add ( &post->list, &pre->list );
 			}
+			/* Shrink "pre" block, leaving the main block
+			 * isolated and no longer part of the free
+			 * list.
+			 */
+			pre->size = pre_size;
+			/* If there is no "pre" block, remove it from
+			 * the list.  Also remove it (i.e. leak it) if
+			 * it is too small, which can happen only at
+			 * the very start of the heap.
+			 */
+			if ( pre_size < MIN_MEMBLOCK_SIZE ) {
+				list_del ( &pre->list );
+				VALGRIND_MAKE_MEM_NOACCESS ( pre,
+							     sizeof ( *pre ) );
+			}
+			/* Update total free memory */
+			freemem -= actual_size;
+			/* Return allocated block */
+			DBGC2 ( &heap, "Allocated [%p,%p)\n", block,
+				( ( ( void * ) block ) + size ) );
+			ptr = block;
+			VALGRIND_MAKE_MEM_UNDEFINED ( ptr, size );
+			goto done;
 		}
 
 		/* Try discarding some cached data to free up memory */
 		if ( ! discard_cache() ) {
 			/* Nothing available to discard */
-			DBG ( "Failed to allocate %#zx (aligned %#zx)\n",
-			      size, align );
+			DBGC ( &heap, "Failed to allocate %#zx (aligned "
+			       "%#zx)\n", size, align );
 			ptr = NULL;
 			goto done;
 		}
 	}
 
  done:
+	check_blocks();
 	valgrind_make_blocks_noaccess();
 	return ptr;
 }
@@ -325,25 +380,50 @@ void free_memblock ( void *ptr, size_t size ) {
 	struct memory_block *freeing;
 	struct memory_block *block;
 	struct memory_block *tmp;
+	size_t actual_size;
 	ssize_t gap_before;
 	ssize_t gap_after = -1;
 
 	/* Allow for ptr==NULL */
 	if ( ! ptr )
 		return;
+	VALGRIND_MAKE_MEM_NOACCESS ( ptr, size );
 
+	/* Sanity checks */
 	valgrind_make_blocks_defined();
+	check_blocks();
 
 	/* Round up size to match actual size that alloc_memblock()
 	 * would have used.
 	 */
-	size = ( size + MIN_MEMBLOCK_SIZE - 1 ) & ~( MIN_MEMBLOCK_SIZE - 1 );
+	assert ( size != 0 );
+	actual_size = ( ( size + MIN_MEMBLOCK_SIZE - 1 ) &
+			~( MIN_MEMBLOCK_SIZE - 1 ) );
 	freeing = ptr;
-	VALGRIND_MAKE_MEM_DEFINED ( freeing, sizeof ( *freeing ) );
-	freeing->size = size;
-	DBG ( "Freeing [%p,%p)\n", freeing, ( ( ( void * ) freeing ) + size ));
+	VALGRIND_MAKE_MEM_UNDEFINED ( freeing, sizeof ( *freeing ) );
+	DBGC2 ( &heap, "Freeing [%p,%p)\n",
+		freeing, ( ( ( void * ) freeing ) + size ) );
+
+	/* Check that this block does not overlap the free list */
+	if ( ASSERTING ) {
+		list_for_each_entry ( block, &free_blocks, list ) {
+			if ( ( ( ( void * ) block ) <
+			       ( ( void * ) freeing + actual_size ) ) &&
+			     ( ( void * ) freeing <
+			       ( ( void * ) block + block->size ) ) ) {
+				assert ( 0 );
+				DBGC ( &heap, "Double free of [%p,%p) "
+				       "overlapping [%p,%p) detected from %p\n",
+				       freeing,
+				       ( ( ( void * ) freeing ) + size ), block,
+				       ( ( void * ) block + block->size ),
+				       __builtin_return_address ( 0 ) );
+			}
+		}
+	}
 
 	/* Insert/merge into free list */
+	freeing->size = actual_size;
 	list_for_each_entry_safe ( block, tmp, &free_blocks, list ) {
 		/* Calculate gaps before and after the "freeing" block */
 		gap_before = ( ( ( void * ) freeing ) - 
@@ -352,12 +432,15 @@ void free_memblock ( void *ptr, size_t size ) {
 			      ( ( ( void * ) freeing ) + freeing->size ) );
 		/* Merge with immediately preceding block, if possible */
 		if ( gap_before == 0 ) {
-			DBG ( "[%p,%p) + [%p,%p) -> [%p,%p)\n", block,
-			      ( ( ( void * ) block ) + block->size ), freeing,
-			      ( ( ( void * ) freeing ) + freeing->size ),block,
-			      ( ( ( void * ) freeing ) + freeing->size ) );
-			block->size += size;
+			DBGC2 ( &heap, "[%p,%p) + [%p,%p) -> [%p,%p)\n", block,
+				( ( ( void * ) block ) + block->size ), freeing,
+				( ( ( void * ) freeing ) + freeing->size ),
+				block,
+				( ( ( void * ) freeing ) + freeing->size ) );
+			block->size += actual_size;
 			list_del ( &block->list );
+			VALGRIND_MAKE_MEM_NOACCESS ( freeing,
+						     sizeof ( *freeing ) );
 			freeing = block;
 		}
 		/* Stop processing as soon as we reach a following block */
@@ -369,20 +452,23 @@ void free_memblock ( void *ptr, size_t size ) {
 	 * possible, merge the following block into the "freeing"
 	 * block.
 	 */
-	DBG ( "[%p,%p)\n", freeing, ( ( ( void * ) freeing ) + freeing->size));
+	DBGC2 ( &heap, "[%p,%p)\n",
+		freeing, ( ( ( void * ) freeing ) + freeing->size ) );
 	list_add_tail ( &freeing->list, &block->list );
 	if ( gap_after == 0 ) {
-		DBG ( "[%p,%p) + [%p,%p) -> [%p,%p)\n", freeing,
-		      ( ( ( void * ) freeing ) + freeing->size ), block,
-		      ( ( ( void * ) block ) + block->size ), freeing,
-		      ( ( ( void * ) block ) + block->size ) );
+		DBGC2 ( &heap, "[%p,%p) + [%p,%p) -> [%p,%p)\n", freeing,
+			( ( ( void * ) freeing ) + freeing->size ), block,
+			( ( ( void * ) block ) + block->size ), freeing,
+			( ( ( void * ) block ) + block->size ) );
 		freeing->size += block->size;
 		list_del ( &block->list );
+		VALGRIND_MAKE_MEM_NOACCESS ( block, sizeof ( *block ) );
 	}
 
 	/* Update free memory counter */
-	freemem += size;
+	freemem += actual_size;
 
+	check_blocks();
 	valgrind_make_blocks_noaccess();
 }
 
@@ -423,9 +509,9 @@ void * realloc ( void *old_ptr, size_t new_size ) {
 		new_block = alloc_memblock ( new_total_size, 1, 0 );
 		if ( ! new_block )
 			return NULL;
-		VALGRIND_MAKE_MEM_UNDEFINED ( new_block, offsetof ( struct autosized_block, data ) );
 		new_block->size = new_total_size;
-		VALGRIND_MAKE_MEM_NOACCESS ( new_block, offsetof ( struct autosized_block, data ) );
+		VALGRIND_MAKE_MEM_NOACCESS ( &new_block->size,
+					     sizeof ( new_block->size ) );
 		new_ptr = &new_block->data;
 		VALGRIND_MALLOCLIKE_BLOCK ( new_ptr, new_size, 0, 0 );
 	}
@@ -438,17 +524,22 @@ void * realloc ( void *old_ptr, size_t new_size ) {
 	if ( old_ptr && ( old_ptr != NOWHERE ) ) {
 		old_block = container_of ( old_ptr, struct autosized_block,
 					   data );
-		VALGRIND_MAKE_MEM_DEFINED ( old_block, offsetof ( struct autosized_block, data ) );
+		VALGRIND_MAKE_MEM_DEFINED ( &old_block->size,
+					    sizeof ( old_block->size ) );
 		old_total_size = old_block->size;
+		assert ( old_total_size != 0 );
 		old_size = ( old_total_size -
 			     offsetof ( struct autosized_block, data ) );
 		memcpy ( new_ptr, old_ptr,
 			 ( ( old_size < new_size ) ? old_size : new_size ) );
-		free_memblock ( old_block, old_total_size );
-		VALGRIND_MAKE_MEM_NOACCESS ( old_block, offsetof ( struct autosized_block, data ) );
 		VALGRIND_FREELIKE_BLOCK ( old_ptr, 0 );
+		free_memblock ( old_block, old_total_size );
 	}
 
+	if ( ASSERTED ) {
+		DBGC ( &heap, "Possible memory corruption detected from %p\n",
+		       __builtin_return_address ( 0 ) );
+	}
 	return new_ptr;
 }
 
@@ -462,7 +553,14 @@ void * realloc ( void *old_ptr, size_t new_size ) {
  * will be aligned to at least a multiple of sizeof(void*).
  */
 void * malloc ( size_t size ) {
-	return realloc ( NULL, size );
+	void *ptr;
+
+	ptr = realloc ( NULL, size );
+	if ( ASSERTED ) {
+		DBGC ( &heap, "Possible memory corruption detected from %p\n",
+		       __builtin_return_address ( 0 ) );
+	}
+	return ptr;
 }
 
 /**
@@ -476,7 +574,12 @@ void * malloc ( size_t size ) {
  * If @c ptr is NULL, no action is taken.
  */
 void free ( void *ptr ) {
+
 	realloc ( ptr, 0 );
+	if ( ASSERTED ) {
+		DBGC ( &heap, "Possible memory corruption detected from %p\n",
+		       __builtin_return_address ( 0 ) );
+	}
 }
 
 /**
@@ -496,6 +599,10 @@ void * zalloc ( size_t size ) {
 	data = malloc ( size );
 	if ( data )
 		memset ( data, 0, size );
+	if ( ASSERTED ) {
+		DBGC ( &heap, "Possible memory corruption detected from %p\n",
+		       __builtin_return_address ( 0 ) );
+	}
 	return data;
 }
 
@@ -523,6 +630,7 @@ void mpopulate ( void *start, size_t len ) {
  */
 static void init_heap ( void ) {
 	VALGRIND_MAKE_MEM_NOACCESS ( heap, sizeof ( heap ) );
+	VALGRIND_MAKE_MEM_NOACCESS ( &free_blocks, sizeof ( free_blocks ) );
 	mpopulate ( heap, sizeof ( heap ) );
 }
 

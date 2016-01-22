@@ -27,6 +27,13 @@ SECTIONS {
     PROVIDE ( _max_align = 16 );
 
     /*
+     * Allow decompressor to require a minimum amount of temporary stack
+     * space.
+     *
+     */
+    PROVIDE ( _min_decompress_stack = 0 );
+
+    /*
      * The prefix
      *
      */
@@ -34,6 +41,7 @@ SECTIONS {
     .prefix 0x0 : AT ( _prefix_lma ) {
 	_prefix = .;
 	*(.prefix)
+	*(SORT(.pci_devlist.*))
 	*(.prefix.*)
 	_mprefix = .;
     } .bss.prefix (NOLOAD) : AT ( _end_lma ) {
@@ -87,6 +95,7 @@ SECTIONS {
 	*(.bss16.*)
 	*(.stack16)
 	*(.stack16.*)
+	. = MAX ( ., _mdata16 + _min_decompress_stack );
 	_edata16 = .;
     }
     _data16_filesz	= ABSOLUTE ( _mdata16 ) - ABSOLUTE ( _data16 );

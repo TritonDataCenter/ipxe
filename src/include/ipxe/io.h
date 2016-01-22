@@ -16,12 +16,18 @@
  * the address parameter.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/api.h>
 #include <config/ioapi.h>
 #include <ipxe/uaccess.h>
+
+/** Page size */
+#define PAGE_SIZE ( 1 << PAGE_SHIFT )
+
+/** Page mask */
+#define PAGE_MASK ( PAGE_SIZE - 1 )
 
 /**
  * Calculate static inline I/O API function name

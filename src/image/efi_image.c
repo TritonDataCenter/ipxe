@@ -26,12 +26,15 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/efi/efi_snp.h>
 #include <ipxe/efi/efi_download.h>
 #include <ipxe/efi/efi_file.h>
-#include <ipxe/efi/efi_driver.h>
+#include <ipxe/efi/efi_utils.h>
 #include <ipxe/efi/efi_strings.h>
+#include <ipxe/efi/efi_wrap.h>
+#include <ipxe/efi/efi_pxe.h>
 #include <ipxe/image.h>
 #include <ipxe/init.h>
 #include <ipxe/features.h>
 #include <ipxe/uri.h>
+#include <ipxe/console.h>
 
 FEATURE ( FEATURE_IMAGE, "EFI", DHCP_EB_FEATURE_EFI, 1 );
 
@@ -50,10 +53,6 @@ FEATURE ( FEATURE_IMAGE, "EFI", DHCP_EB_FEATURE_EFI, 1 );
 	__einfo_uniqify ( EINFO_EPLATFORM, 0x02,			\
 			  "Could not start image" )
 #define EEFI_START( efirc ) EPLATFORM ( EINFO_EEFI_START, efirc )
-
-/** EFI loaded image protocol GUID */
-static EFI_GUID efi_loaded_image_protocol_guid =
-	EFI_LOADED_IMAGE_PROTOCOL_GUID;
 
 /**
  * Create device path for image
@@ -75,8 +74,7 @@ efi_image_path ( struct image *image, EFI_DEVICE_PATH_PROTOCOL *parent ) {
 	size_t len;
 
 	/* Calculate device path lengths */
-	end = efi_devpath_end ( parent );
-	prefix_len = ( ( void * ) end - ( void * ) parent );
+	prefix_len = efi_devpath_len ( parent );
 	name_len = strlen ( image->name );
 	filepath_len = ( SIZE_OF_FILEPATH_DEVICE_PATH +
 			 ( name_len + 1 /* NUL */ ) * sizeof ( wchar_t ) );
@@ -156,21 +154,28 @@ static int efi_image_exec ( struct image *image ) {
 	}
 
 	/* Install file I/O protocols */
-	if ( ( rc = efi_file_install ( &snpdev->handle ) ) != 0 ) {
+	if ( ( rc = efi_file_install ( snpdev->handle ) ) != 0 ) {
 		DBGC ( image, "EFIIMAGE %p could not install file protocol: "
 		       "%s\n", image, strerror ( rc ) );
 		goto err_file_install;
 	}
 
+	/* Install PXE base code protocol */
+	if ( ( rc = efi_pxe_install ( snpdev->handle, snpdev->netdev ) ) != 0 ){
+		DBGC ( image, "EFIIMAGE %p could not install PXE protocol: "
+		       "%s\n", image, strerror ( rc ) );
+		goto err_pxe_install;
+	}
+
 	/* Install iPXE download protocol */
-	if ( ( rc = efi_download_install ( &snpdev->handle ) ) != 0 ) {
+	if ( ( rc = efi_download_install ( snpdev->handle ) ) != 0 ) {
 		DBGC ( image, "EFIIMAGE %p could not install iPXE download "
 		       "protocol: %s\n", image, strerror ( rc ) );
 		goto err_download_install;
 	}
 
 	/* Create device path for image */
-	path = efi_image_path ( image, &snpdev->path );
+	path = efi_image_path ( image, snpdev->path );
 	if ( ! path ) {
 		DBGC ( image, "EFIIMAGE %p could not create device path\n",
 		       image );
@@ -208,6 +213,13 @@ static int efi_image_exec ( struct image *image ) {
 		goto err_open_protocol;
 	}
 
+	/* Some EFI 1.10 implementations seem not to fill in DeviceHandle */
+	if ( loaded.image->DeviceHandle == NULL ) {
+		DBGC ( image, "EFIIMAGE %p filling in missing DeviceHandle\n",
+		       image );
+		loaded.image->DeviceHandle = snpdev->handle;
+	}
+
 	/* Sanity checks */
 	assert ( loaded.image->ParentHandle == efi_image_handle );
 	assert ( loaded.image->DeviceHandle == snpdev->handle );
@@ -222,11 +234,17 @@ static int efi_image_exec ( struct image *image ) {
 	/* Release network devices for use via SNP */
 	efi_snp_release();
 
+	/* Wrap calls made by the loaded image (for debugging) */
+	efi_wrap ( handle );
+
+	/* Reset console since image will probably use it */
+	console_reset();
+
 	/* Start the image */
 	if ( ( efirc = bs->StartImage ( handle, NULL, NULL ) ) != 0 ) {
 		rc = -EEFI_START ( efirc );
-		DBGC ( image, "EFIIMAGE %p returned with status %s\n",
-		       image, strerror ( rc ) );
+		DBGC ( image, "EFIIMAGE %p could not start (or returned with "
+		       "error): %s\n", image, strerror ( rc ) );
 		goto err_start_image;
 	}
 
@@ -236,14 +254,22 @@ static int efi_image_exec ( struct image *image ) {
  err_start_image:
 	efi_snp_claim();
  err_open_protocol:
-	/* Unload the image.  We can't leave it loaded, because we
-	 * have no "unload" operation.
+	/* If there was no error, then the image must have been
+	 * started and returned successfully.  It either unloaded
+	 * itself, or it intended to remain loaded (e.g. it was a
+	 * driver).  We therefore do not unload successful images.
+	 *
+	 * If there was an error, attempt to unload the image.  This
+	 * may not work.  In particular, there is no way to tell
+	 * whether an error returned from StartImage() was due to
+	 * being unable to start the image (in which case we probably
+	 * should call UnloadImage()), or due to the image itself
+	 * returning an error (in which case we probably should not
+	 * call UnloadImage()).  We therefore ignore any failures from
+	 * the UnloadImage() call itself.
 	 */
-	if ( ( efirc = bs->UnloadImage ( handle ) ) != 0 ) {
-		rc = -EEFI ( efirc );
-		DBGC ( image, "EFIIMAGE %p could not unload: %s\n",
-		       image, strerror ( rc ) );
-	}
+	if ( rc != 0 )
+		bs->UnloadImage ( handle );
  err_load_image:
 	free ( cmdline );
  err_cmdline:
@@ -251,6 +277,8 @@ static int efi_image_exec ( struct image *image ) {
  err_image_path:
 	efi_download_uninstall ( snpdev->handle );
  err_download_install:
+	efi_pxe_uninstall ( snpdev->handle );
+ err_pxe_install:
 	efi_file_uninstall ( snpdev->handle );
  err_file_install:
  err_no_snpdev:
@@ -265,12 +293,17 @@ static int efi_image_exec ( struct image *image ) {
  */
 static int efi_image_probe ( struct image *image ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	static EFI_DEVICE_PATH_PROTOCOL empty_path = {
+		.Type = END_DEVICE_PATH_TYPE,
+		.SubType = END_ENTIRE_DEVICE_PATH_SUBTYPE,
+		.Length[0] = sizeof ( empty_path ),
+	};
 	EFI_HANDLE handle;
 	EFI_STATUS efirc;
 	int rc;
 
 	/* Attempt loading image */
-	if ( ( efirc = bs->LoadImage ( FALSE, efi_image_handle, NULL,
+	if ( ( efirc = bs->LoadImage ( FALSE, efi_image_handle, &empty_path,
 				       user_to_virt ( image->data, 0 ),
 				       image->len, &handle ) ) != 0 ) {
 		/* Not an EFI image */

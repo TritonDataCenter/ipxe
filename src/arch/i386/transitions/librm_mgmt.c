@@ -5,7 +5,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/profile.h>
@@ -103,7 +103,7 @@ void init_idt ( void ) {
 				( uint32_t ) vec->next );
 		set_interrupt_vector ( intr, vec );
 	}
-	DBGC ( &intr_vec[0], "INTn vector at %p+%xn (phys %#lx+%xn)\n",
+	DBGC ( &intr_vec[0], "INTn vector at %p+%zxn (phys %#lx+%zxn)\n",
 	       intr_vec, sizeof ( intr_vec[0] ),
 	       virt_to_phys ( intr_vec ), sizeof ( intr_vec[0] ) );
 

@@ -9,7 +9,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <ipxe/tcpip.h>
 
@@ -79,6 +79,48 @@ struct tcp_window_scale_padded_option {
  */
 #define TCP_RX_WINDOW_SCALE 9
 
+/** TCP selective acknowledgement permitted option */
+struct tcp_sack_permitted_option {
+	uint8_t kind;
+	uint8_t length;
+} __attribute__ (( packed ));
+
+/** Padded TCP selective acknowledgement permitted option (used for sending) */
+struct tcp_sack_permitted_padded_option {
+	uint8_t nop[2];
+	struct tcp_sack_permitted_option spopt;
+} __attribute__ (( packed ));
+
+/** Code for the TCP selective acknowledgement permitted option */
+#define TCP_OPTION_SACK_PERMITTED 4
+
+/** TCP selective acknowledgement option */
+struct tcp_sack_option {
+	uint8_t kind;
+	uint8_t length;
+} __attribute__ (( packed ));
+
+/** TCP selective acknowledgement block */
+struct tcp_sack_block {
+	uint32_t left;
+	uint32_t right;
+} __attribute__ (( packed ));
+
+/** Maximum number of selective acknowledgement blocks
+ *
+ * This allows for the presence of the TCP timestamp option.
+ */
+#define TCP_SACK_MAX 3
+
+/** Padded TCP selective acknowledgement option (used for sending) */
+struct tcp_sack_padded_option {
+	uint8_t nop[2];
+	struct tcp_sack_option sackopt;
+} __attribute__ (( packed ));
+
+/** Code for the TCP selective acknowledgement option */
+#define TCP_OPTION_SACK 5
+
 /** TCP timestamp option */
 struct tcp_timestamp_option {
 	uint8_t kind;
@@ -102,6 +144,8 @@ struct tcp_options {
 	const struct tcp_mss_option *mssopt;
 	/** Window scale option, if present */
 	const struct tcp_window_scale_option *wsopt;
+	/** SACK permitted option, if present */
+	const struct tcp_sack_permitted_option *spopt;
 	/** Timestamp option, if present */
 	const struct tcp_timestamp_option *tsopt;
 };
@@ -375,6 +419,13 @@ static inline int tcp_in_window ( uint32_t seq, uint32_t start,
 				  uint32_t len ) {
 	return ( ( seq - start ) < len );
 }
+
+/** TCP finish wait time
+ *
+ * Currently set to one second, since we should not allow a slowly
+ * responding server to substantially delay a call to shutdown().
+ */
+#define TCP_FINISH_TIMEOUT ( 1 * TICKS_PER_SEC )
 
 extern struct tcpip_protocol tcp_protocol __tcpip_protocol;
 

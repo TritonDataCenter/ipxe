@@ -15,6 +15,10 @@ NON_AUTO_MEDIA	+= efidrv
 NON_AUTO_MEDIA	+= drv.efi
 NON_AUTO_MEDIA	+= efirom
 
+# Include SNP driver in the all-drivers build
+#
+DRIVERS_net += snp
+
 # Rules for building EFI files
 #
 $(BIN)/%.efi : $(BIN)/%.efi.tmp $(ELF2EFI)
@@ -36,3 +40,7 @@ $(BIN)/%.efirom : $(BIN)/%.efidrv $(EFIROM)
 $(BIN)/efidrv.cab : $(BIN)/alldrv.efis # $(ALL_drv.efi) is not yet defined
 	$(QM)$(ECHO) "  [CAB] $@"
 	$(Q)$(LCAB) -n -q $(ALL_drv.efi) $@
+
+$(BIN)/%.usb : $(BIN)/%.efi
+	$(QM)$(ECHO) "  [GENEFIDSK] $@"
+	$(Q)bash util/genefidsk -o $@ -b $(EFI_BOOT_FILE) $<

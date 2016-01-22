@@ -41,8 +41,6 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/image.h>
 #include <ipxe/version.h>
 #include <usr/imgmgmt.h>
-#include "config/console.h"
-#include "config/serial.h"
 
 /** The "SYSLINUX" version string */
 static char __bss16_array ( syslinux_version, [32] );
@@ -85,7 +83,6 @@ rmjmp_buf comboot_return;
 
 /* Mode flags set by INT 22h AX=0017h */
 static uint16_t comboot_graphics_mode = 0;
-
 
 /**
  * Print a string with a particular terminator
@@ -261,8 +258,10 @@ static __asmcall void int21 ( struct i386_all_regs *ix86 ) {
 		break;
 
 	case 0x04: /* Write Character to Serial Port */
-		serial_putc ( ix86->regs.dl );
-		ix86->flags &= ~CF;
+		if ( serial_console.base ) {
+			uart_transmit ( &serial_console, ix86->regs.dl );
+			ix86->flags &= ~CF;
+		}
 		break;
 
 	case 0x09: /* Write DOS String to Console */
@@ -455,15 +454,16 @@ static __asmcall void int22 ( struct i386_all_regs *ix86 ) {
 		break;
 
 	case 0x000B: /* Get Serial Console Configuration */
-#if defined(CONSOLE_SERIAL) && !defined(COMPRESERVE)
-		ix86->regs.dx = COMCONSOLE;
-		ix86->regs.cx = 115200 / COMSPEED;
-		ix86->regs.bx = 0;
-#else
-		ix86->regs.dx = 0;
-#endif
+		if ( serial_console.base ) {
+			ix86->regs.dx = ( ( intptr_t ) serial_console.base );
+			ix86->regs.cx = serial_console.divisor;
+			ix86->regs.bx = 0;
+			ix86->flags &= ~CF;
+		}
+		break;
 
-		ix86->flags &= ~CF;
+	case 0x000C: /* Perform final cleanup */
+		shutdown_boot();
 		break;
 
 	case 0x000E: /* Get configuration file name */
@@ -712,3 +712,6 @@ void unhook_comboot_interrupts ( ) {
 	unhook_bios_interrupt ( 0x22, ( unsigned int ) int22_wrapper,
 				&int22_vector );
 }
+
+/* Avoid dragging in serial console support unconditionally */
+struct uart serial_console __attribute__ (( weak ));

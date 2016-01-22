@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdlib.h>
 #include <string.h>
@@ -167,7 +171,8 @@ static int eth_slow_lacp_rx ( struct io_buffer *iobuf,
 	lacp->actor.key = htons ( 1 );
 	lacp->actor.port_priority = htons ( LACP_PORT_PRIORITY_MAX );
 	lacp->actor.port = htons ( 1 );
-	lacp->actor.state = ( LACP_STATE_IN_SYNC |
+	lacp->actor.state = ( LACP_STATE_AGGREGATABLE |
+			      LACP_STATE_IN_SYNC |
 			      LACP_STATE_COLLECTING |
 			      LACP_STATE_DISTRIBUTING |
 			      ( lacp->partner.state & LACP_STATE_FAST ) );

@@ -6,9 +6,10 @@
  * table so using a noticeable amount of stack space is a no-no.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER )
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
 
 #include <config/general.h>
+#include <config/branding.h>
 
 #define PNP_SIGNATURE ( '$' + ( 'P' << 8 ) + ( 'n' << 16 ) + ( 'P' << 24 ) )
 #define PMM_SIGNATURE ( '$' + ( 'P' << 8 ) + ( 'M' << 16 ) + ( 'M' << 24 ) )
@@ -46,6 +47,12 @@ FILE_LICENCE ( GPL2_OR_LATER )
 #define INDICATOR 0x80
 #endif
 
+/* Default to building a PCI ROM if no bus type is specified
+ */
+#ifndef BUSTYPE
+#define BUSTYPE "PCIR"
+#endif
+
 	.text
 	.code16
 	.arch i386
@@ -64,8 +71,10 @@ checksum:
 	.word	ipxeheader
 	.org	0x16
 	.word	undiheader
+.ifeqs	BUSTYPE, "PCIR"
 	.org	0x18
 	.word	pciheader
+.endif
 	.org	0x1a
 	.word	pnpheader
 	.size romheader, . - romheader
@@ -77,11 +86,12 @@ checksum:
 	.long	0
 	.previous
 
+.ifeqs	BUSTYPE, "PCIR"
 pciheader:
 	.ascii	"PCIR"			/* Signature */
 	.word	pci_vendor_id		/* Vendor identification */ 
 	.word	pci_device_id		/* Device identification */
-	.word	0x0000			/* Device list pointer */
+	.word	( pci_devlist - pciheader ) /* Device list pointer */
 	.word	pciheader_len		/* PCI data structure length */
 	.byte	0x03			/* PCI data structure revision */
 	.byte	0x02, 0x00, 0x00	/* Class code */
@@ -97,16 +107,28 @@ pciheader_runtime_length:
 	.equ pciheader_len, . - pciheader
 	.size pciheader, . - pciheader
 
+	/* PCI additional device list (filled in by linker) */
+	.section ".pci_devlist.00000000", "a", @progbits
+pci_devlist:
+	.previous
+	.section ".pci_devlist.ffffffff", "a", @progbits
+pci_devlist_end:
+	.short	0x0000 /* List terminator */
+	.previous
+	/* Ensure that terminator is always present */
+	.reloc pciheader, RELOC_TYPE_NONE, pci_devlist_end
+
 	.section ".zinfo.fixup", "a", @progbits	/* Compressor fixups */
 	.ascii	ZINFO_TYPE_ADxW
 	.long	pciheader_image_length
 	.long	512
 	.long	0
-	.ascii	ZINFO_TYPE_ADxW
+	.ascii	"ADHW"
 	.long	pciheader_runtime_length
 	.long	512
 	.long	0
 	.previous
+.endif	/* PCIR */
 
 	/* PnP doesn't require any particular alignment, but IBM
 	 * BIOSes will scan on 16-byte boundaries rather than using
@@ -148,11 +170,14 @@ mfgstr:
  */
 prodstr:
 	.ascii	PRODUCT_SHORT_NAME
+.ifeqs	BUSTYPE, "PCIR"
 prodstr_separator:
 	.byte	0
 	.ascii	"(PCI "
 prodstr_pci_id:
-	.asciz	"xx:xx.x)"		/* Filled in by init code */
+	.ascii	"xx:xx.x)"		/* Filled in by init code */
+.endif	/* PCIR */
+	.byte	0
 	.size prodstr, . - prodstr
 
 	.globl	undiheader	
@@ -167,7 +192,7 @@ undiheader:
 	.word	_data16_memsz		/* Stack segment size */
 	.word	_data16_memsz		/* Data segment size */
 	.word	_text16_memsz		/* Code segment size */
-	.ascii	"PCIR"			/* Bus type */
+	.ascii	BUSTYPE			/* Bus type */
 	.equ undiheader_len, . - undiheader
 	.size undiheader, . - undiheader
 
@@ -208,38 +233,39 @@ init:
 	pushw	%cs
 	popw	%ds
 
-	/* Shuffle some registers around.  We need %di available for
-	 * the print_xxx functions, and in a register that's
-	 * addressable from %es, so shuffle as follows:
-	 *
-	 *    %di (pointer to PnP structure) => %bx
-	 *    %bx (runtime segment address, for PCI 3.0) => %gs
-	 */
-	movw	%bx, %gs
-	movw	%di, %bx
-
-	/* Store PCI bus:dev.fn address */
-	movw	%ax, init_pci_busdevfn
-
 	/* Print message as early as possible */
 	movw	$init_message, %si
 	xorw	%di, %di
 	call	print_message
-	call	print_pci_busdevfn
 
-	/* Fill in product name string, if possible */
+	/* Store PCI 3.0 runtime segment address for later use, if
+	 * applicable.
+	 */
+.ifeqs	BUSTYPE, "PCIR"
+	movw	%bx, %gs
+.endif
+
+	/* Store PCI bus:dev.fn address, print PCI bus:dev.fn, and add
+	 * PCI bus:dev.fn to product name string, if applicable.
+	 */
+.ifeqs	BUSTYPE, "PCIR"
+	xorw	%di, %di
+	call	print_space
+	movw	%ax, init_pci_busdevfn
+	call	print_pci_busdevfn
 	movw	$prodstr_pci_id, %di
 	call	print_pci_busdevfn
 	movb	$( ' ' ), prodstr_separator
+.endif
 
 	/* Print segment address */
-	movb	$( ' ' ), %al
 	xorw	%di, %di
-	call	print_character
+	call	print_space
 	movw	%cs, %ax
 	call	print_hex_word
 
-	/* Check for PCI BIOS version */
+	/* Check for PCI BIOS version, if applicable */
+.ifeqs	BUSTYPE, "PCIR"
 	pushl	%ebx
 	pushl	%edx
 	pushl	%edi
@@ -290,6 +316,7 @@ no_pci3:
 1:	popl	%edi
 	popl	%edx
 	popl	%ebx
+.endif	/* PCIR */
 
 	/* Check for PnP BIOS.  Although %es:di should point to the
 	 * PnP BIOS signature on entry, some BIOSes fail to do this.
@@ -403,25 +430,40 @@ no_pmm:
 	loop	1b
 	subb	%bl, checksum
 
-	/* Copy self to option ROM space.  Required for PCI3.0, which
-	 * loads us to a temporary location in low memory.  Will be a
-	 * no-op for lower PCI versions.
+	/* Copy self to option ROM space, if applicable.  Required for
+	 * PCI3.0, which loads us to a temporary location in low
+	 * memory.  Will be a no-op for lower PCI versions.
 	 */
-	movb	$( ' ' ), %al
-	xorw	%di, %di
-	call	print_character
+.ifeqs	BUSTYPE, "PCIR"
+	/* Get runtime segment address and length */
 	movw	%gs, %ax
-	call	print_hex_word
-	movzbw	romheader_size, %cx
-	shlw	$9, %cx
 	movw	%ax, %es
+	movzbw	romheader_size, %cx
+	/* Print runtime segment address */
+	xorw	%di, %di
+	call	print_space
+	call	print_hex_word
+	/* Fail if we have insufficient space in final location */
+	movw	%cs, %si
+	cmpw	%si, %ax
+	je	1f
+	cmpw	pciheader_runtime_length, %cx
+	jbe	1f
+	movb	$( '!' ), %al
+	call	print_character
+	xorw	%cx, %cx
+1:	/* Copy to final location */
+	shlw	$9, %cx
 	xorw	%si, %si
 	xorw	%di, %di
 	cs rep	movsb
+.endif
 
-	/* Skip prompt if this is not the first PCI function */
+	/* Skip prompt if this is not the first PCI function, if applicable */
+.ifeqs	BUSTYPE, "PCIR"
 	testb	$PCI_FUNC_MASK, init_pci_busdevfn
 	jnz	no_shell
+.endif
 	/* Prompt for POST-time shell */
 	movw	$init_message_prompt, %si
 	xorw	%di, %di
@@ -555,7 +597,7 @@ get_pmm_decompress_to:
  * Note to hardware vendors:
  *
  * If you wish to brand this boot ROM, please do so by defining the
- * strings PRODUCT_NAME and PRODUCT_SHORT_NAME in config/general.h.
+ * strings PRODUCT_NAME and PRODUCT_SHORT_NAME in config/branding.h.
  *
  * While nothing in the GPL prevents you from removing all references
  * to iPXE or http://ipxe.org, we prefer you not to do so.
@@ -571,11 +613,16 @@ init_message:
 	.ascii	"\n"
 	.ascii	PRODUCT_NAME
 	.ascii	"\n"
-	.asciz	"iPXE (http://ipxe.org) "
+	.ascii	PRODUCT_SHORT_NAME
+	.ascii	" ("
+	.ascii	PRODUCT_URI
+	.asciz	")"
 	.size	init_message, . - init_message
+.ifeqs	BUSTYPE, "PCIR"
 init_message_pci:
 	.asciz	" PCI"
 	.size	init_message_pci, . - init_message_pci
+.endif	/* PCIR */
 init_message_pnp:
 	.asciz	" PnP"
 	.size	init_message_pnp, . - init_message_pnp
@@ -598,9 +645,11 @@ init_message_done:
 /* PCI bus:dev.fn
  *
  */
+.ifeqs	BUSTYPE, "PCIR"
 init_pci_busdevfn:
 	.word	0
 	.size	init_pci_busdevfn, . - init_pci_busdevfn
+.endif	/* PCIR */
 
 /* Image source area
  *
@@ -739,14 +788,20 @@ exec:	/* Set %ds = %cs */
 	lret
 	.section ".text16", "awx", @progbits
 1:
-	/* Retrieve PCI bus:dev.fn */
+	/* Retrieve PCI bus:dev.fn, if applicable */
+.ifeqs	BUSTYPE, "PCIR"
 	movw	init_pci_busdevfn, %ax
+.endif
 
 	/* Set up %ds for access to .data16 */
 	movw	%bx, %ds
 
-	/* Store PCI bus:dev.fn */
+	/* Store PCI bus:dev.fn, if applicable */
+.ifeqs	BUSTYPE, "PCIR"
+#ifdef AUTOBOOT_ROM_FILTER
 	movw	%ax, autoboot_busdevfn
+#endif /* AUTOBOOT_ROM_FILTER */
+.endif
 
 	/* Call main() */
 	pushl	$main
@@ -844,3 +899,9 @@ wait_for_tick:
 	popl	%eax
 	ret
 	.size wait_for_tick, . - wait_for_tick
+
+/* Drag in objects via _rom_start */
+REQUIRING_SYMBOL ( _rom_start )
+
+/* Drag in ROM configuration */
+REQUIRE_OBJECT ( config_romprefix )

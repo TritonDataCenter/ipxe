@@ -16,9 +16,13 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
  *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
+ *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER )
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
 
 	.arch i386
 
@@ -93,6 +97,29 @@ print_character:
 	popw	%ax
 	ret
 	.size	print_character, . - print_character
+
+/*****************************************************************************
+ * Utility function: print space
+ *
+ * Parameters:
+ *   %ds:di : output buffer (or %di=0 to print to console)
+ * Returns:
+ *   %ds:di : next character in output buffer (if applicable)
+ *****************************************************************************
+ */
+	.section ".prefix.lib", "awx", @progbits
+	.code16
+	.globl	print_space
+print_space:
+	/* Preserve registers */
+	pushw	%ax
+	/* Print space */
+	movb	$( ' ' ), %al
+	call	print_character
+	/* Restore registers and return */
+	popw	%ax
+	ret
+	.size	print_space, . - print_space
 
 /*****************************************************************************
  * Utility function: print a NUL-terminated string
@@ -231,12 +258,10 @@ print_kill_line:
 	movb	$( '\r' ), %al
 	call	print_character
 	/* Print 79 spaces */
-	movb	$( ' ' ), %al
 	movw	$79, %cx
-1:	call	print_character
+1:	call	print_space
 	loop	1b
 	/* Print CR */
-	movb	$( '\r' ), %al
 	call	print_character
 	/* Restore registers and return */
 	popw	%cx
@@ -275,11 +300,9 @@ copy_bytes:
  * Zero bytes
  *
  * Parameters:
- *   %ds:esi : source address
  *   %es:edi : destination address
  *   %ecx : length
  * Returns:
- *   %ds:esi : next source address
  *   %es:edi : next destination address
  * Corrupts:
  *   None
@@ -375,8 +398,10 @@ process_bytes:
 	movw	%ax, %fs
 	movw	%ax, %gs
 
+#ifdef NDEBUG
 	/* Call memcpy()-like function */
 	call	*%bx
+#endif
 
 	/* Return to (flat) real mode */
 	movl	%cr0, %eax
@@ -389,6 +414,20 @@ process_bytes:
 	popw	%es
 	popw	%fs
 	popw	%gs
+
+#ifndef NDEBUG
+	/* Call memcpy()-like function in flat real mode (to allow for
+	 * debug output via INT 10).
+	 */
+	pushw	%ds
+	pushw	%es
+	xorw	%ax, %ax
+	movw	%ax, %ds
+	movw	%ax, %es
+	call	*%bx
+	popw	%es
+	popw	%ds
+#endif
 
 	/* Restore GDT */
 	data32 lgdt -8(%bp)
@@ -421,11 +460,11 @@ process_bytes:
 
 	/* Convert %ds:esi and %es:edi back to physical addresses */
 	xorl	%eax, %eax
-	movw	%ds, %cx
+	movw    %ds, %ax
 	shll	$4, %eax
 	addl	%eax, %esi
 	xorl	%eax, %eax
-	movw	%es, %cx
+	movw    %es, %ax
 	shll	$4, %eax
 	addl	%eax, %edi
 
@@ -657,11 +696,20 @@ install:
 	.globl install_prealloc
 install_prealloc:
 	progress "install_prealloc:\n"
-	/* Save registers */
+	/* Save registers on external stack */
 	pushal
 	pushw	%ds
 	pushw	%es
 	cld			/* Sanity: clear the direction flag asap */
+
+	/* Switch to temporary stack in .bss16 */
+	pushw	%ss
+	popw	%ds
+	movl	%esp, %ecx
+	movw	%bx, %ss
+	movl	$_data16_memsz, %esp
+	pushw	%ds
+	pushl	%ecx
 
 	/* Set up %ds for (read-only) access to .prefix */
 	pushw	%cs
@@ -689,6 +737,7 @@ install_prealloc:
 	popl	%esi
 
 #ifndef KEEP_IT_REAL
+
 	/* Access high memory by enabling the A20 gate.  (We will
 	 * already have 4GB segment limits as a result of calling
 	 * install_block.)
@@ -725,9 +774,15 @@ a20_death_message:
 	xorw	%di, %di
 	movl	%esi, %eax
 	call	print_hex_dword
+	call	print_space
+	movl	%ecx, %eax
+	call	print_hex_dword
 	movw	$payload_death_message, %si
 	call	print_message
-2:	jmp	2b
+2:	/* Halt system */
+	cli
+	hlt
+	jmp	2b
 	.section ".prefix.data", "aw", @progbits
 payload_death_message:
 	.asciz	"\nPayload inaccessible - cannot continue\n"
@@ -751,7 +806,7 @@ payload_death_message:
 	movzwl	%bx, %edi
 	shll	$4, %edi
 	movl	$_data16_filesz, %ecx
-	movl	$_data16_memsz, %edx
+	movl	$_data16_filesz, %edx	/* do not zero our temporary stack */
 	call	install_block		/* .data16 */
 
 	/* Set up %ds for access to .data16 */
@@ -760,11 +815,8 @@ payload_death_message:
 	/* Restore decompression temporary area physical address */
 	popl	%edi
 
-#ifdef KEEP_IT_REAL
-	/* Initialise libkir */
-	movw	%ax, (init_libkir_vector+2)
-	lcall	*init_libkir_vector
-#else
+#ifndef KEEP_IT_REAL
+
 	/* Find a suitable decompression temporary area, if none specified */
 	pushl	%eax
 	testl	%edi, %edi
@@ -796,6 +848,22 @@ payload_death_message:
 	call	install_block
 	popl	%edi
 
+#endif /* KEEP_IT_REAL */
+
+	/* Switch back to original stack and zero .bss16 */
+	addr32 lss %ss:(%esp), %esp
+	pushl	%edi
+	pushw	%es
+	movw	%bx, %es
+	movl	$_data16_filesz, %edi
+	movl	$_data16_memsz, %ecx
+	subl	%edi, %ecx
+	call	zero_bytes
+	popw	%es
+	popl	%edi
+
+#ifndef KEEP_IT_REAL
+
 	/* Initialise librm at current location */
 	progress "  init_librm\n"
 	movw	%ax, (init_librm_vector+2)
@@ -807,7 +875,6 @@ payload_death_message:
 	incb	memmap_post
 	decl	%ebp
 1:
-
 	/* Call relocate() to determine target address for relocation.
 	 * relocate() will return with %esi, %edi and %ecx set up
 	 * ready for the copy to the new location.
@@ -830,7 +897,14 @@ payload_death_message:
 	/* Initialise librm at new location */
 	progress "  init_librm\n"
 	lcall	*init_librm_vector
-#endif
+
+#else /* KEEP_IT_REAL */
+
+	/* Initialise libkir */
+	movw	%ax, (init_libkir_vector+2)
+	lcall	*init_libkir_vector
+
+#endif /* KEEP_IT_REAL */
 
 	/* Close access to payload */
 	progress "  close_payload\n"

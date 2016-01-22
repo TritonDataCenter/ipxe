@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #define UACCESS_EFI
 #define IOAPI_X86
@@ -19,12 +19,17 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define SMBIOS_EFI
 #define SANBOOT_NULL
 #define BOFM_EFI
-#define ENTROPY_NULL
-#define TIME_NULL
+#define ENTROPY_EFI
+#define TIME_EFI
 #define REBOOT_EFI
 
 #define	IMAGE_EFI		/* EFI image support */
 #define	IMAGE_SCRIPT		/* iPXE script image support */
+
+#define	USB_HCD_XHCI		/* xHCI USB host controller */
+#define	USB_HCD_EHCI		/* EHCI USB host controller */
+#define	USB_HCD_UHCI		/* UHCI USB host controller */
+#define	USB_EFI			/* Provide EFI_USB_IO_PROTOCOL interface */
 
 #define	REBOOT_CMD		/* Reboot command */
 #define	CPUID_CMD		/* x86 CPU feature detection command */

@@ -179,20 +179,29 @@ static void tls_clear_cipher ( struct tls_session *tls,
  ******************************************************************************
  */
 
+/** A TLS 24-bit integer
+ *
+ * TLS uses 24-bit integers in several places, which are awkward to
+ * parse in C.
+ */
+typedef struct {
+	/** High byte */
+	uint8_t high;
+	/** Low word */
+	uint16_t low;
+} __attribute__ (( packed )) tls24_t;
+
 /**
  * Extract 24-bit field value
  *
  * @v field24		24-bit field
  * @ret value		Field value
  *
- * TLS uses 24-bit integers in several places, which are awkward to
- * parse in C.
  */
 static inline __attribute__ (( always_inline )) unsigned long
-tls_uint24 ( const uint8_t field24[3] ) {
-	const uint32_t *field32 __attribute__ (( may_alias )) =
-		( ( const void * ) field24 );
-	return ( be32_to_cpu ( *field32 ) >> 8 );
+tls_uint24 ( const tls24_t *field24 ) {
+
+	return ( ( field24->high << 16 ) | be16_to_cpu ( field24->low ) );
 }
 
 /**
@@ -200,13 +209,11 @@ tls_uint24 ( const uint8_t field24[3] ) {
  *
  * @v field24		24-bit field
  * @v value		Field value
- *
- * The field must be pre-zeroed.
  */
-static void tls_set_uint24 ( uint8_t field24[3], unsigned long value ) {
-	uint32_t *field32 __attribute__ (( may_alias )) =
-		( ( void * ) field24 );
-	*field32 |= cpu_to_be32 ( value << 8 );
+static void tls_set_uint24 ( tls24_t *field24, unsigned long value ) {
+
+	field24->high = ( value >> 16 );
+	field24->low = cpu_to_be16 ( value );
 }
 
 /**
@@ -659,41 +666,8 @@ struct tls_cipher_suite tls_cipher_suite_null = {
 	.digest = &digest_null,
 };
 
-/** Supported cipher suites, in order of preference */
-struct tls_cipher_suite tls_cipher_suites[] = {
-	{
-		.code = htons ( TLS_RSA_WITH_AES_256_CBC_SHA256 ),
-		.key_len = ( 256 / 8 ),
-		.pubkey = &rsa_algorithm,
-		.cipher = &aes_cbc_algorithm,
-		.digest = &sha256_algorithm,
-	},
-	{
-		.code = htons ( TLS_RSA_WITH_AES_128_CBC_SHA256 ),
-		.key_len = ( 128 / 8 ),
-		.pubkey = &rsa_algorithm,
-		.cipher = &aes_cbc_algorithm,
-		.digest = &sha256_algorithm,
-	},
-	{
-		.code = htons ( TLS_RSA_WITH_AES_256_CBC_SHA ),
-		.key_len = ( 256 / 8 ),
-		.pubkey = &rsa_algorithm,
-		.cipher = &aes_cbc_algorithm,
-		.digest = &sha1_algorithm,
-	},
-	{
-		.code = htons ( TLS_RSA_WITH_AES_128_CBC_SHA ),
-		.key_len = ( 128 / 8 ),
-		.pubkey = &rsa_algorithm,
-		.cipher = &aes_cbc_algorithm,
-		.digest = &sha1_algorithm,
-	},
-};
-
 /** Number of supported cipher suites */
-#define TLS_NUM_CIPHER_SUITES \
-	( sizeof ( tls_cipher_suites ) / sizeof ( tls_cipher_suites[0] ) )
+#define TLS_NUM_CIPHER_SUITES table_num_entries ( TLS_CIPHER_SUITES )
 
 /**
  * Identify cipher suite
@@ -704,11 +678,9 @@ struct tls_cipher_suite tls_cipher_suites[] = {
 static struct tls_cipher_suite *
 tls_find_cipher_suite ( unsigned int cipher_suite ) {
 	struct tls_cipher_suite *suite;
-	unsigned int i;
 
 	/* Identify cipher suite */
-	for ( i = 0 ; i < TLS_NUM_CIPHER_SUITES ; i++ ) {
-		suite = &tls_cipher_suites[i];
+	for_each_table_entry ( suite, TLS_CIPHER_SUITES ) {
 		if ( suite->code == cipher_suite )
 			return suite;
 	}
@@ -841,26 +813,9 @@ static int tls_change_cipher ( struct tls_session *tls,
  ******************************************************************************
  */
 
-/** Supported signature and hash algorithms
- *
- * Note that the default (TLSv1.1 and earlier) algorithm using
- * MD5+SHA1 is never explicitly specified.
- */
-struct tls_signature_hash_algorithm tls_signature_hash_algorithms[] = {
-	{
-		.code = {
-			.signature = TLS_RSA_ALGORITHM,
-			.hash = TLS_SHA256_ALGORITHM,
-		},
-		.pubkey = &rsa_algorithm,
-		.digest = &sha256_algorithm,
-	},
-};
-
 /** Number of supported signature and hash algorithms */
-#define TLS_NUM_SIG_HASH_ALGORITHMS			\
-	( sizeof ( tls_signature_hash_algorithms ) /	\
-	  sizeof ( tls_signature_hash_algorithms[0] ) )
+#define TLS_NUM_SIG_HASH_ALGORITHMS \
+	table_num_entries ( TLS_SIG_HASH_ALGORITHMS )
 
 /**
  * Find TLS signature and hash algorithm
@@ -873,11 +828,9 @@ static struct tls_signature_hash_algorithm *
 tls_signature_hash_algorithm ( struct pubkey_algorithm *pubkey,
 			       struct digest_algorithm *digest ) {
 	struct tls_signature_hash_algorithm *sig_hash;
-	unsigned int i;
 
 	/* Identify signature and hash algorithm */
-	for ( i = 0 ; i < TLS_NUM_SIG_HASH_ALGORITHMS ; i++ ) {
-		sig_hash = &tls_signature_hash_algorithms[i];
+	for_each_table_entry ( sig_hash, TLS_SIG_HASH_ALGORITHMS ) {
 		if ( ( sig_hash->pubkey == pubkey ) &&
 		     ( sig_hash->digest == digest ) ) {
 			return sig_hash;
@@ -994,8 +947,17 @@ static int tls_send_client_hello ( struct tls_session *tls ) {
 			struct {
 				uint8_t max;
 			} __attribute__ (( packed )) max_fragment_length;
+			uint16_t signature_algorithms_type;
+			uint16_t signature_algorithms_len;
+			struct {
+				uint16_t len;
+				struct tls_signature_hash_id
+					code[TLS_NUM_SIG_HASH_ALGORITHMS];
+			} __attribute__ (( packed )) signature_algorithms;
 		} __attribute__ (( packed )) extensions;
 	} __attribute__ (( packed )) hello;
+	struct tls_cipher_suite *suite;
+	struct tls_signature_hash_algorithm *sighash;
 	unsigned int i;
 
 	memset ( &hello, 0, sizeof ( hello ) );
@@ -1005,8 +967,8 @@ static int tls_send_client_hello ( struct tls_session *tls ) {
 	hello.version = htons ( tls->version );
 	memcpy ( &hello.random, &tls->client_random, sizeof ( hello.random ) );
 	hello.cipher_suite_len = htons ( sizeof ( hello.cipher_suites ) );
-	for ( i = 0 ; i < TLS_NUM_CIPHER_SUITES ; i++ )
-		hello.cipher_suites[i] = tls_cipher_suites[i].code;
+	i = 0 ; for_each_table_entry ( suite, TLS_CIPHER_SUITES )
+		hello.cipher_suites[i++] = suite->code;
 	hello.compression_methods_len = sizeof ( hello.compression_methods );
 	hello.extensions_len = htons ( sizeof ( hello.extensions ) );
 	hello.extensions.server_name_type = htons ( TLS_SERVER_NAME );
@@ -1025,6 +987,14 @@ static int tls_send_client_hello ( struct tls_session *tls ) {
 		= htons ( sizeof ( hello.extensions.max_fragment_length ) );
 	hello.extensions.max_fragment_length.max
 		= TLS_MAX_FRAGMENT_LENGTH_4096;
+	hello.extensions.signature_algorithms_type
+		= htons ( TLS_SIGNATURE_ALGORITHMS );
+	hello.extensions.signature_algorithms_len
+		= htons ( sizeof ( hello.extensions.signature_algorithms ) );
+	hello.extensions.signature_algorithms.len
+		= htons ( sizeof ( hello.extensions.signature_algorithms.code));
+	i = 0 ; for_each_table_entry ( sighash, TLS_SIG_HASH_ALGORITHMS )
+		hello.extensions.signature_algorithms.code[i++] = sighash->code;
 
 	return tls_send_handshake ( tls, &hello, sizeof ( hello ) );
 }
@@ -1038,9 +1008,9 @@ static int tls_send_client_hello ( struct tls_session *tls ) {
 static int tls_send_certificate ( struct tls_session *tls ) {
 	struct {
 		uint32_t type_length;
-		uint8_t length[3];
+		tls24_t length;
 		struct {
-			uint8_t length[3];
+			tls24_t length;
 			uint8_t data[ tls->cert->raw.len ];
 		} __attribute__ (( packed )) certificates[1];
 	} __attribute__ (( packed )) *certificate;
@@ -1058,9 +1028,9 @@ static int tls_send_certificate ( struct tls_session *tls ) {
 		( cpu_to_le32 ( TLS_CERTIFICATE ) |
 		  htonl ( sizeof ( *certificate ) -
 			  sizeof ( certificate->type_length ) ) );
-	tls_set_uint24 ( certificate->length,
+	tls_set_uint24 ( &certificate->length,
 			 sizeof ( certificate->certificates ) );
-	tls_set_uint24 ( certificate->certificates[0].length,
+	tls_set_uint24 ( &certificate->certificates[0].length,
 			 sizeof ( certificate->certificates[0].data ) );
 	memcpy ( certificate->certificates[0].data,
 		 tls->cert->raw.data,
@@ -1412,7 +1382,7 @@ static int tls_parse_chain ( struct tls_session *tls,
 			     const void *data, size_t len ) {
 	const void *end = ( data + len );
 	const struct {
-		uint8_t length[3];
+		tls24_t length;
 		uint8_t data[0];
 	} __attribute__ (( packed )) *certificate;
 	size_t certificate_len;
@@ -1436,7 +1406,7 @@ static int tls_parse_chain ( struct tls_session *tls,
 
 		/* Extract raw certificate data */
 		certificate = data;
-		certificate_len = tls_uint24 ( certificate->length );
+		certificate_len = tls_uint24 ( &certificate->length );
 		next = ( certificate->data + certificate_len );
 		if ( next > end ) {
 			DBGC ( tls, "TLS %p overlength certificate:\n", tls );
@@ -1482,10 +1452,10 @@ static int tls_parse_chain ( struct tls_session *tls,
 static int tls_new_certificate ( struct tls_session *tls,
 				 const void *data, size_t len ) {
 	const struct {
-		uint8_t length[3];
+		tls24_t length;
 		uint8_t certificates[0];
 	} __attribute__ (( packed )) *certificate = data;
-	size_t certificates_len = tls_uint24 ( certificate->length );
+	size_t certificates_len = tls_uint24 ( &certificate->length );
 	const void *end = ( certificate->certificates + certificates_len );
 	int rc;
 
@@ -1634,12 +1604,12 @@ static int tls_new_handshake ( struct tls_session *tls,
 	while ( data != end ) {
 		const struct {
 			uint8_t type;
-			uint8_t length[3];
+			tls24_t length;
 			uint8_t payload[0];
 		} __attribute__ (( packed )) *handshake = data;
-		void *payload = &handshake->payload;
-		size_t payload_len = tls_uint24 ( handshake->length );
-		void *next = ( payload + payload_len );
+		const void *payload = &handshake->payload;
+		size_t payload_len = tls_uint24 ( &handshake->length );
+		const void *next = ( payload + payload_len );
 
 		/* Sanity check */
 		if ( next > end ) {
@@ -2637,3 +2607,9 @@ int add_tls ( struct interface *xfer, const char *name,
  err_alloc:
 	return rc;
 }
+
+/* Drag in objects via add_tls() */
+REQUIRING_SYMBOL ( add_tls );
+
+/* Drag in crypto configuration */
+REQUIRE_OBJECT ( config_crypto );

@@ -71,21 +71,42 @@ CFLAGS		+= -fshort-wchar
 #
 CFLAGS			+= -Ui386
 
+# Some widespread patched versions of gcc include -fPIE -Wl,-pie by
+# default.  Note that gcc will exit *successfully* if it fails to
+# recognise an option that starts with "no", so we have to test for
+# output on stderr instead of checking the exit status.
+#
+ifeq ($(CCTYPE),gcc)
+PIE_TEST = [ -z "`$(CC) -fno-PIE -nopie -x c -c /dev/null -o /dev/null 2>&1`" ]
+PIE_FLAGS := $(shell $(PIE_TEST) && $(ECHO) '-fno-PIE -nopie')
+WORKAROUND_CFLAGS += $(PIE_FLAGS)
+endif
+
 # Define version string for lkrnprefix.S
 #
 CFLAGS_lkrnprefix	+= -DVERSION="\"$(VERSION)\""
 
-# Locations of utilities
+# Locations of isolinux files
 #
+SYSLINUX_DIR_LIST	:= \
+	/usr/lib/syslinux \
+	/usr/lib/syslinux/bios \
+	/usr/lib/syslinux/modules/bios \
+	/usr/share/syslinux \
+	/usr/share/syslinux/bios \
+	/usr/share/syslinux/modules/bios \
+	/usr/local/share/syslinux \
+	/usr/local/share/syslinux/bios \
+	/usr/local/share/syslinux/modules/bios \
+	/usr/lib/ISOLINUX
 ISOLINUX_BIN_LIST	:= \
 	$(ISOLINUX_BIN) \
-	/usr/lib/syslinux/isolinux.bin \
-	/usr/lib/syslinux/bios/isolinux.bin \
-	/usr/share/syslinux/isolinux.bin \
-	/usr/share/syslinux/bios/isolinux.bin \
-	/usr/local/share/syslinux/isolinux.bin \
-	/usr/local/share/syslinux/bios/isolinux.bin
+	$(patsubst %,%/isolinux.bin,$(SYSLINUX_DIR_LIST))
+LDLINUX_C32_LIST	:= \
+	$(LDLINUX_C32) \
+	$(patsubst %,%/ldlinux.c32,$(SYSLINUX_DIR_LIST))
 ISOLINUX_BIN	= $(firstword $(wildcard $(ISOLINUX_BIN_LIST)))
+LDLINUX_C32	= $(firstword $(wildcard $(LDLINUX_C32_LIST)))
 
 # i386-specific directories containing source files
 #
@@ -96,7 +117,6 @@ SRCDIRS		+= arch/i386/interface/pcbios
 SRCDIRS		+= arch/i386/interface/pxe
 SRCDIRS		+= arch/i386/interface/pxeparent
 SRCDIRS 	+= arch/i386/interface/syslinux
-SRCDIRS		+= arch/i386/interface/vmware
 SRCDIRS		+= arch/i386/hci/commands
 
 # Include common x86 Makefile

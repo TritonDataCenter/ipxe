@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/tables.h>
@@ -415,6 +415,7 @@ extern const struct setting_type setting_type_uint32 __setting_type;
 extern const struct setting_type setting_type_hex __setting_type;
 extern const struct setting_type setting_type_hexhyp __setting_type;
 extern const struct setting_type setting_type_hexraw __setting_type;
+extern const struct setting_type setting_type_base64 __setting_type;
 extern const struct setting_type setting_type_uuid __setting_type;
 extern const struct setting_type setting_type_busdevfn __setting_type;
 extern const struct setting_type setting_type_dnssl __setting_type;
@@ -451,6 +452,16 @@ extern const struct setting
 busid_setting __setting ( SETTING_NETDEV, busid );
 extern const struct setting
 user_class_setting __setting ( SETTING_HOST_EXTRA, user-class );
+extern const struct setting
+manufacturer_setting __setting ( SETTING_HOST_EXTRA, manufacturer );
+extern const struct setting
+product_setting __setting ( SETTING_HOST_EXTRA, product );
+extern const struct setting
+serial_setting __setting ( SETTING_HOST_EXTRA, serial );
+extern const struct setting
+asset_setting __setting ( SETTING_HOST_EXTRA, asset );
+extern const struct setting
+board_serial_setting __setting ( SETTING_HOST_EXTRA, board-serial );
 
 /**
  * Initialise a settings block

@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stddef.h>
@@ -146,6 +146,7 @@ struct x509_subject_alt_name {
 enum x509_general_name_types {
 	X509_GENERAL_NAME_DNS = ASN1_IMPLICIT_TAG ( 2 ),
 	X509_GENERAL_NAME_URI = ASN1_IMPLICIT_TAG ( 6 ),
+	X509_GENERAL_NAME_IP = ASN1_IMPLICIT_TAG ( 7 ),
 };
 
 /** An X.509 certificate extensions set */

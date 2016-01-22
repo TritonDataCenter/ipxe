@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/netdevice.h>
@@ -80,6 +80,8 @@ static inline int is_valid_ether_addr ( const void *addr ) {
 }
 
 extern uint8_t eth_broadcast[];
+extern struct ll_protocol ethernet_protocol __ll_protocol;
+
 extern int eth_push ( struct net_device *netdev, struct io_buffer *iobuf,
 		      const void *ll_dest, const void *ll_source,
 		      uint16_t net_proto );

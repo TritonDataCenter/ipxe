@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <string.h>
@@ -146,6 +150,9 @@ int ib_mcast_join ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 	DBGC ( ibdev, "IBDEV %p QPN %lx joining " IB_GID_FMT "\n",
 	       ibdev, qp->qpn, IB_GID_ARGS ( gid ) );
 
+	/* Sanity check */
+	assert ( qp != NULL );
+
 	/* Initialise structure */
 	membership->qp = qp;
 	memcpy ( &membership->gid, gid, sizeof ( membership->gid ) );
@@ -194,6 +201,9 @@ void ib_mcast_leave ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 
 	DBGC ( ibdev, "IBDEV %p QPN %lx leaving " IB_GID_FMT "\n",
 	       ibdev, qp->qpn, IB_GID_ARGS ( gid ) );
+
+	/* Sanity check */
+	assert ( qp != NULL );
 
 	/* Detach from multicast GID */
 	ib_mcast_detach ( ibdev, qp, &membership->gid );

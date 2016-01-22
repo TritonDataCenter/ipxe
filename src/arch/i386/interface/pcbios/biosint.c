@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /**
  * Hook INT vector
@@ -89,4 +89,31 @@ int unhook_bios_interrupt ( unsigned int interrupt, unsigned int handler,
 	chain_vector->offset = 0;
 	hooked_bios_interrupts--;
 	return 0;
+}
+
+/**
+ * Dump changes to interrupt vector table (for debugging)
+ *
+ */
+void check_bios_interrupts ( void ) {
+	static struct segoff vectors[256];
+	static uint8_t initialised;
+	struct segoff vector;
+	unsigned int i;
+
+	/* Print any changed interrupt vectors */
+	for ( i = 0; i < ( sizeof ( vectors ) / sizeof ( vectors[0] ) ); i++ ) {
+		copy_from_real ( &vector, 0, ( i * sizeof ( vector ) ),
+				 sizeof ( vector ) );
+		if ( memcmp ( &vector, &vectors[i], sizeof ( vector ) ) == 0 )
+			continue;
+		if ( initialised ) {
+			dbg_printf ( "INT %02x changed %04x:%04x => "
+				     "%04x:%04x\n", i, vectors[i].segment,
+				     vectors[i].offset, vector.segment,
+				     vector.offset );
+		}
+		memcpy ( &vectors[i], &vector, sizeof ( vectors[i] ) );
+	}
+	initialised = 1;
 }

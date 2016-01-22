@@ -15,13 +15,18 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <ipxe/uaccess.h>
 #include <ipxe/init.h>
 #include <ipxe/profile.h>
+#include <ipxe/netdevice.h>
 #include <setjmp.h>
 #include <registers.h>
 #include <biosint.h>
@@ -48,6 +53,12 @@ extern void pxe_int_1a ( void );
 
 /** INT 1A hooked flag */
 static int int_1a_hooked = 0;
+
+/** Real-mode code segment size */
+extern char _text16_memsz[];
+
+/** Real-mode data segment size */
+extern char _data16_memsz[];
 
 /** PXENV_UNDI_TRANSMIT API call profiler */
 static struct profiler pxe_api_tx_profiler __profiler =
@@ -261,6 +272,9 @@ struct init_fn pxe_init_fn __init_fn ( INIT_NORMAL ) = {
  * @v netdev		Net device to use as PXE net device
  */
 void pxe_activate ( struct net_device *netdev ) {
+	uint32_t discard_a;
+	uint32_t discard_b;
+	uint32_t discard_d;
 
 	/* Ensure INT 1A is hooked */
 	if ( ! int_1a_hooked ) {
@@ -272,6 +286,15 @@ void pxe_activate ( struct net_device *netdev ) {
 
 	/* Set PXE network device */
 	pxe_set_netdev ( netdev );
+
+	/* Notify BIOS of installation */
+	__asm__ __volatile__ ( REAL_CODE ( "pushw %%cs\n\t"
+					   "popw %%es\n\t"
+					   "int $0x1a\n\t" )
+			       : "=a" ( discard_a ), "=b" ( discard_b ),
+				 "=d" ( discard_d )
+			       : "0" ( 0x564e ),
+				 "1" ( __from_text16 ( &pxenv ) ) );
 }
 
 /**
@@ -290,8 +313,8 @@ int pxe_deactivate ( void ) {
 		if ( ( rc = unhook_bios_interrupt ( 0x1a,
 						    (unsigned int) pxe_int_1a,
 						    &pxe_int_1a_vector ))!= 0){
-			DBG ( "Could not unhook INT 1A: %s\n",
-			      strerror ( rc ) );
+			DBGC ( &pxe_netdev, "PXE could not unhook INT 1A: %s\n",
+			       strerror ( rc ) );
 			return rc;
 		}
 		devices_put();
@@ -314,10 +337,15 @@ int pxe_start_nbp ( void ) {
 	int discard_b, discard_c, discard_d, discard_D;
 	uint16_t status;
 
+	DBGC ( &pxe_netdev, "PXE NBP starting with netdev %s, code %04x:%04x, "
+	       "data %04x:%04x\n", ( pxe_netdev ? pxe_netdev->name : "<none>" ),
+	       rm_cs, ( ( unsigned int ) _text16_memsz ),
+	       rm_ds, ( ( unsigned int ) _data16_memsz ) );
+
 	/* Allow restarting NBP via PXENV_RESTART_TFTP */
 	jmp = rmsetjmp ( pxe_restart_nbp );
 	if ( jmp )
-		DBG ( "Restarting NBP (%x)\n", jmp );
+		DBGC ( &pxe_netdev, "PXE NBP restarting (%x)\n", jmp );
 
 	/* Far call to PXE NBP */
 	__asm__ __volatile__ ( REAL_CODE ( "pushl %%ebp\n\t" /* gcc bug */
@@ -342,6 +370,32 @@ int pxe_start_nbp ( void ) {
 	return 0;
 }
 
+/**
+ * Notify BIOS of existence of network device
+ *
+ * @v netdev		Network device
+ * @ret rc		Return status code
+ */
+static int pxe_notify ( struct net_device *netdev ) {
+
+	/* Do nothing if we already have a network device */
+	if ( pxe_netdev )
+		return 0;
+
+	/* Activate (and deactivate) PXE stack to notify BIOS */
+	pxe_activate ( netdev );
+	pxe_deactivate();
+
+	return 0;
+}
+
+/** PXE BIOS notification driver */
+struct net_driver pxe_driver __net_driver = {
+	.name = "PXE",
+	.probe = pxe_notify,
+};
+
+REQUIRING_SYMBOL ( pxe_api_call );
 REQUIRE_OBJECT ( pxe_preboot );
 REQUIRE_OBJECT ( pxe_undi );
 REQUIRE_OBJECT ( pxe_udp );

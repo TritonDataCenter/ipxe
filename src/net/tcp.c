@@ -26,7 +26,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /** A TCP connection */
 struct tcp_connection {
@@ -101,8 +101,9 @@ struct tcp_connection {
 	 * Equivalent to Rcv.Wind.Scale in RFC 1323 terminology
 	 */
 	uint8_t rcv_win_scale;
-	/** Maximum receive window */
-	uint32_t max_rcv_win;
+
+	/** Selective acknowledgement list (in host-endian order) */
+	struct tcp_sack_block sack[TCP_SACK_MAX];
 
 	/** Transmit queue */
 	struct list_head tx_queue;
@@ -129,6 +130,8 @@ enum tcp_flags {
 	TCP_TS_ENABLED = 0x0002,
 	/** TCP acknowledgement is pending */
 	TCP_ACK_PENDING = 0x0004,
+	/** TCP selective acknowledgement is enabled */
+	TCP_SACK_ENABLED = 0x0008,
 };
 
 /** TCP internal header
@@ -143,6 +146,8 @@ struct tcp_rx_queued_header {
 	 * enqueued, and so excludes the SYN, if present.
 	 */
 	uint32_t seq;
+	/** Next SEQ value, in host-endian order */
+	uint32_t nxt;
 	/** Flags
 	 *
 	 * Only FIN is valid within this flags byte; all other flags
@@ -284,7 +289,6 @@ static int tcp_open ( struct interface *xfer, struct sockaddr *peer,
 	tcp->tcp_state = TCP_STATE_SENT ( TCP_SYN );
 	tcp_dump_state ( tcp );
 	tcp->snd_seq = random();
-	tcp->max_rcv_win = TCP_MAX_WINDOW_SIZE;
 	INIT_LIST_HEAD ( &tcp->tx_queue );
 	INIT_LIST_HEAD ( &tcp->rx_queue );
 	memcpy ( &tcp->peer, st_peer, sizeof ( tcp->peer ) );
@@ -396,6 +400,7 @@ static void tcp_close ( struct tcp_connection *tcp, int rc ) {
 
 		tcp->tcp_state |= TCP_STATE_SENT ( TCP_FIN );
 		tcp_dump_state ( tcp );
+		process_add ( &tcp->process );
 
 		/* Add a pending operation for the FIN */
 		pending_get ( &tcp->pending_flags );
@@ -450,6 +455,94 @@ static size_t tcp_xfer_window ( struct tcp_connection *tcp ) {
 }
 
 /**
+ * Find selective acknowledgement block
+ *
+ * @v tcp		TCP connection
+ * @v seq		SEQ value in SACK block (in host-endian order)
+ * @v sack		SACK block to fill in (in host-endian order)
+ * @ret len		Length of SACK block
+ */
+static uint32_t tcp_sack_block ( struct tcp_connection *tcp, uint32_t seq,
+				 struct tcp_sack_block *sack ) {
+	struct io_buffer *iobuf;
+	struct tcp_rx_queued_header *tcpqhdr;
+	uint32_t left = tcp->rcv_ack;
+	uint32_t right = left;
+
+	/* Find highest block which does not start after SEQ */
+	list_for_each_entry ( iobuf, &tcp->rx_queue, list ) {
+		tcpqhdr = iobuf->data;
+		if ( tcp_cmp ( tcpqhdr->seq, right ) > 0 ) {
+			if ( tcp_cmp ( tcpqhdr->seq, seq ) > 0 )
+				break;
+			left = tcpqhdr->seq;
+		}
+		if ( tcp_cmp ( tcpqhdr->nxt, right ) > 0 )
+			right = tcpqhdr->nxt;
+	}
+
+	/* Fail if this block does not contain SEQ */
+	if ( tcp_cmp ( right, seq ) < 0 )
+		return 0;
+
+	/* Populate SACK block */
+	sack->left = left;
+	sack->right = right;
+	return ( right - left );
+}
+
+/**
+ * Update TCP selective acknowledgement list
+ *
+ * @v tcp		TCP connection
+ * @v seq		SEQ value in first SACK block (in host-endian order)
+ * @ret count		Number of SACK blocks
+ */
+static unsigned int tcp_sack ( struct tcp_connection *tcp, uint32_t seq ) {
+	struct tcp_sack_block sack[TCP_SACK_MAX];
+	unsigned int old = 0;
+	unsigned int new = 0;
+	unsigned int i;
+	uint32_t len;
+
+	/* Populate first new SACK block */
+	len = tcp_sack_block ( tcp, seq, &sack[0] );
+	if ( len )
+		new++;
+
+	/* Populate remaining new SACK blocks based on old SACK blocks */
+	for ( old = 0 ; old < TCP_SACK_MAX ; old++ ) {
+
+		/* Stop if we run out of space in the new list */
+		if ( new == TCP_SACK_MAX )
+			break;
+
+		/* Skip empty old SACK blocks */
+		if ( tcp->sack[old].left == tcp->sack[old].right )
+			continue;
+
+		/* Populate new SACK block */
+		len = tcp_sack_block ( tcp, tcp->sack[old].left, &sack[new] );
+		if ( len == 0 )
+			continue;
+
+		/* Eliminate duplicates */
+		for ( i = 0 ; i < new ; i++ ) {
+			if ( sack[i].left == sack[new].left ) {
+				new--;
+				break;
+			}
+		}
+		new++;
+	}
+
+	/* Update SACK list */
+	memset ( tcp->sack, 0, sizeof ( tcp->sack ) );
+	memcpy ( tcp->sack, sack, ( new * sizeof ( tcp->sack[0] ) ) );
+	return new;
+}
+
+/**
  * Process TCP transmit queue
  *
  * @v tcp		TCP connection
@@ -493,9 +586,10 @@ static size_t tcp_process_tx_queue ( struct tcp_connection *tcp, size_t max_len,
 }
 
 /**
- * Transmit any outstanding data
+ * Transmit any outstanding data (with selective acknowledgement)
  *
  * @v tcp		TCP connection
+ * @v sack_seq		SEQ for first selective acknowledgement (if any)
  * 
  * Transmits any outstanding data on the connection.
  *
@@ -503,17 +597,22 @@ static size_t tcp_process_tx_queue ( struct tcp_connection *tcp, size_t max_len,
  * will have been started if necessary, and so the stack will
  * eventually attempt to retransmit the failed packet.
  */
-static void tcp_xmit ( struct tcp_connection *tcp ) {
+static void tcp_xmit_sack ( struct tcp_connection *tcp, uint32_t sack_seq ) {
 	struct io_buffer *iobuf;
 	struct tcp_header *tcphdr;
 	struct tcp_mss_option *mssopt;
 	struct tcp_window_scale_padded_option *wsopt;
 	struct tcp_timestamp_padded_option *tsopt;
+	struct tcp_sack_permitted_padded_option *spopt;
+	struct tcp_sack_padded_option *sackopt;
+	struct tcp_sack_block *sack;
 	void *payload;
 	unsigned int flags;
+	unsigned int sack_count;
+	unsigned int i;
 	size_t len = 0;
+	size_t sack_len;
 	uint32_t seq_len;
-	uint32_t app_win;
 	uint32_t max_rcv_win;
 	uint32_t max_representable_win;
 	int rc;
@@ -567,10 +666,9 @@ static void tcp_xmit ( struct tcp_connection *tcp ) {
 	tcp_process_tx_queue ( tcp, len, iobuf, 0 );
 
 	/* Expand receive window if possible */
-	max_rcv_win = tcp->max_rcv_win;
-	app_win = xfer_window ( &tcp->xfer );
-	if ( max_rcv_win > app_win )
-		max_rcv_win = app_win;
+	max_rcv_win = xfer_window ( &tcp->xfer );
+	if ( max_rcv_win > TCP_MAX_WINDOW_SIZE )
+		max_rcv_win = TCP_MAX_WINDOW_SIZE;
 	max_representable_win = ( 0xffff << tcp->rcv_win_scale );
 	if ( max_rcv_win > max_representable_win )
 		max_rcv_win = max_representable_win;
@@ -590,6 +688,10 @@ static void tcp_xmit ( struct tcp_connection *tcp ) {
 		wsopt->wsopt.kind = TCP_OPTION_WS;
 		wsopt->wsopt.length = sizeof ( wsopt->wsopt );
 		wsopt->wsopt.scale = TCP_RX_WINDOW_SCALE;
+		spopt = iob_push ( iobuf, sizeof ( *spopt ) );
+		memset ( spopt->nop, TCP_OPTION_NOP, sizeof ( spopt ) );
+		spopt->spopt.kind = TCP_OPTION_SACK_PERMITTED;
+		spopt->spopt.length = sizeof ( spopt->spopt );
 	}
 	if ( ( flags & TCP_SYN ) || ( tcp->flags & TCP_TS_ENABLED ) ) {
 		tsopt = iob_push ( iobuf, sizeof ( *tsopt ) );
@@ -598,6 +700,21 @@ static void tcp_xmit ( struct tcp_connection *tcp ) {
 		tsopt->tsopt.length = sizeof ( tsopt->tsopt );
 		tsopt->tsopt.tsval = htonl ( currticks() );
 		tsopt->tsopt.tsecr = htonl ( tcp->ts_recent );
+	}
+	if ( ( tcp->flags & TCP_SACK_ENABLED ) &&
+	     ( ! list_empty ( &tcp->rx_queue ) ) &&
+	     ( ( sack_count = tcp_sack ( tcp, sack_seq ) ) != 0 ) ) {
+		sack_len = ( sack_count * sizeof ( *sack ) );
+		sackopt = iob_push ( iobuf, ( sizeof ( *sackopt ) + sack_len ));
+		memset ( sackopt->nop, TCP_OPTION_NOP, sizeof ( sackopt->nop ));
+		sackopt->sackopt.kind = TCP_OPTION_SACK;
+		sackopt->sackopt.length =
+			( sizeof ( sackopt->sackopt ) + sack_len );
+		sack = ( ( ( void * ) sackopt ) + sizeof ( *sackopt ) );
+		for ( i = 0 ; i < sack_count ; i++, sack++ ) {
+			sack->left = htonl ( tcp->sack[i].left );
+			sack->right = htonl ( tcp->sack[i].right );
+		}
 	}
 	if ( len != 0 )
 		flags |= TCP_PSH;
@@ -633,6 +750,17 @@ static void tcp_xmit ( struct tcp_connection *tcp ) {
 	tcp->flags &= ~TCP_ACK_PENDING;
 
 	profile_stop ( &tcp_tx_profiler );
+}
+
+/**
+ * Transmit any outstanding data
+ *
+ * @v tcp		TCP connection
+ */
+static void tcp_xmit ( struct tcp_connection *tcp ) {
+
+	/* Transmit without an explicit first SACK */
+	tcp_xmit_sack ( tcp, tcp->rcv_ack );
 }
 
 /** TCP process descriptor */
@@ -804,6 +932,12 @@ static void tcp_rx_opts ( struct tcp_connection *tcp, const void *data,
 		case TCP_OPTION_WS:
 			options->wsopt = data;
 			break;
+		case TCP_OPTION_SACK_PERMITTED:
+			options->spopt = data;
+			break;
+		case TCP_OPTION_SACK:
+			/* Ignore received SACKs */
+			break;
 		case TCP_OPTION_TS:
 			options->tsopt = data;
 			break;
@@ -823,6 +957,7 @@ static void tcp_rx_opts ( struct tcp_connection *tcp, const void *data,
  * @v seq_len		Sequence space length to consume
  */
 static void tcp_rx_seq ( struct tcp_connection *tcp, uint32_t seq_len ) {
+	unsigned int sack;
 
 	/* Sanity check */
 	assert ( seq_len > 0 );
@@ -839,6 +974,16 @@ static void tcp_rx_seq ( struct tcp_connection *tcp, uint32_t seq_len ) {
 
 	/* Update timestamp */
 	tcp->ts_recent = tcp->ts_val;
+
+	/* Update SACK list */
+	for ( sack = 0 ; sack < TCP_SACK_MAX ; sack++ ) {
+		if ( tcp->sack[sack].left == tcp->sack[sack].right )
+			continue;
+		if ( tcp_cmp ( tcp->sack[sack].left, tcp->rcv_ack ) < 0 )
+			tcp->sack[sack].left = tcp->rcv_ack;
+		if ( tcp_cmp ( tcp->sack[sack].right, tcp->rcv_ack ) < 0 )
+			tcp->sack[sack].right = tcp->rcv_ack;
+	}
 
 	/* Mark ACK as pending */
 	tcp->flags |= TCP_ACK_PENDING;
@@ -860,6 +1005,8 @@ static int tcp_rx_syn ( struct tcp_connection *tcp, uint32_t seq,
 		tcp->rcv_ack = seq;
 		if ( options->tsopt )
 			tcp->flags |= TCP_TS_ENABLED;
+		if ( options->spopt )
+			tcp->flags |= TCP_SACK_ENABLED;
 		if ( options->wsopt ) {
 			tcp->snd_win_scale = options->wsopt->scale;
 			tcp->rcv_win_scale = TCP_RX_WINDOW_SCALE;
@@ -1070,6 +1217,7 @@ static void tcp_rx_enqueue ( struct tcp_connection *tcp, uint32_t seq,
 	struct io_buffer *queued;
 	size_t len;
 	uint32_t seq_len;
+	uint32_t nxt;
 
 	/* Calculate remaining flags and sequence length.  Note that
 	 * SYN, if present, has already been processed by this point.
@@ -1077,6 +1225,7 @@ static void tcp_rx_enqueue ( struct tcp_connection *tcp, uint32_t seq,
 	flags &= TCP_FIN;
 	len = iob_len ( iobuf );
 	seq_len = ( len + ( flags ? 1 : 0 ) );
+	nxt = ( seq + seq_len );
 
 	/* Discard immediately (to save memory) if:
 	 *
@@ -1087,7 +1236,7 @@ static void tcp_rx_enqueue ( struct tcp_connection *tcp, uint32_t seq,
 	 */
 	if ( ( ! ( tcp->tcp_state & TCP_STATE_RCVD ( TCP_SYN ) ) ) ||
 	     ( tcp_cmp ( seq, tcp->rcv_ack + tcp->rcv_win ) >= 0 ) ||
-	     ( tcp_cmp ( seq + seq_len, tcp->rcv_ack ) < 0 ) ||
+	     ( tcp_cmp ( nxt, tcp->rcv_ack ) < 0 ) ||
 	     ( seq_len == 0 ) ) {
 		free_iob ( iobuf );
 		return;
@@ -1096,6 +1245,7 @@ static void tcp_rx_enqueue ( struct tcp_connection *tcp, uint32_t seq,
 	/* Add internal header */
 	tcpqhdr = iob_push ( iobuf, sizeof ( *tcpqhdr ) );
 	tcpqhdr->seq = seq;
+	tcpqhdr->nxt = nxt;
 	tcpqhdr->flags = flags;
 
 	/* Add to RX queue */
@@ -1289,7 +1439,7 @@ static int tcp_rx ( struct io_buffer *iobuf,
 	if ( list_empty ( &tcp->rx_queue ) ) {
 		process_add ( &tcp->process );
 	} else {
-		tcp_xmit ( tcp );
+		tcp_xmit_sack ( tcp, seq );
 	}
 
 	/* If this packet was the last we expect to receive, set up
@@ -1328,23 +1478,11 @@ struct tcpip_protocol tcp_protocol __tcpip_protocol = {
 static unsigned int tcp_discard ( void ) {
 	struct tcp_connection *tcp;
 	struct io_buffer *iobuf;
-	struct tcp_rx_queued_header *tcpqhdr;
-	uint32_t max_win;
 	unsigned int discarded = 0;
 
 	/* Try to drop one queued RX packet from each connection */
 	list_for_each_entry ( tcp, &tcp_conns, list ) {
 		list_for_each_entry_reverse ( iobuf, &tcp->rx_queue, list ) {
-
-			/* Limit window to prevent future discards */
-			tcpqhdr = iobuf->data;
-			max_win = ( tcpqhdr->seq - tcp->rcv_ack );
-			if ( max_win < tcp->max_rcv_win ) {
-				DBGC ( tcp, "TCP %p reducing maximum window "
-				       "from %d to %d\n",
-				       tcp, tcp->max_rcv_win, max_win );
-				tcp->max_rcv_win = max_win;
-			}
 
 			/* Remove packet from queue */
 			list_del ( &iobuf->list );
@@ -1365,12 +1503,67 @@ struct cache_discarder tcp_discarder __cache_discarder ( CACHE_NORMAL ) = {
 };
 
 /**
+ * Find first TCP connection that has not yet been closed
+ *
+ * @ret tcp		First unclosed connection, or NULL
+ */
+static struct tcp_connection * tcp_first_unclosed ( void ) {
+	struct tcp_connection *tcp;
+
+	/* Find first connection which has not yet been closed */
+	list_for_each_entry ( tcp, &tcp_conns, list ) {
+		if ( ! ( tcp->flags & TCP_XFER_CLOSED ) )
+			return tcp;
+	}
+	return NULL;
+}
+
+/**
+ * Find first TCP connection that has not yet finished all operations
+ *
+ * @ret tcp		First unfinished connection, or NULL
+ */
+static struct tcp_connection * tcp_first_unfinished ( void ) {
+	struct tcp_connection *tcp;
+
+	/* Find first connection which has not yet closed gracefully,
+	 * or which still has a pending transmission (e.g. to ACK the
+	 * received FIN).
+	 */
+	list_for_each_entry ( tcp, &tcp_conns, list ) {
+		if ( ( ! TCP_CLOSED_GRACEFULLY ( tcp->tcp_state ) ) ||
+		     process_running ( &tcp->process ) ) {
+			return tcp;
+		}
+	}
+	return NULL;
+}
+
+/**
  * Shut down all TCP connections
  *
  */
 static void tcp_shutdown ( int booting __unused ) {
 	struct tcp_connection *tcp;
+	unsigned long start;
+	unsigned long elapsed;
 
+	/* Initiate a graceful close of all connections, allowing for
+	 * the fact that the connection list may change as we do so.
+	 */
+	while ( ( tcp = tcp_first_unclosed() ) ) {
+		DBGC ( tcp, "TCP %p closing for shutdown\n", tcp );
+		tcp_close ( tcp, -ECANCELED );
+	}
+
+	/* Wait for all connections to finish closing gracefully */
+	start = currticks();
+	while ( ( tcp = tcp_first_unfinished() ) &&
+		( ( elapsed = ( currticks() - start ) ) < TCP_FINISH_TIMEOUT )){
+		step();
+	}
+
+	/* Forcibly close any remaining connections */
 	while ( ( tcp = list_first_entry ( &tcp_conns, struct tcp_connection,
 					   list ) ) != NULL ) {
 		tcp->tcp_state = TCP_CLOSED;
@@ -1380,7 +1573,7 @@ static void tcp_shutdown ( int booting __unused ) {
 }
 
 /** TCP shutdown function */
-struct startup_fn tcp_startup_fn __startup_fn ( STARTUP_EARLY ) = {
+struct startup_fn tcp_startup_fn __startup_fn ( STARTUP_LATE ) = {
 	.shutdown = tcp_shutdown,
 };
 

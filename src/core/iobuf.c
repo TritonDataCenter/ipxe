@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <strings.h>
@@ -199,4 +203,34 @@ struct io_buffer * iob_concatenate ( struct list_head *list ) {
 	}
 
 	return concatenated;
+}
+
+/**
+ * Split I/O buffer
+ *
+ * @v iobuf		I/O buffer
+ * @v len		Length to split into a new I/O buffer
+ * @ret split		New I/O buffer, or NULL on allocation failure
+ *
+ * Split the first @c len bytes of the existing I/O buffer into a
+ * separate I/O buffer.  The resulting buffers are likely to have no
+ * headroom or tailroom.
+ *
+ * If this call fails, then the original buffer will be unmodified.
+ */
+struct io_buffer * iob_split ( struct io_buffer *iobuf, size_t len ) {
+	struct io_buffer *split;
+
+	/* Sanity checks */
+	assert ( len <= iob_len ( iobuf ) );
+
+	/* Allocate new I/O buffer */
+	split = alloc_iob ( len );
+	if ( ! split )
+		return NULL;
+
+	/* Copy in data */
+	memcpy ( iob_put ( split, len ), iobuf->data, len );
+	iob_pull ( iobuf, len );
+	return split;
 }

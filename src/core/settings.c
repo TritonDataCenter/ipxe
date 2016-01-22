@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -35,6 +39,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/uuid.h>
 #include <ipxe/uri.h>
 #include <ipxe/base16.h>
+#include <ipxe/base64.h>
 #include <ipxe/pci.h>
 #include <ipxe/init.h>
 #include <ipxe/version.h>
@@ -337,17 +342,20 @@ struct settings * autovivify_child_settings ( struct settings *parent,
  */
 const char * settings_name ( struct settings *settings ) {
 	static char buf[16];
-	char tmp[ sizeof ( buf ) ];
+	char tmp[ 1 /* '.' */ + sizeof ( buf ) ];
 
 	/* Find target settings block */
 	settings = settings_target ( settings );
 
 	/* Construct name */
-	for ( buf[2] = buf[0] = 0 ; settings ; settings = settings->parent ) {
-		memcpy ( tmp, buf, sizeof ( tmp ) );
-		snprintf ( buf, sizeof ( buf ), ".%s%s", settings->name, tmp );
+	buf[0] = '\0';
+	tmp[0] = '\0';
+	for ( ; settings->parent ; settings = settings->parent ) {
+		memcpy ( ( tmp + 1 ), buf, ( sizeof ( tmp ) - 1 ) );
+		snprintf ( buf, sizeof ( buf ), "%s%s", settings->name, tmp );
+		tmp[0] = '.';
 	}
-	return ( buf + 2 );
+	return buf;
 }
 
 /**
@@ -499,10 +507,10 @@ int register_settings ( struct settings *settings, struct settings *parent,
  */
 void unregister_settings ( struct settings *settings ) {
 	struct settings *child;
-	struct settings *tmp;
 
 	/* Unregister child settings */
-	list_for_each_entry_safe ( child, tmp, &settings->children, siblings ) {
+	while ( ( child = list_first_entry ( &settings->children,
+					     struct settings, siblings ) ) ) {
 		unregister_settings ( child );
 	}
 
@@ -1658,15 +1666,43 @@ const struct setting_type setting_type_string __setting_type = {
 	.format = format_string_setting,
 };
 
-/** A URI-encoded string setting type
+/**
+ * Parse URI-encoded string setting value
  *
- * This setting type is obsolete; the name ":uristring" is retained to
- * avoid breaking existing scripts.
+ * @v type		Setting type
+ * @v value		Formatted setting value
+ * @v buf		Buffer to contain raw value
+ * @v len		Length of buffer
+ * @ret len		Length of raw value, or negative error
  */
+static int parse_uristring_setting ( const struct setting_type *type __unused,
+				     const char *value, void *buf, size_t len ){
+
+	return uri_decode ( value, buf, len );
+}
+
+/**
+ * Format URI-encoded string setting value
+ *
+ * @v type		Setting type
+ * @v raw		Raw setting value
+ * @v raw_len		Length of raw setting value
+ * @v buf		Buffer to contain formatted value
+ * @v len		Length of buffer
+ * @ret len		Length of formatted value, or negative error
+ */
+static int format_uristring_setting ( const struct setting_type *type __unused,
+				      const void *raw, size_t raw_len,
+				      char *buf, size_t len ) {
+
+	return uri_encode ( 0, raw, raw_len, buf, len );
+}
+
+/** A URI-encoded string setting type */
 const struct setting_type setting_type_uristring __setting_type = {
 	.name = "uristring",
-	.parse = parse_string_setting,
-	.format = format_string_setting,
+	.parse = parse_uristring_setting,
+	.format = format_uristring_setting,
 };
 
 /**
@@ -1999,32 +2035,6 @@ const struct setting_type setting_type_uint32 __setting_type =
 	SETTING_TYPE_UINT ( SETTING_TYPE_INT32 );
 
 /**
- * Format hex string setting value
- *
- * @v delimiter		Byte delimiter
- * @v raw		Raw setting value
- * @v raw_len		Length of raw setting value
- * @v buf		Buffer to contain formatted value
- * @v len		Length of buffer
- * @ret len		Length of formatted value, or negative error
- */
-static int format_hex_setting ( const char *delimiter, const void *raw,
-				size_t raw_len, char *buf, size_t len ) {
-	const uint8_t *bytes = raw;
-	int used = 0;
-	unsigned int i;
-
-	if ( len )
-		buf[0] = 0; /* Ensure that a terminating NUL exists */
-	for ( i = 0 ; i < raw_len ; i++ ) {
-		used += ssnprintf ( ( buf + used ), ( len - used ),
-				    "%s%02x", ( used ? delimiter : "" ),
-				    bytes[i] );
-	}
-	return used;
-}
-
-/**
  * Parse hex string setting value (using colon delimiter)
  *
  * @v type		Setting type
@@ -2036,7 +2046,7 @@ static int format_hex_setting ( const char *delimiter, const void *raw,
  */
 static int parse_hex_setting ( const struct setting_type *type __unused,
 			       const char *value, void *buf, size_t len ) {
-	return hex_decode ( value, ':', buf, len );
+	return hex_decode ( ':', value, buf, len );
 }
 
 /**
@@ -2052,7 +2062,7 @@ static int parse_hex_setting ( const struct setting_type *type __unused,
 static int format_hex_colon_setting ( const struct setting_type *type __unused,
 				      const void *raw, size_t raw_len,
 				      char *buf, size_t len ) {
-	return format_hex_setting ( ":", raw, raw_len, buf, len );
+	return hex_encode ( ':', raw, raw_len, buf, len );
 }
 
 /**
@@ -2068,7 +2078,7 @@ static int format_hex_colon_setting ( const struct setting_type *type __unused,
 static int parse_hex_hyphen_setting ( const struct setting_type *type __unused,
 				      const char *value, void *buf,
 				      size_t len ) {
-	return hex_decode ( value, '-', buf, len );
+	return hex_decode ( '-', value, buf, len );
 }
 
 /**
@@ -2084,7 +2094,7 @@ static int parse_hex_hyphen_setting ( const struct setting_type *type __unused,
 static int format_hex_hyphen_setting ( const struct setting_type *type __unused,
 				       const void *raw, size_t raw_len,
 				       char *buf, size_t len ) {
-	return format_hex_setting ( "-", raw, raw_len, buf, len );
+	return hex_encode ( '-', raw, raw_len, buf, len );
 }
 
 /**
@@ -2099,7 +2109,7 @@ static int format_hex_hyphen_setting ( const struct setting_type *type __unused,
  */
 static int parse_hex_raw_setting ( const struct setting_type *type __unused,
 				   const char *value, void *buf, size_t len ) {
-	return hex_decode ( value, 0, buf, len );
+	return hex_decode ( 0, value, buf, len );
 }
 
 /**
@@ -2115,7 +2125,7 @@ static int parse_hex_raw_setting ( const struct setting_type *type __unused,
 static int format_hex_raw_setting ( const struct setting_type *type __unused,
 				    const void *raw, size_t raw_len,
 				    char *buf, size_t len ) {
-	return format_hex_setting ( "", raw, raw_len, buf, len );
+	return hex_encode ( 0, raw, raw_len, buf, len );
 }
 
 /** A hex-string setting (colon-delimited) */
@@ -2137,6 +2147,46 @@ const struct setting_type setting_type_hexraw __setting_type = {
 	.name = "hexraw",
 	.parse = parse_hex_raw_setting,
 	.format = format_hex_raw_setting,
+};
+
+/**
+ * Parse Base64-encoded setting value
+ *
+ * @v type		Setting type
+ * @v value		Formatted setting value
+ * @v buf		Buffer to contain raw value
+ * @v len		Length of buffer
+ * @v size		Integer size, in bytes
+ * @ret len		Length of raw value, or negative error
+ */
+static int parse_base64_setting ( const struct setting_type *type __unused,
+				  const char *value, void *buf, size_t len ) {
+
+	return base64_decode ( value, buf, len );
+}
+
+/**
+ * Format Base64-encoded setting value
+ *
+ * @v type		Setting type
+ * @v raw		Raw setting value
+ * @v raw_len		Length of raw setting value
+ * @v buf		Buffer to contain formatted value
+ * @v len		Length of buffer
+ * @ret len		Length of formatted value, or negative error
+ */
+static int format_base64_setting ( const struct setting_type *type __unused,
+				   const void *raw, size_t raw_len,
+				   char *buf, size_t len ) {
+
+	return base64_encode ( raw, raw_len, buf, len );
+}
+
+/** A Base64-encoded setting */
+const struct setting_type setting_type_base64 __setting_type = {
+	.name = "base64",
+	.parse = parse_base64_setting,
+	.format = format_base64_setting,
 };
 
 /**

@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <string.h>
@@ -603,6 +607,10 @@ static int myson_probe ( struct pci_device *pci ) {
 
 	/* Map registers */
 	myson->regs = ioremap ( pci->membase, MYSON_BAR_SIZE );
+	if ( ! myson->regs ) {
+		rc = -ENODEV;
+		goto err_ioremap;
+	}
 
 	/* Reset the NIC */
 	if ( ( rc = myson_reset ( myson ) ) != 0 )
@@ -627,6 +635,7 @@ static int myson_probe ( struct pci_device *pci ) {
 	myson_reset ( myson );
  err_reset:
 	iounmap ( myson->regs );
+ err_ioremap:
 	netdev_nullify ( netdev );
 	netdev_put ( netdev );
  err_alloc:

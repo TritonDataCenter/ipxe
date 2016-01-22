@@ -1,7 +1,7 @@
 #ifndef LIBRM_H
 #define LIBRM_H
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /* Segment selectors as used in our protected-mode GDTs.
  *
@@ -169,18 +169,6 @@ extern uint16_t __text16 ( rm_cs );
 #define rm_cs __use_text16 ( rm_cs )
 extern uint16_t __text16 ( rm_ds );
 #define rm_ds __use_text16 ( rm_ds )
-
-/**
- * Convert segment:offset address to user buffer
- *
- * @v segment		Real-mode segment
- * @v offset		Real-mode offset
- * @ret buffer		User buffer
- */
-static inline __always_inline userptr_t
-real_to_user ( unsigned int segment, unsigned int offset ) {
-	return ( phys_to_user ( ( segment << 4 ) + offset ) );
-}
 
 extern uint16_t copy_user_to_rm_stack ( userptr_t data, size_t size );
 extern void remove_user_from_rm_stack ( userptr_t data, size_t size );

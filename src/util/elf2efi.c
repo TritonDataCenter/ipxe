@@ -20,6 +20,7 @@
 #define _GNU_SOURCE
 #define PACKAGE "elf2efi"
 #define PACKAGE_VERSION "1"
+#define FILE_LICENCE(...) extern void __file_licence ( void )
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -30,7 +31,7 @@
 #include <assert.h>
 #include <getopt.h>
 #include <bfd.h>
-#include <ipxe/efi/efi.h>
+#include <ipxe/efi/Uefi.h>
 #include <ipxe/efi/IndustryStandard/PeImage.h>
 #include <libgen.h>
 
@@ -41,6 +42,7 @@
 struct pe_section {
 	struct pe_section *next;
 	EFI_IMAGE_SECTION_HEADER hdr;
+	void ( * fixup ) ( struct pe_section *section );
 	uint8_t contents[0];
 };
 
@@ -90,6 +92,8 @@ static struct pe_header efi_pe_header = {
 #elif defined(EFI_TARGET_X64)
 			.Magic = EFI_IMAGE_NT_OPTIONAL_HDR64_MAGIC,
 #endif
+			.MajorLinkerVersion = 42,
+			.MinorLinkerVersion = 42,
 			.SectionAlignment = EFI_FILE_ALIGN,
 			.FileAlignment = EFI_FILE_ALIGN,
 			.SizeOfImage = sizeof ( efi_pe_header ),
@@ -478,11 +482,13 @@ static void process_reloc ( bfd *bfd __attribute__ (( unused )),
 		/* Skip absolute symbols; the symbol value won't
 		 * change when the object is loaded.
 		 */
+	} else if ( ( strcmp ( howto->name, "R_386_NONE" ) == 0 ) ||
+		    ( strcmp ( howto->name, "R_X86_64_NONE" ) == 0 ) ) {
+		/* Ignore dummy relocations used by REQUIRE_SYMBOL() */
 	} else if ( strcmp ( howto->name, "R_X86_64_64" ) == 0 ) {
 		/* Generate an 8-byte PE relocation */
 		generate_pe_reloc ( pe_reltab, offset, 8 );
-	} else if ( ( strcmp ( howto->name, "R_386_32" ) == 0 ) ||
-		    ( strcmp ( howto->name, "R_X86_64_32" ) == 0 ) ) {
+	} else if ( strcmp ( howto->name, "R_386_32" ) == 0 ) {
 		/* Generate a 4-byte PE relocation */
 		generate_pe_reloc ( pe_reltab, offset, 4 );
 	} else if ( strcmp ( howto->name, "R_386_16" ) == 0 ) {
@@ -546,6 +552,20 @@ create_reloc_section ( struct pe_header *pe_header,
 }
 
 /**
+ * Fix up debug section
+ *
+ * @v debug		Debug section
+ */
+static void fixup_debug_section ( struct pe_section *debug ) {
+	EFI_IMAGE_DEBUG_DIRECTORY_ENTRY *contents;
+
+	/* Fix up FileOffset */
+	contents = ( ( void * ) debug->contents );
+	contents->FileOffset += ( debug->hdr.PointerToRawData -
+				  debug->hdr.VirtualAddress );
+}
+
+/**
  * Create debug section
  *
  * @v pe_header		PE file header
@@ -579,6 +599,7 @@ create_debug_section ( struct pe_header *pe_header, const char *filename ) {
 	debug->hdr.Characteristics = ( EFI_IMAGE_SCN_CNT_INITIALIZED_DATA |
 				       EFI_IMAGE_SCN_MEM_NOT_PAGED |
 				       EFI_IMAGE_SCN_MEM_READ );
+	debug->fixup = fixup_debug_section;
 
 	/* Create section contents */
 	contents->debug.TimeDateStamp = 0x10d1a884;
@@ -587,6 +608,7 @@ create_debug_section ( struct pe_header *pe_header, const char *filename ) {
 		( sizeof ( *contents ) - sizeof ( contents->debug ) );
 	contents->debug.RVA = ( debug->hdr.VirtualAddress +
 				offsetof ( typeof ( *contents ), rsds ) );
+	contents->debug.FileOffset = contents->debug.RVA;
 	contents->rsds.Signature = CODEVIEW_SIGNATURE_RSDS;
 	snprintf ( contents->name, sizeof ( contents->name ), "%s",
 		   filename );
@@ -598,7 +620,7 @@ create_debug_section ( struct pe_header *pe_header, const char *filename ) {
 	debugdir = &(pe_header->nt.OptionalHeader.DataDirectory
 		     [EFI_IMAGE_DIRECTORY_ENTRY_DEBUG]);
 	debugdir->VirtualAddress = debug->hdr.VirtualAddress;
-	debugdir->Size = debug->hdr.Misc.VirtualSize;
+	debugdir->Size = sizeof ( contents->debug );
 
 	return debug;
 }
@@ -627,6 +649,8 @@ static void write_pe_file ( struct pe_header *pe_header,
 			fpos += section->hdr.SizeOfRawData;
 			fpos = efi_file_align ( fpos );
 		}
+		if ( section->fixup )
+			section->fixup ( section );
 	}
 
 	/* Write file header */

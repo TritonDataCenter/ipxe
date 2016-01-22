@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /**
  * @file
@@ -59,11 +63,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/efi/efi_hii.h>
 #include <ipxe/efi/efi_snp.h>
 #include <ipxe/efi/efi_strings.h>
-#include <config/general.h>
-
-/** EFI configuration access protocol GUID */
-static EFI_GUID efi_hii_config_access_protocol_guid
-	= EFI_HII_CONFIG_ACCESS_PROTOCOL_GUID;
+#include <config/branding.h>
 
 /** EFI platform setup formset GUID */
 static EFI_GUID efi_hii_platform_setup_formset_guid
@@ -141,7 +141,7 @@ static void efi_snp_hii_questions ( struct efi_snp_device *snpdev,
 		previous = setting;
 		name_id = efi_ifr_string ( ifr, "%s", setting->name );
 		prompt_id = efi_ifr_string ( ifr, "%s", setting->description );
-		help_id = efi_ifr_string ( ifr, "http://ipxe.org/cfg/%s",
+		help_id = efi_ifr_string ( ifr, PRODUCT_SETTING_URI,
 					   setting->name );
 		question_id = setting->tag;
 		efi_ifr_string_op ( ifr, prompt_id, help_id,
@@ -162,7 +162,7 @@ efi_snp_hii_package_list ( struct efi_snp_device *snpdev ) {
 	struct device *dev = netdev->dev;
 	struct efi_ifr_builder ifr;
 	EFI_HII_PACKAGE_LIST_HEADER *package;
-	const char *product_name;
+	const char *name;
 	EFI_GUID package_guid;
 	EFI_GUID formset_guid;
 	EFI_GUID varstore_guid;
@@ -173,7 +173,7 @@ efi_snp_hii_package_list ( struct efi_snp_device *snpdev ) {
 	efi_ifr_init ( &ifr );
 
 	/* Determine product name */
-	product_name = ( PRODUCT_NAME[0] ? PRODUCT_NAME : PRODUCT_SHORT_NAME );
+	name = ( product_name[0] ? product_name : product_short_name );
 
 	/* Generate GUIDs */
 	efi_snp_hii_random_guid ( &package_guid );
@@ -181,13 +181,13 @@ efi_snp_hii_package_list ( struct efi_snp_device *snpdev ) {
 	efi_snp_hii_random_guid ( &varstore_guid );
 
 	/* Generate title string (used more than once) */
-	title_id = efi_ifr_string ( &ifr, "%s (%s)", product_name,
+	title_id = efi_ifr_string ( &ifr, "%s (%s)", name,
 				    netdev_addr ( netdev ) );
 
 	/* Generate opcodes */
 	efi_ifr_form_set_op ( &ifr, &formset_guid, title_id,
-			      efi_ifr_string ( &ifr,
-					       "Configure " PRODUCT_SHORT_NAME),
+			      efi_ifr_string ( &ifr, "Configure %s",
+					       product_short_name ),
 			      &efi_hii_platform_setup_formset_guid,
 			      &efi_hii_ibm_ucm_compliant_formset_guid, NULL );
 	efi_ifr_guid_class_op ( &ifr, EFI_NETWORK_DEVICE_CLASS );
@@ -197,7 +197,7 @@ efi_snp_hii_package_list ( struct efi_snp_device *snpdev ) {
 	efi_ifr_text_op ( &ifr,
 			  efi_ifr_string ( &ifr, "Name" ),
 			  efi_ifr_string ( &ifr, "Firmware product name" ),
-			  efi_ifr_string ( &ifr, "%s", product_name ) );
+			  efi_ifr_string ( &ifr, "%s", name ) );
 	efi_ifr_text_op ( &ifr,
 			  efi_ifr_string ( &ifr, "Version" ),
 			  efi_ifr_string ( &ifr, "Firmware version" ),
@@ -650,8 +650,10 @@ int efi_snp_hii_install ( struct efi_snp_device *snpdev ) {
 	int rc;
 
 	/* Do nothing if HII database protocol is not supported */
-	if ( ! efihii )
-		return 0;
+	if ( ! efihii ) {
+		rc = -ENOTSUP;
+		goto err_no_hii;
+	}
 
 	/* Initialise HII protocol */
 	memcpy ( &snpdev->hii, &efi_snp_device_hii, sizeof ( snpdev->hii ) );
@@ -698,6 +700,7 @@ int efi_snp_hii_install ( struct efi_snp_device *snpdev ) {
 	free ( snpdev->package_list );
 	snpdev->package_list = NULL;
  err_build_package_list:
+ err_no_hii:
 	return rc;
 }
 

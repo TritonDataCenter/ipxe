@@ -52,7 +52,6 @@
 #define PCI_X_CMD			2       /* Modes & Features */
 #define PCI_X_CMD_ERO			0x0002  /* Enable Relaxed Ordering */
 
-#define PCI_EXP_DEVCTL			8       /* Device Control */
 #define PCI_EXP_DEVCTL_RELAX_EN		0x0010 /* Enable relaxed ordering */
 #define PCI_EXP_DEVCTL_NOSNOOP_EN	0x0800  /* Enable No Snoop */
 #define PCI_EXP_DEVCTL_PAYLOAD		0x00e0  /* Max_Payload_Size */
@@ -131,6 +130,10 @@
 #define PCI_DEVICE_ID_TIGON3_5901_2	0x170e
 #define PCI_DEVICE_ID_TIGON3_5906	0x1712
 #define PCI_DEVICE_ID_TIGON3_5906M	0x1713
+#define PCI_VENDOR_ID_COMPAQ		0x0e11
+#define PCI_VENDOR_ID_IBM		0x1014
+#define PCI_VENDOR_ID_DELL		0x1028
+#define PCI_VENDOR_ID_3COM		0x10b7
 /* </pci_ids.h> */
 
 #define SPEED_10			10
@@ -185,6 +188,7 @@
 #define  TG3PCI_DEVICE_TIGON3_57761	 0x16b0
 #define  TG3PCI_DEVICE_TIGON3_57762	 0x1682
 #define  TG3PCI_DEVICE_TIGON3_57765	 0x16b4
+#define  TG3PCI_DEVICE_TIGON3_57766	 0x1686
 #define  TG3PCI_DEVICE_TIGON3_57791	 0x16b2
 #define  TG3PCI_DEVICE_TIGON3_57795	 0x16b6
 #define  TG3PCI_DEVICE_TIGON3_5719	 0x1657

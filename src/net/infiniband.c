@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -33,6 +37,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/netdevice.h>
 #include <ipxe/iobuf.h>
 #include <ipxe/process.h>
+#include <ipxe/profile.h>
 #include <ipxe/infiniband.h>
 #include <ipxe/ib_mi.h>
 #include <ipxe/ib_sma.h>
@@ -48,6 +53,14 @@ struct list_head ib_devices = LIST_HEAD_INIT ( ib_devices );
 
 /** List of open Infiniband devices, in reverse order of opening */
 static struct list_head open_ib_devices = LIST_HEAD_INIT ( open_ib_devices );
+
+/** Post send work queue entry profiler */
+static struct profiler ib_post_send_profiler __profiler =
+	{ .name = "ib.post_send" };
+
+/** Post receive work queue entry profiler */
+static struct profiler ib_post_recv_profiler __profiler =
+	{ .name = "ib.post_recv" };
 
 /* Disambiguate the various possible EINPROGRESSes */
 #define EINPROGRESS_INIT __einfo_error ( EINFO_EINPROGRESS_INIT )
@@ -393,6 +406,9 @@ int ib_post_send ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 	struct ib_address_vector dest_copy;
 	int rc;
 
+	/* Start profiling */
+	profile_start ( &ib_post_send_profiler );
+
 	/* Check queue fill level */
 	if ( qp->send.fill >= qp->send.num_wqes ) {
 		DBGC ( ibdev, "IBDEV %p QPN %#lx send queue full\n",
@@ -421,7 +437,12 @@ int ib_post_send ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 		return rc;
 	}
 
+	/* Increase fill level */
 	qp->send.fill++;
+
+	/* Stop profiling */
+	profile_stop ( &ib_post_send_profiler );
+
 	return 0;
 }
 
@@ -436,6 +457,9 @@ int ib_post_send ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 int ib_post_recv ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 		   struct io_buffer *iobuf ) {
 	int rc;
+
+	/* Start profiling */
+	profile_start ( &ib_post_recv_profiler );
 
 	/* Check packet length */
 	if ( iob_tailroom ( iobuf ) < IB_MAX_PAYLOAD_SIZE ) {
@@ -458,7 +482,12 @@ int ib_post_recv ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 		return rc;
 	}
 
+	/* Increase fill level */
 	qp->recv.fill++;
+
+	/* Stop profiling */
+	profile_stop ( &ib_post_recv_profiler );
+
 	return 0;
 }
 
@@ -714,6 +743,9 @@ int ib_mcast_attach ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 	struct ib_multicast_gid *mgid;
 	int rc;
 
+	/* Sanity check */
+	assert ( qp != NULL );
+
 	/* Add to software multicast GID list */
 	mgid = zalloc ( sizeof ( *mgid ) );
 	if ( ! mgid ) {
@@ -746,6 +778,9 @@ int ib_mcast_attach ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 void ib_mcast_detach ( struct ib_device *ibdev, struct ib_queue_pair *qp,
 		       union ib_gid *gid ) {
 	struct ib_multicast_gid *mgid;
+
+	/* Sanity check */
+	assert ( qp != NULL );
 
 	/* Remove from hardware multicast GID list */
 	ibdev->op->mcast_detach ( ibdev, qp, gid );
@@ -994,6 +1029,12 @@ struct ib_device * last_opened_ibdev ( void ) {
 	assert ( ibdev->open_count != 0 );
 	return ibdev;
 }
+
+/* Drag in objects via register_ibdev() */
+REQUIRING_SYMBOL ( register_ibdev );
+
+/* Drag in Infiniband configuration */
+REQUIRE_OBJECT ( config_infiniband );
 
 /* Drag in IPoIB */
 REQUIRE_OBJECT ( ipoib );

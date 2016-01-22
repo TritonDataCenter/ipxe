@@ -21,7 +21,12 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdlib.h>
 #include <errno.h>
+#include <ipxe/device.h>
 #include <ipxe/efi/efi.h>
+#include <ipxe/efi/efi_driver.h>
+#include <ipxe/efi/efi_snp.h>
+#include <ipxe/efi/efi_autoboot.h>
+#include <ipxe/efi/efi_watchdog.h>
 
 /**
  * EFI entry point
@@ -39,6 +44,15 @@ EFI_STATUS EFIAPI _efi_start ( EFI_HANDLE image_handle,
 	if ( ( efirc = efi_init ( image_handle, systab ) ) != 0 )
 		goto err_init;
 
+	/* Record autoboot device (if any) */
+	efi_set_autoboot();
+
+	/* Claim SNP devices for use by iPXE */
+	efi_snp_claim();
+
+	/* Start watchdog holdoff timer */
+	efi_watchdog_start();
+
 	/* Call to main() */
 	if ( ( rc = main() ) != 0 ) {
 		efirc = EFIRC ( rc );
@@ -46,7 +60,42 @@ EFI_STATUS EFIAPI _efi_start ( EFI_HANDLE image_handle,
 	}
 
  err_main:
+	efi_watchdog_stop();
+	efi_snp_release();
 	efi_loaded_image->Unload ( image_handle );
+	efi_driver_reconnect_all();
  err_init:
 	return efirc;
 }
+
+/**
+ * Probe EFI root bus
+ *
+ * @v rootdev		EFI root device
+ */
+static int efi_probe ( struct root_device *rootdev __unused ) {
+
+	return efi_driver_connect_all();
+}
+
+/**
+ * Remove EFI root bus
+ *
+ * @v rootdev		EFI root device
+ */
+static void efi_remove ( struct root_device *rootdev __unused ) {
+
+	efi_driver_disconnect_all();
+}
+
+/** EFI root device driver */
+static struct root_driver efi_root_driver = {
+	.probe = efi_probe,
+	.remove = efi_remove,
+};
+
+/** EFI root device */
+struct root_device efi_root_device __root_device = {
+	.dev = { .name = "EFI" },
+	.driver = &efi_root_driver,
+};

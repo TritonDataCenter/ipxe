@@ -10,7 +10,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /*
  * Declaration of variables in .data16
@@ -63,6 +63,18 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * __from_text16().  This is not for the faint-hearted; check the
  * assembler output to make sure that it's doing the right thing.
  */
+
+/**
+ * Convert segment:offset address to user buffer
+ *
+ * @v segment		Real-mode segment
+ * @v offset		Real-mode offset
+ * @ret buffer		User buffer
+ */
+static inline __always_inline userptr_t
+real_to_user ( unsigned int segment, unsigned int offset ) {
+	return ( phys_to_user ( ( segment << 4 ) + offset ) );
+}
 
 /**
  * Copy data to base memory

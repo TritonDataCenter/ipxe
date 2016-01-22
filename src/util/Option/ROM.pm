@@ -266,11 +266,10 @@ sub set {
 
   # Split out any data belonging to the next image
   delete $self->{next_image};
-  my $length = ( $hash->{length} * 512 );
   my $pci_header = $hash->pci_header();
-  if ( ( $length < length $data ) &&
-       ( defined $pci_header ) &&
+  if ( ( defined $pci_header ) &&
        ( ! ( $pci_header->{last_image} & PCI_LAST_IMAGE ) ) ) {
+    my $length = ( $pci_header->{image_length} * 512 );
     my $remainder = substr ( $data, $length );
     $data = substr ( $data, 0, $length );
     $self->{next_image} = new Option::ROM;
@@ -528,6 +527,26 @@ sub new {
   $self->{length} = $hash->{struct_length};
 
   return $hash;  
+}
+
+sub device_list {
+  my $hash = shift;
+  my $self = tied(%$hash);
+
+  my $device_list = $hash->{device_list};
+  return undef unless $device_list;
+
+  my @ids;
+  my $offset = ( $self->{offset} + $device_list );
+  while ( 1 ) {
+    my $raw = substr ( ${$self->{data}}, $offset, 2 );
+    my $id = unpack ( "S", $raw );
+    last unless $id;
+    push @ids, $id;
+    $offset += 2;
+  }
+
+  return @ids;
 }
 
 ##############################################################################

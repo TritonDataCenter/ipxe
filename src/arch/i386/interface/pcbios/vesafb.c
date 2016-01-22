@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /** @file
  *
@@ -56,11 +60,20 @@ struct console_driver bios_console __attribute__ (( weak ));
 #define EIO_VBE( code )							\
 	EUNIQ ( EINFO_EIO, (code), EIO_FAILED, EIO_HARDWARE, EIO_MODE )
 
-/* Set default console usage if applicable */
+/* Set default console usage if applicable
+ *
+ * We accept either CONSOLE_FRAMEBUFFER or CONSOLE_VESAFB.
+ */
+#if ( defined ( CONSOLE_FRAMEBUFFER ) && ! defined ( CONSOLE_VESAFB ) )
+#define CONSOLE_VESAFB CONSOLE_FRAMEBUFFER
+#endif
 #if ! ( defined ( CONSOLE_VESAFB ) && CONSOLE_EXPLICIT ( CONSOLE_VESAFB ) )
 #undef CONSOLE_VESAFB
 #define CONSOLE_VESAFB ( CONSOLE_USAGE_ALL & ~CONSOLE_USAGE_LOG )
 #endif
+
+/** Character height */
+#define VESAFB_CHAR_HEIGHT 16
 
 /** Font corresponding to selected character width and height */
 #define VESAFB_FONT VBE_FONT_8x16
@@ -76,12 +89,12 @@ struct vesafb {
 	physaddr_t start;
 	/** Pixel geometry */
 	struct fbcon_geometry pixel;
-	/** Margin */
-	struct fbcon_margin margin;
 	/** Colour mapping */
 	struct fbcon_colour_map map;
 	/** Font definition */
 	struct fbcon_font font;
+	/** Character glyphs */
+	struct segoff glyphs;
 	/** Saved VGA mode */
 	uint8_t saved_mode;
 };
@@ -115,11 +128,23 @@ static int vesafb_rc ( unsigned int status ) {
 }
 
 /**
+ * Get character glyph
+ *
+ * @v character		Character
+ * @v glyph		Character glyph to fill in
+ */
+static void vesafb_glyph ( unsigned int character, uint8_t *glyph ) {
+	size_t offset = ( character * VESAFB_CHAR_HEIGHT );
+
+	copy_from_real ( glyph, vesafb.glyphs.segment,
+			 ( vesafb.glyphs.offset + offset ), VESAFB_CHAR_HEIGHT);
+}
+
+/**
  * Get font definition
  *
  */
 static void vesafb_font ( void ) {
-	struct segoff font;
 
 	/* Get font information
 	 *
@@ -140,13 +165,14 @@ static void vesafb_font ( void ) {
 					   "movw %%es, %%cx\n\t"
 					   "movw %%bp, %%dx\n\t"
 					   "popw %%bp\n\t" /* gcc bug */ )
-			       : "=c" ( font.segment ),
-				 "=d" ( font.offset )
+			       : "=c" ( vesafb.glyphs.segment ),
+				 "=d" ( vesafb.glyphs.offset )
 			       : "a" ( VBE_GET_FONT ),
 				 "b" ( VESAFB_FONT ) );
 	DBGC ( &vbe_buf, "VESAFB has font %04x at %04x:%04x\n",
-	       VESAFB_FONT, font.segment, font.offset );
-	vesafb.font.start = real_to_user ( font.segment, font.offset );
+	       VESAFB_FONT, vesafb.glyphs.segment, vesafb.glyphs.offset );
+	vesafb.font.height = VESAFB_CHAR_HEIGHT;
+	vesafb.font.glyph = vesafb_glyph;
 }
 
 /**
@@ -397,12 +423,6 @@ static void vesafb_restore ( void ) {
 static int vesafb_init ( struct console_configuration *config ) {
 	uint32_t discard_b;
 	uint16_t *mode_numbers;
-	unsigned int xgap;
-	unsigned int ygap;
-	unsigned int left;
-	unsigned int right;
-	unsigned int top;
-	unsigned int bottom;
 	int mode_number;
 	int rc;
 
@@ -428,31 +448,13 @@ static int vesafb_init ( struct console_configuration *config ) {
 	if ( ( rc = vesafb_set_mode ( mode_number ) ) != 0 )
 		goto err_set_mode;
 
-	/* Calculate margin.  If the actual screen size is larger than
-	 * the requested screen size, then update the margins so that
-	 * the margin remains relative to the requested screen size.
-	 * (As an exception, if a zero margin was specified then treat
-	 * this as meaning "expand to edge of actual screen".)
-	 */
-	xgap = ( vesafb.pixel.width - config->width );
-	ygap = ( vesafb.pixel.height - config->height );
-	left = ( xgap / 2 );
-	right = ( xgap - left );
-	top = ( ygap / 2 );
-	bottom = ( ygap - top );
-	vesafb.margin.left = ( config->left + ( config->left ? left : 0 ) );
-	vesafb.margin.right = ( config->right + ( config->right ? right : 0 ) );
-	vesafb.margin.top = ( config->top + ( config->top ? top : 0 ) );
-	vesafb.margin.bottom =
-		( config->bottom + ( config->bottom ? bottom : 0 ) );
-
 	/* Get font data */
 	vesafb_font();
 
 	/* Initialise frame buffer console */
 	if ( ( rc = fbcon_init ( &vesafb.fbcon, phys_to_user ( vesafb.start ),
-				 &vesafb.pixel, &vesafb.margin, &vesafb.map,
-				 &vesafb.font, config->pixbuf ) ) != 0 )
+				 &vesafb.pixel, &vesafb.map, &vesafb.font,
+				 config ) ) != 0 )
 		goto err_fbcon_init;
 
 	free ( mode_numbers );

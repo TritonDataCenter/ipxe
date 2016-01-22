@@ -16,9 +16,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/device.h>
@@ -34,10 +38,8 @@ uint16_t __bss16 ( autoboot_busdevfn );
  */
 static void pci_autoboot_init ( void ) {
 
-	if ( autoboot_busdevfn ) {
-		autoboot_device.bus_type = BUS_TYPE_PCI;
-		autoboot_device.location = autoboot_busdevfn;
-	}
+	if ( autoboot_busdevfn )
+		set_autoboot_busloc ( BUS_TYPE_PCI, autoboot_busdevfn );
 }
 
 /** PCI autoboot device initialisation function */

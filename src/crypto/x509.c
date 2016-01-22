@@ -15,9 +15,13 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
  * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdlib.h>
 #include <string.h>
@@ -33,6 +37,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/rsa.h>
 #include <ipxe/rootcert.h>
 #include <ipxe/certstore.h>
+#include <ipxe/socket.h>
+#include <ipxe/in.h>
 #include <ipxe/x509.h>
 #include <config/crypto.h>
 
@@ -137,7 +143,8 @@ const char * x509_name ( struct x509_certificate *cert ) {
 	} else {
 		/* Certificate has no commonName: use SHA-1 fingerprint */
 		x509_fingerprint ( cert, digest, fingerprint );
-		base16_encode ( fingerprint, sizeof ( fingerprint ), buf );
+		base16_encode ( fingerprint, sizeof ( fingerprint ),
+				buf, sizeof ( buf ) );
 	}
 	return buf;
 }
@@ -457,7 +464,7 @@ static int x509_parse_basic_constraints ( struct x509_certificate *cert,
 			return -EINVAL;
 		}
 		basic->path_len = path_len;
-		DBGC2 ( cert, "X509 %p path length constraint is %u\n",
+		DBGC2 ( cert, "X509 %p path length constraint is %d\n",
 			cert, basic->path_len );
 	}
 
@@ -1418,6 +1425,57 @@ static int x509_check_dnsname ( struct x509_certificate *cert,
 }
 
 /**
+ * Check X.509 certificate alternative iPAddress
+ *
+ * @v cert		X.509 certificate
+ * @v raw		ASN.1 cursor
+ * @v name		Name
+ * @ret rc		Return status code
+ */
+static int x509_check_ipaddress ( struct x509_certificate *cert,
+				  const struct asn1_cursor *raw,
+				  const char *name ) {
+	struct sockaddr sa;
+	sa_family_t family;
+	const void *address;
+	int rc;
+
+	/* Determine address family */
+	if ( raw->len == sizeof ( struct in_addr ) ) {
+		struct sockaddr_in *sin = ( ( struct sockaddr_in * ) &sa );
+		family = AF_INET;
+		address = &sin->sin_addr;
+	} else if ( raw->len == sizeof ( struct in6_addr ) ) {
+		struct sockaddr_in6 *sin6 = ( ( struct sockaddr_in6 * ) &sa );
+		family = AF_INET6;
+		address = &sin6->sin6_addr;
+	} else {
+		DBGC ( cert, "X509 %p \"%s\" has iPAddress with unexpected "
+		       "length %zd\n", cert, x509_name ( cert ), raw->len );
+		DBGC_HDA ( cert, 0, raw->data, raw->len );
+		return -EINVAL;
+	}
+
+	/* Attempt to convert name to a socket address */
+	if ( ( rc = sock_aton ( name, &sa ) ) != 0 ) {
+		DBGC2 ( cert, "X509 %p \"%s\" cannot parse \"%s\" as "
+			"iPAddress: %s\n", cert, x509_name ( cert ), name,
+			strerror ( rc ) );
+		return rc;
+	}
+	if ( sa.sa_family != family )
+		return -ENOENT;
+
+	/* Compare addresses */
+	if ( memcmp ( address, raw->data, raw->len ) != 0 )
+		return -ENOENT;
+
+	DBGC2 ( cert, "X509 %p \"%s\" found iPAddress match for \"%s\"\n",
+		cert, x509_name ( cert ), sock_ntoa ( &sa ) );
+	return 0;
+}
+
+/**
  * Check X.509 certificate alternative name
  *
  * @v cert		X.509 certificate
@@ -1440,6 +1498,8 @@ static int x509_check_alt_name ( struct x509_certificate *cert,
 	switch ( type ) {
 	case X509_GENERAL_NAME_DNS :
 		return x509_check_dnsname ( cert, &alt_name, name );
+	case X509_GENERAL_NAME_IP :
+		return x509_check_ipaddress ( cert, &alt_name, name );
 	default:
 		DBGC2 ( cert, "X509 %p \"%s\" unknown name of type %#02x:\n",
 			cert, x509_name ( cert ), type );
@@ -1706,5 +1766,11 @@ int x509_validate_chain ( struct x509_chain *chain, time_t time,
 	return -EACCES_USELESS;
 }
 
+/* Drag in objects via x509_validate() */
+REQUIRING_SYMBOL ( x509_validate );
+
 /* Drag in certificate store */
 REQUIRE_OBJECT ( certstore );
+
+/* Drag in crypto configuration */
+REQUIRE_OBJECT ( config_crypto );

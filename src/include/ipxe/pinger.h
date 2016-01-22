@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/interface.h>
@@ -15,6 +15,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 extern int create_pinger ( struct interface *job, const char *hostname,
 			   unsigned long timeout, size_t len,
+			   unsigned int count,
 			   void ( * callback ) ( struct sockaddr *peer,
 						 unsigned int sequence,
 						 size_t len,
