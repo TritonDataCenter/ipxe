@@ -157,7 +157,7 @@ static int uri_character_escaped ( char c, unsigned int field ) {
 		 * the reparsing of the URI, allowing everything else
 		 * (e.g. ':', which will appear in iSCSI URIs).
 		 */
-		[URI_OPAQUE]	= "/#",
+		[URI_OPAQUE]	= "#",
 		/* User name: escape everything */
 		[URI_USER]	= "/#:@?",
 		/* Password: escape everything */
@@ -419,11 +419,11 @@ struct uri * parse_uri ( const char *uri_string ) {
 		uri->port = tmp;
 	}
 
+ done:
 	/* Decode fields in-place */
 	for ( field = 0 ; field < URI_FIELDS ; field++ )
 		uri_decode_inplace ( uri, field );
 
- done:
 	DBGC ( uri, "URI parsed \"%s\" to", uri_string );
 	uri_dump ( uri );
 	DBGC ( uri, "\n" );
@@ -456,7 +456,6 @@ unsigned int uri_port ( const struct uri *uri, unsigned int default_port ) {
  */
 size_t format_uri ( const struct uri *uri, char *buf, size_t len ) {
 	static const char prefixes[URI_FIELDS] = {
-		[URI_OPAQUE] = ':',
 		[URI_PASSWORD] = ':',
 		[URI_PORT] = ':',
 		[URI_QUERY] = '?',
@@ -495,9 +494,9 @@ size_t format_uri ( const struct uri *uri, char *buf, size_t len ) {
 					    ( buf + used ), ( len - used ) );
 
 		/* Suffix this field, if applicable */
-		if ( ( field == URI_SCHEME ) && ( ! uri->opaque ) ) {
+		if ( field == URI_SCHEME ) {
 			used += ssnprintf ( ( buf + used ), ( len - used ),
-					    "://" );
+					    ":%s", ( uri->host ? "//" : "" ) );
 		}
 	}
 
