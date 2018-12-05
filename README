@@ -1,9 +1,8 @@
 iPXE README File (as adapted to illumos systems)
 
-Quick start guide:
+To build:
 
-   cd src
-   gmake AS=/path/to/gnu/as LD=/path/to/gnu/ld AWK=nawk GREP=/usr/xpg4/bin/grep
+    gmake install
 
 ipxe, unlike virtually all other software, actually assumes and requires
 GNU ld to build.  This is because of the presence of GNU linker scripts.
