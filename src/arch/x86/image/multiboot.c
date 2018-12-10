@@ -192,7 +192,7 @@ static physaddr_t multiboot_add_cmdline ( struct image *image ) {
 	/* Copy image URI to base memory buffer as start of command line */
 	len = ( format_uri ( image->uri, buf, remaining ) + 1 /* NUL */ );
 	if ( len > remaining ) {
-		printf ( "MULTIBOOT %p limit of %d cmdline characters "
+		printf ( "MULTIBOOT %p limit of %zd cmdline characters "
 		       "reached\n", image, sizeof (mb_cmdlines));
 		multiboot_panic();
 	}

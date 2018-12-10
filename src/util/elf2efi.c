@@ -18,6 +18,7 @@
  */
 
 #define FILE_LICENCE(...) extern void __file_licence ( void )
+#define	ELF_TARGET_ALL
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -95,6 +96,31 @@
 #endif
 #ifndef R_ARM_V4BX
 #define R_ARM_V4BX 40
+#endif
+
+/*
+ * illumos currently defines EM_AARCH64 in sys/elf.h, but does not define any
+ * of the other ARM64 relocations.  Ideally illumos should deliver
+ * sys/aarch64.h and that may happen in the future if ARM64 porting efforts
+ * move forward.
+ */
+#if defined(sun) && !defined(_SYS_ELF_AARCH64_H)
+#define	R_ARM_NONE                      0
+#define	R_ARM_ABS32                     2
+#define	R_ARM_REL32                     3
+#define	R_ARM_THM_PC22                  10
+
+#define	R_AARCH64_NONE                  0
+#define	R_AARCH64_ABS64                 257
+#define	R_AARCH64_CALL26                283
+#define	R_AARCH64_JUMP26                282
+#define	R_AARCH64_ADR_PREL_LO21         274
+#define	R_AARCH64_ADR_PREL_PG_HI21      275
+#define	R_AARCH64_ADD_ABS_LO12_NC       277
+#define	R_AARCH64_LDST8_ABS_LO12_NC     278
+#define	R_AARCH64_LDST16_ABS_LO12_NC    284
+#define	R_AARCH64_LDST32_ABS_LO12_NC    285
+#define	R_AARCH64_LDST64_ABS_LO12_NC    286
 #endif
 
 /* Seems to be missing from elf.h */

@@ -1,3 +1,6 @@
 #define	PCI_SETTINGS
 #define	CPUID_SETTINGS
-#define	MEMMAP_SETTINGS
+#define MEMMAP_SETTINGS
+#if PLATFORM == efi
+	#undef	MEMMAP_SETTINGS
+#endif

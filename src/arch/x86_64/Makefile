@@ -11,7 +11,7 @@ CFLAGS		+= -falign-jumps=1 -falign-loops=1 -falign-functions=1
 #
 CFLAGS		+= -m64
 ASFLAGS		+= --64
-LDFLAGS		+= -m elf_x86_64
+LDFLAGS		+= -m elf_x86_64_sol2
 
 # Prevent use of MMX and SSE registers
 #

@@ -53,7 +53,8 @@ INS.dir =	$(INS) -s -d -m $(DIRMODE) $@
 BOOT_BINS = \
 	undionly.kpxe \
 	default.ipxe \
-	ipxe.lkrn
+	ipxe.lkrn \
+	ipxe.efi
 
 BOOT_ROOT =	$(ROOT)/boot
 ROOT_BOOT_BINS =	$(BOOT_BINS:%=$(BOOT_ROOT)/%)
@@ -66,7 +67,7 @@ $(BOOT_ROOT)/default.ipxe :	FILEMODE = 644
 $(BOOT_ROOT)/undionly.kpxe :	FILEMODE = 644
 
 .PHONY: all
-all: src/bin/ipxe.lkrn # FIXME?
+all: src/bin/ipxe.lkrn src/bin-x86_64-efi/ipxe.efi
 
 .PHONY: install
 install: all $(ROOT_BOOT)
@@ -82,11 +83,17 @@ $(BOOT_ROOT): | $(ROOT)
 $(BOOT_ROOT)/%: src/bin/% | $(BOOT_ROOT)
 	$(INS.file)
 
+$(BOOT_ROOT)/ipxe.efi: src/bin-x86_64-efi/ipxe.efi | $(BOOT_ROOT)
+	$(INS.file)
+
 $(BOOT_ROOT)/%: boot/% | $(BOOT_ROOT)
 	$(INS.file)
 
 src/bin/%:
 	(cd src && $(MAKE) bin/$(@F) $(IPXE_ENV))
+
+src/bin-x86_64-efi/%:
+	 (cd src && $(MAKE) bin-x86_64-efi/$(@F) $(IPXE_ENV))
 
 .PHONY: test
 test:
