@@ -508,9 +508,10 @@ static int efi_driver_reconnect ( EFI_HANDLE device ) {
 static int efi_driver_handles ( int ( * method ) ( EFI_HANDLE handle ) ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	EFI_HANDLE *handles;
+	EFI_GUID **protocols;
 	UINTN num_handles;
 	EFI_STATUS efirc;
-	UINTN i;
+	UINTN i, p, count, is_pxecode;
 	int rc;
 
 	/* Enumerate all handles */
@@ -525,6 +526,34 @@ static int efi_driver_handles ( int ( * method ) ( EFI_HANDLE handle ) ) {
 
 	/* Connect/disconnect driver from all handles */
 	for ( i = 0 ; i < num_handles ; i++ ) {
+		/*
+		 * If the handle supports the PxeBaseCode protocol we skip over
+		 * it, as probing such an object has been shown to cause hangs
+		 * in certain contexts and it's not something we'd attach a
+		 * driver to anyways.
+		 */
+		if (bs->ProtocolsPerHandle(handles[i], &protocols, &count) !=
+		    0) {
+			DBG ("failed to retrieve protocols from handle %p\n",
+			    handles[i]);
+			continue;
+		}
+		is_pxecode = 0;
+		for (p = 0; p < count; p++) {
+			if (memcmp(protocols[p], &efi_pxe_base_code_protocol_guid,
+			    sizeof (*protocols[p])) == 0) {
+				is_pxecode = 1;
+				break;
+			}
+		}
+		bs->FreePool(protocols);
+
+		if (is_pxecode == 1) {
+			DBG("skipping handle %p (supports PxeBaseCode)\n",
+			    handles[i]);
+			continue;
+		}
+
 		if ( ( rc = method ( handles[i] ) ) != 0 ) {
 			/* Ignore errors and continue to process
 			 * remaining handles.
