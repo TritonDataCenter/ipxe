@@ -50,11 +50,15 @@ DIRMODE =	755
 INS.file =	$(RM) $@; $(INS) -s -m $(FILEMODE) -f $(@D) $<
 INS.dir =	$(INS) -s -d -m $(DIRMODE) $@
 
+EFI_BINS = ipxe.efi snponly.efi
+EFI_SRC_BIN = src/bin-x86_64-efi
+EFI_TARGETS = $(EFI_BINS:%=$(EFI_SRC_BIN)/%)
+
 BOOT_BINS = \
 	undionly.kpxe \
 	default.ipxe \
 	ipxe.lkrn \
-	ipxe.efi
+	$(EFI_BINS)
 
 BOOT_ROOT =	$(ROOT)/boot
 ROOT_BOOT_BINS =	$(BOOT_BINS:%=$(BOOT_ROOT)/%)
@@ -67,7 +71,7 @@ $(BOOT_ROOT)/default.ipxe :	FILEMODE = 644
 $(BOOT_ROOT)/undionly.kpxe :	FILEMODE = 644
 
 .PHONY: all
-all: src/bin/ipxe.lkrn src/bin-x86_64-efi/ipxe.efi
+all: src/bin/ipxe.lkrn $(EFI_TARGETS)
 
 .PHONY: install
 install: all $(ROOT_BOOT)
@@ -84,6 +88,9 @@ $(BOOT_ROOT)/%: src/bin/% | $(BOOT_ROOT)
 	$(INS.file)
 
 $(BOOT_ROOT)/ipxe.efi: src/bin-x86_64-efi/ipxe.efi | $(BOOT_ROOT)
+	$(INS.file)
+
+$(BOOT_ROOT)/snponly.efi: src/bin-x86_64-efi/snponly.efi | $(BOOT_ROOT)
 	$(INS.file)
 
 $(BOOT_ROOT)/%: boot/% | $(BOOT_ROOT)
