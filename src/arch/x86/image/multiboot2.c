@@ -148,12 +148,20 @@ static int multiboot2_validate_inforeq ( struct image *image, size_t offset, siz
 		offset += sizeof(inforeq);
 		num_reqs--;
 
+		DBGC ( image, "MULTIBOOT2 %p info request tag %d\n", image, inforeq);
+
 		switch (inforeq) {
 		case MULTIBOOT_TAG_TYPE_BASIC_MEMINFO:
 		case MULTIBOOT_TAG_TYPE_MMAP:
+		case MULTIBOOT_TAG_TYPE_CMDLINE:
+		case MULTIBOOT_TAG_TYPE_MODULE:
+		case MULTIBOOT_TAG_TYPE_BOOTDEV: // FIXME
+		case MULTIBOOT_TAG_TYPE_FRAMEBUFFER: // FIXME?
 			continue;
 
 		default:
+			DBGC ( image, "MULTIBOOT2 %p unsupported info request tag %d\n",
+				   image, inforeq );
 			return -ENOTSUP;
 		}
 	}
@@ -192,29 +200,40 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 			num_inforeqs = (tag.size - sizeof(tag)) / sizeof(uint32_t);
 
 			if (multiboot2_validate_inforeq ( image, offset + sizeof(tag), num_inforeqs ) != 0) {
-				DBGC ( image, "MULTIBOOT2 %p cannot support all information request tags\n",
-					   image );
 				return -ENOTSUP;
 			}
 
 			break;
 		}
 		case MULTIBOOT_HEADER_TAG_ADDRESS:
+		{
+			struct multiboot_header_tag_address mb_tag = { 0 };
+
+			copy_from_user ( &mb_tag, image->data, offset, tag.size);
+
 			DBGC ( image, "MULTIBOOT2 %p has an address tag\n",
 				   image );
 
+			DBGC ( image, "header %d load %d end %d bss_end %d\n",
+			    mb_tag.header_addr, mb_tag.load_addr, mb_tag.load_end_addr,
+			    mb_tag.bss_end_addr);
+
+			// FIXME!
+#if 0
 			if ((tag.flags & MULTIBOOT_HEADER_TAG_OPTIONAL) != MULTIBOOT_HEADER_TAG_OPTIONAL)
 				return -ENOTSUP;
+#endif
 
 			break;
+		}
 
 		case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS:
 		{
 			struct multiboot_header_tag_entry_address mb_tag = { 0 };
 			copy_from_user ( &mb_tag, image->data, offset, tag.size );
 
-			DBGC ( image, "MULTIBOOT2 %p has an entry address tag\n",
-				   image );
+			DBGC ( image, "MULTIBOOT2 %p has an entry address %x\n",
+				   image, mb_tag.entry_addr );
 
 			tags->entry_addr_valid = 1;
 			tags->entry_addr = mb_tag.entry_addr;
@@ -224,8 +243,7 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 			DBGC ( image, "MULTIBOOT2 %p has a console flags tag\n",
 				   image );
 
-			if ((tag.flags & MULTIBOOT_HEADER_TAG_OPTIONAL) != MULTIBOOT_HEADER_TAG_OPTIONAL)
-				return -ENOTSUP;
+			/* We should be OK to safely ignore this tag. */
 
 			break;
 
@@ -233,9 +251,9 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 			DBGC ( image, "MULTIBOOT2 %p has a framebuffer tag\n",
 				   image );
 
-			if ((tag.flags & MULTIBOOT_HEADER_TAG_OPTIONAL) != MULTIBOOT_HEADER_TAG_OPTIONAL)
-				return -ENOTSUP;
-
+			/*
+		 	 * Should be able to ignore this.
+			 */
 			break;
 
 		case MULTIBOOT_HEADER_TAG_MODULE_ALIGN:
@@ -247,6 +265,7 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 		case MULTIBOOT_HEADER_TAG_EFI_BS:
 			DBGC ( image, "MULTIBOOT2 %p has a boot services tag\n",
 				   image );
+			// FIXME: do we ever exit boot services?
 			tags->boot_services = 1;
 			break;
 
@@ -378,7 +397,19 @@ static int multiboot2_load ( struct image *image, struct multiboot2_tags *tags,
 		DBGC ( image, "MULTIBOOT2 %p could not load elf image\n", image );
 		return rc;
 	}
-	*entry = tags->entry_addr_efi64;
+
+	// FIXME?
+
+	if (tags->entry_addr_efi64_valid) {
+		*entry = tags->entry_addr_efi64;
+	} else if (tags->entry_addr_efi32_valid) {
+		*entry = tags->entry_addr_efi32;
+	} else if (tags->entry_addr_valid) {
+		*entry = tags->entry_addr_valid;
+	} else {
+		printf("ERROR: no entry address\n");
+		return -EINVAL;
+	}
 
 	return rc;
 }
@@ -487,8 +518,8 @@ static int multiboot2_exec ( struct image *image ) {
 #endif
 	uint32_t *total_size;
 	uint32_t *reserved;
-	physaddr_t load;
-	physaddr_t entry;
+	physaddr_t load = 0;
+	physaddr_t entry = 0;
 	physaddr_t max;
 	size_t offset;
 	int rc;
