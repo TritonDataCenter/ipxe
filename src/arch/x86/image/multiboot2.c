@@ -431,6 +431,7 @@ static int multiboot2_load ( struct image *image, struct multiboot2_header_info 
 	size_t offset;
 	size_t filesz;
 	size_t memsz;
+	size_t doffset;
 	int rc;
 #if 0
 
@@ -472,7 +473,15 @@ static int multiboot2_load ( struct image *image, struct multiboot2_header_info 
 
 	DBGC ( image, "MULTIBOOT2 memsz %zx\n", memsz );
 
-	buffer = phys_to_user ( tags->addr.load_addr );
+	DBGC ( image, "MULTIBOOT2 page-aligned base %x\n", tags->addr.load_addr
+& (~EFI_PAGE_MASK));
+
+	doffset = tags->addr.load_addr & EFI_PAGE_MASK;
+
+	buffer = phys_to_user ( tags->addr.load_addr & (~EFI_PAGE_MASK));
+
+	// FIXME: is this right?
+	memsz += doffset;
 
 	if ( ( rc = prep_segment ( buffer, filesz, memsz ) ) != 0 ) {
 		DBGC ( image, "MULTIBOOT2 %p could not prepare segment: %s\n",
@@ -481,7 +490,7 @@ static int multiboot2_load ( struct image *image, struct multiboot2_header_info 
 	}
 
 	/* Copy image to segment */
-	memcpy_user ( buffer, 0, image->data, offset, filesz );
+	memcpy_user ( buffer, doffset, image->data, offset, filesz );
 
 	*load = tags->addr.load_addr;
 	*max = ( tags->addr.load_addr + memsz );

@@ -52,7 +52,7 @@ struct errortab segment_errors[] __errortab = {
 
 #ifdef EFIAPI
 
-EFI_MEMORY_DESCRIPTOR efi_mmap[100];
+EFI_MEMORY_DESCRIPTOR efi_mmap[80];
 
 void dump_map(void)
 {
@@ -73,11 +73,15 @@ void dump_map(void)
 
 	nr = size / desc_size;
 
+	DBG ( "descr size is %llx compared to %zx\n", desc_size, sizeof (EFI_MEMORY_DESCRIPTOR));
+
 	for (i = 0; i < nr; i++) {
-		EFI_MEMORY_DESCRIPTOR *p = &efi_mmap[i];
-		DBG ( "[%lx] type %x attr %lx phys %lx virt %lx size %lx\n",
-		    i, p->Type, (long)p->Attribute, (long)p->PhysicalStart, (long)p->VirtualStart,
-		    (long) p->NumberOfPages * 4096 );
+		char *m = (char *)efi_mmap;
+		EFI_MEMORY_DESCRIPTOR *p = (EFI_MEMORY_DESCRIPTOR *)(m + desc_size * i);
+
+		DBG ( "[%lx] type %d attr %llx phys %llx virt %llx size %llx\n",
+		    i, p->Type, p->Attribute, p->PhysicalStart, p->VirtualStart,
+		    p->NumberOfPages * 4096 );
 	}
 }
 
