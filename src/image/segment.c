@@ -51,6 +51,36 @@ struct errortab segment_errors[] __errortab = {
 };
 
 #ifdef EFIAPI
+
+EFI_MEMORY_DESCRIPTOR efi_mmap[100];
+
+void dump_map(void)
+{
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_STATUS efirc;
+	UINTN size = sizeof (efi_mmap);
+	UINTN key;
+	UINTN desc_size;
+	size_t i;
+	size_t nr;
+
+	efirc = bs->GetMemoryMap(&size, efi_mmap, &key, &desc_size, NULL);
+
+	if (efirc != 0) {
+		DBG ( "GetMemoryMap failed with %d\n", (int) efirc);
+		return;
+	}
+
+	nr = size / desc_size;
+
+	for (i = 0; i < nr; i++) {
+		EFI_MEMORY_DESCRIPTOR *p = &efi_mmap[i];
+		DBG ( "[%lx] type %x attr %lx phys %lx virt %lx size %lx\n",
+		    i, p->Type, (long)p->Attribute, (long)p->PhysicalStart, (long)p->VirtualStart,
+		    (long) p->NumberOfPages * 4096 );
+	}
+}
+
 /**
  * Prepare segment for loading
  *
@@ -66,6 +96,7 @@ int prep_segment ( userptr_t segment, size_t filesz, size_t memsz ) {
 	physaddr_t start = user_to_phys ( segment, 0 );
 	physaddr_t mid = user_to_phys ( segment, filesz );
 	physaddr_t end = user_to_phys ( segment, memsz );
+	EFI_STATUS efirc;
 
 	DBG ( "Preparing segment [%lx,%lx,%lx)\n", start, mid, end );
 
@@ -80,13 +111,14 @@ int prep_segment ( userptr_t segment, size_t filesz, size_t memsz ) {
 	/* Size of the segment in pages */
 	pages = EFI_SIZE_TO_PAGES ( memsz );
 	/* Allocate the memory via EFI to ensure its reserved */
-	if ( bs->AllocatePages ( AllocateAddress,
+	if ( ( efirc = bs->AllocatePages ( AllocateAddress,
 				EfiLoaderData,
 				pages,
-				&phys_addr ) != 0 ) {
+				&phys_addr ))  != 0 ) {
 		/* No suitable memory region found */
-		DBG ( "Segment [%lx,%lx,%lx) does not fit into available memory\n",
-				start, mid, end );
+		DBG ( "Segment [%lx,%lx,%lx) does not fit into available memory: %d\n",
+				start, mid, end, (int)efirc );
+                dump_map();
 		return -ERANGE_SEGMENT;
 	}
 

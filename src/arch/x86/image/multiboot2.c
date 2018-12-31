@@ -126,6 +126,9 @@ struct multiboot2_tags {
 	int module_align;
 	int boot_services;
 
+	// FIXME!
+	struct multiboot_header_tag_address addr;
+
 	int entry_addr_valid;
 	int entry_addr_efi32_valid;
 	int entry_addr_efi64_valid;
@@ -214,15 +217,11 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 			DBGC ( image, "MULTIBOOT2 %p has an address tag\n",
 				   image );
 
-			DBGC ( image, "header %d load %d end %d bss_end %d\n",
+			DBGC ( image, "header %x load %x end %x bss_end %x\n",
 			    mb_tag.header_addr, mb_tag.load_addr, mb_tag.load_end_addr,
 			    mb_tag.bss_end_addr);
 
-			// FIXME!
-#if 0
-			if ((tag.flags & MULTIBOOT_HEADER_TAG_OPTIONAL) != MULTIBOOT_HEADER_TAG_OPTIONAL)
-				return -ENOTSUP;
-#endif
+			tags->addr = mb_tag;
 
 			break;
 		}
@@ -379,6 +378,7 @@ static size_t multiboot2_add_cmdline ( struct image *image, size_t offset ) {
 	return cmdline->size;
 }
 
+#if 0
 /**
  * Load multiboot2 image into memory
  *
@@ -412,6 +412,92 @@ static int multiboot2_load ( struct image *image, struct multiboot2_tags *tags,
 	}
 
 	return rc;
+}
+#endif
+
+/**
+ * FIXME Load raw multiboot image into memory
+ *
+ * @v image		Multiboot file
+ * @v hdr		Multiboot header descriptor
+ * @ret entry		Entry point
+ * @ret max		Maximum used address
+ * @ret rc		Return status code
+ */
+static int multiboot2_load ( struct image *image, struct multiboot2_header_info *hdr,
+			     struct multiboot2_tags *tags, physaddr_t *load,
+			     physaddr_t *entry, physaddr_t *max ) {
+	userptr_t buffer;
+	size_t offset;
+	size_t filesz;
+	size_t memsz;
+	int rc;
+#if 0
+
+	/* Verify and prepare segment */
+	offset = ( hdr->offset - hdr->mb.header_addr + hdr->mb.load_addr );
+	filesz = ( hdr->mb.load_end_addr ?
+		   ( hdr->mb.load_end_addr - hdr->mb.load_addr ) :
+		   ( image->len - offset ) );
+	memsz = ( hdr->mb.bss_end_addr ?
+		  ( hdr->mb.bss_end_addr - hdr->mb.load_addr ) : filesz );
+	buffer = phys_to_user ( hdr->mb.load_addr );
+	if ( ( rc = prep_segment ( buffer, filesz, memsz ) ) != 0 ) {
+		DBGC ( image, "MULTIBOOT %p could not prepare segment: %s\n",
+		       image, strerror ( rc ) );
+		return rc;
+	}
+
+	/* Copy image to segment */
+	memcpy_user ( buffer, 0, image->data, offset, filesz );
+
+	/* Record execution entry point and maximum used address */
+	*max = ( hdr->mb.load_addr + memsz );
+#endif
+	// FIXME  need to set max, load
+
+	offset = ( hdr->offset - tags->addr.header_addr + tags->addr.load_addr );
+
+	DBGC ( image, "MULTIBOOT2 offset %zx\n", offset );
+
+	// FIXME: multiboot1 has "image->len - offset" ???
+	filesz = ( tags->addr.load_end_addr ?
+		   ( tags->addr.load_end_addr - tags->addr.load_addr ) :
+		   image->len  );
+
+	DBGC ( image, "MULTIBOOT2 filesz %zx\n", filesz );
+
+	memsz = ( tags->addr.bss_end_addr ?
+		  ( tags->addr.bss_end_addr - tags->addr.load_addr ) : filesz );
+
+	DBGC ( image, "MULTIBOOT2 memsz %zx\n", memsz );
+
+	buffer = phys_to_user ( tags->addr.load_addr );
+
+	if ( ( rc = prep_segment ( buffer, filesz, memsz ) ) != 0 ) {
+		DBGC ( image, "MULTIBOOT2 %p could not prepare segment: %s\n",
+		       image, strerror ( rc ) );
+		return rc;
+	}
+
+	/* Copy image to segment */
+	memcpy_user ( buffer, 0, image->data, offset, filesz );
+
+	*load = tags->addr.load_addr;
+	*max = ( tags->addr.load_addr + memsz );
+
+	if (tags->entry_addr_efi64_valid) {
+		*entry = tags->entry_addr_efi64;
+	} else if (tags->entry_addr_efi32_valid) {
+		*entry = tags->entry_addr_efi32;
+	} else if (tags->entry_addr_valid) {
+		*entry = tags->entry_addr;
+	} else {
+		printf("ERROR: no entry address\n");
+		return -EINVAL;
+	}
+
+	return 0;
 }
 
 static size_t adjust_tag_offset(size_t offset) {
@@ -539,7 +625,7 @@ static int multiboot2_exec ( struct image *image ) {
 	}
 
 	/* Attempt to load the image into memory of our choosing */
-	if ( ( rc = multiboot2_load ( image, &mb_tags, &load, &entry, &max ) ) != 0) {
+	if ( ( rc = multiboot2_load ( image, &hdr, &mb_tags, &load, &entry, &max ) ) != 0) {
 		DBGC ( image, "MULTIBOOT2 %p could not load\n", image );
 		return rc;
 	}
@@ -644,8 +730,8 @@ static int multiboot2_probe ( struct image *image ) {
 			   image );
 		return rc;
 	}
-	DBGC ( image, "MULTIBOOT2 %p found header with architecture %08x and header_length %d\n",
-		   image, hdr.mb.architecture, hdr.mb.header_length );
+	DBGC ( image, "MULTIBOOT2 %p found header at offset %zx with architecture %08x and header_length %d\n",
+		   image, hdr.offset, hdr.mb.architecture, hdr.mb.header_length );
 	return 0;
 }
 
