@@ -533,9 +533,20 @@ static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
 		if ( module_image == image )
 			continue;
 
+		/*
+		 * FIXME: Hmm. We already loaded the image didn't we? Why are we
+		 * doing *another* allocation?
+		 *
+		 * There is a more serious issue however: loader allocates in
+		 * chunks, then relocates after exiting boot services. ipxe has no support
+		 * for this; we might well hit the issue where we can't actually
+		 * allocate enough pages for our huge boot archive. This is
+		 * system-dependent...
+		 */
 		memory = umalloc ( module_image->len );
 		if ( memory == UNULL ) {
 			DBGC ( image, "MULTIBOOT2 %p could not allocate %zd bytes.\n", module_image, module_image->len );
+			// FIXME: totally wrong
 			return 0;
 		}
 
@@ -762,7 +773,16 @@ static int multiboot2_exec ( struct image *image ) {
 	/* Jump to OS with flat physical addressing */
 	DBGC ( image, "MULTIBOOT2 %p starting execution at %lx\n", image, entry );
 
-	multiboot2_boot ( total_size, entry );
+	if ( mb_tags.entry_addr_efi64_valid ) {
+		multiboot2_boot ( total_size, entry );
+	} else {
+		// FIXME: efi32 not supported
+
+		extern void multiboot2_tramp(uint32_t, uint64_t, uint64_t);
+
+		multiboot2_tramp( MULTIBOOT2_BOOTLOADER_MAGIC, (uint64_t)total_size, entry );
+	}
+
 	DBGC ( image, "MULTIBOOT2 %p returned\n", image );
 
 	/* It isn't safe to continue after calling shutdown() */
