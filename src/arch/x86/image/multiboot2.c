@@ -123,8 +123,7 @@ static int multiboot2_find_header ( struct image *image,
 }
 
 struct multiboot2_tags {
-	int module_align;
-	int boot_services;
+	int keep_boot_services;
 
 	// FIXME!
 	struct multiboot_header_tag_address addr;
@@ -159,7 +158,7 @@ static int multiboot2_validate_inforeq ( struct image *image, size_t offset, siz
 		case MULTIBOOT_TAG_TYPE_CMDLINE:
 		case MULTIBOOT_TAG_TYPE_MODULE:
 		case MULTIBOOT_TAG_TYPE_BOOTDEV: // FIXME
-		case MULTIBOOT_TAG_TYPE_FRAMEBUFFER: // FIXME?
+		case MULTIBOOT_TAG_TYPE_FRAMEBUFFER:
 			continue;
 
 		default:
@@ -243,31 +242,28 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 				   image );
 
 			/* We should be OK to safely ignore this tag. */
-
 			break;
 
 		case MULTIBOOT_HEADER_TAG_FRAMEBUFFER:
 			DBGC ( image, "MULTIBOOT2 %p has a framebuffer tag\n",
 				   image );
 
-			/*
-		 	 * Should be able to ignore this.
-			 */
+			/* Should be able to ignore this. */
 			break;
 
 		case MULTIBOOT_HEADER_TAG_MODULE_ALIGN:
 			DBGC ( image, "MULTIBOOT2 %p has a module align tag\n",
 				   image );
-			tags->module_align = 1;
+			/* Modules are umalloc()ed and hence always page-aligned. */
 			break;
 
 		case MULTIBOOT_HEADER_TAG_EFI_BS:
 			DBGC ( image, "MULTIBOOT2 %p has a boot services tag\n",
 				   image );
-			// FIXME: do we ever exit boot services?
-			tags->boot_services = 1;
+			tags->keep_boot_services = 1;
 			break;
 
+		// FIXME: we won't really support these two?
 		case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI32:
 		{
 			struct multiboot_header_tag_entry_address mb_tag = { 0 };
@@ -300,6 +296,7 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 			DBGC ( image, "MULTIBOOT2 %p has a relocatable tag\n",
 				   image );
 
+			// FIXME: don't do anything with these
 			tags->relocatable_valid = 1;
 			tags->reloc_min_addr = mb_tag.min_addr;
 			tags->reloc_max_addr = mb_tag.max_addr;
@@ -483,6 +480,8 @@ static int multiboot2_load ( struct image *image, struct multiboot2_header_info 
 	// FIXME: is this right?
 	memsz += doffset;
 
+	// FIXME: do we even want to use this, it's an addition from mb2 patches
+	// for EFI anyway
 	if ( ( rc = prep_segment ( buffer, filesz, memsz ) ) != 0 ) {
 		DBGC ( image, "MULTIBOOT2 %p could not prepare segment: %s\n",
 		       image, strerror ( rc ) );
@@ -582,6 +581,46 @@ static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
 	return offset;
 }
 
+#ifdef EFIAPI
+
+/* 2048 bytes ought to be enough for anybody. */
+static char efi_mmap[2048];
+
+static void exit_boot_services( struct image *image ) {
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_STATUS efirc;
+	UINTN size = sizeof (efi_mmap);
+	UINTN key;
+	UINTN desc_size;
+
+	efirc = bs->GetMemoryMap ( &size, (EFI_MEMORY_DESCRIPTOR *)efi_mmap, &key, &desc_size, NULL );
+
+	if (efirc != 0) {
+		DBGC ( image, "GetMemoryMap failed with %d\n", (int) efirc );
+		// FIXME: attempt a reboot?
+		while ( 1 ) {}
+	}
+
+#if 0
+	efirc = bs->ExitBootServices ( efi_image_handle, key );
+
+	if (efirc != 0) {
+		DBGC ( image, "ExitBootServices() failed with %d\n", (int) efirc );
+		while ( 1 ) {}
+	}
+#endif
+}
+
+#endif
+
+/**
+ * Prepare segment for loading
+ *
+ * @v segment		Segment start
+ * @v filesz		Size of the "allocated bytes" portion of the segment
+ * @v memsz		Size of the segment
+ * @ret rc		Return status code
+ */
 void multiboot2_boot(uint32_t *bib, uint32_t entry) {
 #ifdef EFIAPI
 	__asm__ __volatile__ ( "push %%rbp\n\t"
@@ -660,12 +699,14 @@ static int multiboot2_exec ( struct image *image ) {
 	offset = adjust_tag_offset(offset);
 
 #ifdef EFIAPI
-	/* Add the EFI boot services not terminated tag */
-	tag = (struct multiboot_tag *)&mb2_bib.bib[offset];
-	tag->type = MULTIBOOT_TAG_TYPE_EFI_BS;
-	tag->size = sizeof(*tag);
-	offset += tag->size;
-	offset = adjust_tag_offset(offset);
+	if (mb_tags.keep_boot_services) {
+		/* Add the EFI boot services not terminated tag */
+		tag = (struct multiboot_tag *)&mb2_bib.bib[offset];
+		tag->type = MULTIBOOT_TAG_TYPE_EFI_BS;
+		tag->size = sizeof(*tag);
+		offset += tag->size;
+		offset = adjust_tag_offset(offset);
+	}
 
 	/* Add the EFI 64-bit image handle pointer */
 	tag_efi64 = (struct multiboot_tag_efi64 *)&mb2_bib.bib[offset];
@@ -706,10 +747,17 @@ static int multiboot2_exec ( struct image *image ) {
 
 	DBGC ( image, "MULTIBOOT2 %p BIB is %d bytes\n", image, *total_size );
 
-	/* Multiboot images may not return and have no callback
-	 * interface, so shut everything down prior to booting the OS.
-	 */
-	shutdown_boot();
+#ifdef EFIAPI
+	if ( !mb_tags.keep_boot_services ) {
+		exit_boot_services ( image );
+	} else {
+		/*
+		 * Multiboot images may not return and have no callback
+		 * interface, so shut everything down prior to booting the OS.
+		 */
+		shutdown_boot();
+	}
+#endif
 
 	/* Jump to OS with flat physical addressing */
 	DBGC ( image, "MULTIBOOT2 %p starting execution at %lx\n", image, entry );
