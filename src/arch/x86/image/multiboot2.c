@@ -319,9 +319,6 @@ static int multiboot2_validate_tags ( struct image *image, struct multiboot2_hea
 	return -ENOTSUP;
 }
 
-/**
- * Add bootloader into bib
- */
 static size_t multiboot2_add_bootloader ( struct image *image, size_t offset ) {
 	struct multiboot_tag_string *bootloader = (struct multiboot_tag_string *)&mb2_bib.bib[offset];
 	size_t remaining = MB_MAX_BOOTINFO_SIZE - offset - sizeof(*bootloader);
@@ -339,9 +336,6 @@ static size_t multiboot2_add_bootloader ( struct image *image, size_t offset ) {
 	return bootloader->size;
 }
 
-/**
- * Add command line into bib
- */
 static size_t multiboot2_add_cmdline ( struct image *image, size_t offset ) {
 	struct multiboot_tag_string *cmdline = (struct multiboot_tag_string *)&mb2_bib.bib[offset];
 	size_t remaining = MB_MAX_BOOTINFO_SIZE - offset - sizeof(*cmdline);
@@ -581,32 +575,147 @@ static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
 
 #ifdef EFIAPI
 
-/* 2048 bytes ought to be enough for anybody. */
-static char efi_mmap[2048];
+static multiboot_uint32_t
+convert_efi_type(EFI_MEMORY_TYPE type)
+{
+	switch (type) {
+	case EfiReservedMemoryType:
+		return MULTIBOOT_MEMORY_RESERVED;
 
-static void exit_boot_services( struct image *image ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	EFI_STATUS efirc;
-	UINTN size = sizeof (efi_mmap);
-	UINTN key;
-	UINTN desc_size;
+	case EfiLoaderCode:
+	case EfiLoaderData:
+	case EfiBootServicesCode:
+	case EfiBootServicesData:
+		return MULTIBOOT_MEMORY_AVAILABLE;
 
-	efirc = bs->GetMemoryMap ( &size, (EFI_MEMORY_DESCRIPTOR *)efi_mmap, &key, &desc_size, NULL );
+	case EfiRuntimeServicesCode:
+	case EfiRuntimeServicesData:
+		return MULTIBOOT_MEMORY_RESERVED;
 
-	if (efirc != 0) {
-		DBGC ( image, "GetMemoryMap failed with %d\n", (int) efirc );
-		// FIXME: attempt a reboot?
-		while ( 1 ) {}
+	case EfiConventionalMemory:
+		return MULTIBOOT_MEMORY_AVAILABLE;
+
+	// FIXME: loader doesn't do this: why?
+	case EfiUnusableMemory:
+		return MULTIBOOT_MEMORY_BADRAM;
+
+	case EfiACPIReclaimMemory:
+		return MULTIBOOT_MEMORY_ACPI_RECLAIMABLE;
+
+	case EfiACPIMemoryNVS:
+		return MULTIBOOT_MEMORY_NVS;
+
+	case EfiMemoryMappedIO:
+	case EfiMemoryMappedIOPortSpace:
+	case EfiPalCode:
+		return MULTIBOOT_MEMORY_RESERVED;
+
+	default:
+		printf ( "unknown memory type %d\n", type );
+		return MULTIBOOT_MEMORY_RESERVED;
+	}
+}
+
+// FIXME: comment on both maps
+static ssize_t multiboot2_build_mmap ( EFI_MEMORY_DESCRIPTOR *efi_mmap, UINTN descr_size,
+	size_t nr_entries, struct multiboot_mmap_entry *mmap, size_t bufsize) {
+	struct multiboot_mmap_entry *lastme = NULL;
+	size_t nr = 0;
+	size_t i;
+
+	for (i = 0; i < nr_entries; i++) {
+		EFI_MEMORY_DESCRIPTOR *d = (void *)((char *)efi_mmap + (i * descr_size));
+		struct multiboot_mmap_entry *me = &mmap[nr];
+
+		if (lastme != NULL &&
+			convert_efi_type(d->Type) == lastme->type &&
+			d->PhysicalStart == lastme->addr + lastme->len) {
+			lastme->len += d->NumberOfPages << EFI_PAGE_SHIFT;
+			continue;
+		}
+
+		if (bufsize < (nr + 1) * sizeof (*me)) {
+			printf ( "not enough space for mmap (%lx < %lx)\n",
+			    bufsize, (nr + 1) * sizeof(*me) );
+			return -ENOMEM;
+		}
+
+		me->addr = d->PhysicalStart;
+		me->len =  d->NumberOfPages << EFI_PAGE_SHIFT;
+		me->type = convert_efi_type(d->Type);
+		me->zero = 0;
+		lastme = me;
+		nr++;
 	}
 
-#if 0
+	return nr;
+}
+
+// FIXME: comment on both maps
+static size_t multiboot2_add_mmap ( size_t offset, UINTN *keyp ) {
+	struct multiboot_tag_efi_mmap *emt = (struct multiboot_tag_efi_mmap *)&mb2_bib.bib[offset];
+	EFI_MEMORY_DESCRIPTOR *efi_mmap = (void *)(&mb2_bib.bib[offset + sizeof (*emt)]);
+	UINTN size = MB_MAX_BOOTINFO_SIZE - offset - sizeof(*emt);
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	struct multiboot_tag_mmap *mt;
+	UINT32 descr_version;
+	EFI_STATUS efirc;
+	UINTN descr_size;
+	ssize_t nr_me;
+
+	efirc = bs->GetMemoryMap ( &size, efi_mmap, keyp, &descr_size, &descr_version );
+
+	if (efirc != 0) {
+		printf ( "GetMemoryMap failed with %d\n", (int) efirc );
+		// FIXME
+		return 0;
+        }
+
+	emt->type = MULTIBOOT_TAG_TYPE_EFI_MMAP;
+	emt->size = sizeof (*emt) + size;
+	emt->descr_size = (u32)descr_size;
+	emt->descr_vers = descr_version;
+
+	offset += emt->size;
+	offset = adjust_tag_offset(offset);
+
+	mt = (struct multiboot_tag_mmap *)&mb2_bib.bib[offset];
+	mt->type = MULTIBOOT_TAG_TYPE_MMAP;
+	mt->entry_size = sizeof(struct multiboot_mmap_entry);
+	mt->entry_version = 0;
+
+	offset += sizeof(*mt);
+
+	nr_me = multiboot2_build_mmap ( efi_mmap, descr_size, size / descr_size,
+		(struct multiboot_mmap_entry *)&mb2_bib.bib[offset],
+		MB_MAX_BOOTINFO_SIZE - offset );
+
+        if (nr_me < 0) {
+		// FIXME
+		return 0;
+	}
+
+	mt->size = sizeof (*mt) + mt->entry_size * nr_me;
+	offset += mt->entry_size * nr_me;
+
+	return offset;
+}
+
+
+int do_exit = 0;
+
+static void exit_boot_services( struct image *image, UINTN key) {
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_STATUS efirc;
+
+	if (do_exit) {
 	efirc = bs->ExitBootServices ( efi_image_handle, key );
 
 	if (efirc != 0) {
 		DBGC ( image, "ExitBootServices() failed with %d\n", (int) efirc );
 		while ( 1 ) {}
 	}
-#endif
+	}
 }
 
 #endif
@@ -647,6 +756,7 @@ static int multiboot2_exec ( struct image *image ) {
 	struct multiboot_tag_load_base_addr *load_base_addr_tag;
 #ifdef EFIAPI
 	struct multiboot_tag_efi64 *tag_efi64;
+	UINTN mmap_key;
 #endif
 	uint32_t *total_size;
 	uint32_t *reserved;
@@ -721,17 +831,18 @@ static int multiboot2_exec ( struct image *image ) {
 	tag_efi64->pointer = (multiboot_uint64_t)efi_systab;
 	offset += tag_efi64->size;
 	offset = adjust_tag_offset(offset);
+
+	// FIXME: = versus += really sucks
+	offset = multiboot2_add_mmap ( offset, &mmap_key );
+	offset = adjust_tag_offset(offset);
 #endif
 
-	/* add the boot command line */
 	offset += multiboot2_add_cmdline ( image, offset );
 	offset = adjust_tag_offset(offset);
 
-	/* add the bootloader */
 	offset += multiboot2_add_bootloader ( image, offset );
 	offset = adjust_tag_offset(offset);
 
-	/* Add the modules */
 	offset = multiboot2_add_modules ( image, offset );
 	offset = adjust_tag_offset(offset);
 
@@ -747,7 +858,7 @@ static int multiboot2_exec ( struct image *image ) {
 
 #ifdef EFIAPI
 	if ( !mb_tags.keep_boot_services ) {
-		exit_boot_services ( image );
+		exit_boot_services ( image, mmap_key );
 	} else {
 		/*
 		 * Multiboot images may not return and have no callback
@@ -767,7 +878,7 @@ static int multiboot2_exec ( struct image *image ) {
 
 		extern void multiboot2_tramp(uint32_t, uint64_t, uint64_t);
 
-		multiboot2_tramp( MULTIBOOT2_BOOTLOADER_MAGIC, (uint64_t)total_size, entry );
+		multiboot2_tramp ( MULTIBOOT2_BOOTLOADER_MAGIC, (uint64_t)total_size, entry );
 	}
 
 	DBGC ( image, "MULTIBOOT2 %p returned\n", image );
