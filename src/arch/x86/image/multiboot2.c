@@ -524,7 +524,6 @@ static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
 	char *buf;
 	size_t remaining;
 	size_t len;
-	userptr_t memory;
 
 	/* Add each image as a multiboot module */
 	for_each_image ( module_image ) {
@@ -534,30 +533,18 @@ static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
 			continue;
 
 		/*
-		 * FIXME: Hmm. We already loaded the image didn't we? Why are we
-		 * doing *another* allocation?
-		 *
-		 * There is a more serious issue however: loader allocates in
-		 * chunks, then relocates after exiting boot services. ipxe has no support
-		 * for this; we might well hit the issue where we can't actually
-		 * allocate enough pages for our huge boot archive. This is
-		 * system-dependent...
+		 * FIXME: loader allocates in chunks, then relocates after
+		 * exiting boot services. ipxe has no support for this; we might
+		 * well hit the issue where we can't actually allocate enough
+		 * pages for our huge boot archive. This is system-dependent...
 		 */
-		memory = umalloc ( module_image->len );
-		if ( memory == UNULL ) {
-			DBGC ( image, "MULTIBOOT2 %p could not allocate %zd bytes.\n", module_image, module_image->len );
-			// FIXME: totally wrong
-			return 0;
-		}
-
-		memcpy_user ( memory, 0, module_image->data, 0, module_image->len );
 
 		/* Add module to list */
 		module = (struct multiboot_tag_module *)&mb2_bib.bib[offset];
 		module->type = MULTIBOOT_TAG_TYPE_MODULE;
 		module->size = sizeof(*module);
-		module->mod_start = memory;
-		module->mod_end = ( memory + module_image->len );
+		module->mod_start = user_to_phys ( module_image->data, 0 );
+		module->mod_end = user_to_phys ( module_image->data, module_image->len );
 
 		buf = module->cmdline;
 		remaining = MB_MAX_BOOTINFO_SIZE - offset - sizeof(*module);
