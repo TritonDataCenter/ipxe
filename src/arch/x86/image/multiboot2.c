@@ -24,8 +24,6 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-// FIXME: we should make this EFI only
-
 /**
  * @file
  *
@@ -47,11 +45,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/umalloc.h>
 #include <ipxe/uri.h>
 #include <ipxe/version.h>
-#ifdef EFIAPI
-#include <ipxe/efi/efi.h>
-#endif
 
 FEATURE ( FEATURE_IMAGE, "MBOOT2", DHCP_EB_FEATURE_MULTIBOOT2, 1 );
+
+#ifdef EFIAPI
+
+#include <ipxe/efi/efi.h>
 
 /**
  * Maximum multiboot2 boot information size
@@ -72,6 +71,26 @@ struct multiboot2_header_info {
 	struct multiboot_header mb;
 	/** Offset of header within the multiboot2 image */
 	size_t offset;
+};
+
+struct multiboot2_tags {
+	int keep_boot_services;
+
+	// FIXME!
+	struct multiboot_header_tag_address addr;
+
+	int entry_addr_valid;
+	int entry_addr_efi32_valid;
+	int entry_addr_efi64_valid;
+	int relocatable_valid;
+
+	uint32_t entry_addr;
+	uint32_t entry_addr_efi32;
+	uint32_t entry_addr_efi64;
+	uint32_t reloc_min_addr;
+	uint32_t reloc_max_addr;
+	uint32_t reloc_align;
+	uint32_t reloc_preference;
 };
 
 /**
@@ -126,26 +145,6 @@ static int multiboot2_find_header ( struct image *image,
 	/* No multiboot header found */
 	return -ENOEXEC;
 }
-
-struct multiboot2_tags {
-	int keep_boot_services;
-
-	// FIXME!
-	struct multiboot_header_tag_address addr;
-
-	int entry_addr_valid;
-	int entry_addr_efi32_valid;
-	int entry_addr_efi64_valid;
-	int relocatable_valid;
-
-	uint32_t entry_addr;
-	uint32_t entry_addr_efi32;
-	uint32_t entry_addr_efi64;
-	uint32_t reloc_min_addr;
-	uint32_t reloc_max_addr;
-	uint32_t reloc_align;
-	uint32_t reloc_preference;
-};
 
 static int multiboot2_validate_inforeq ( struct image *image, size_t offset, size_t num_reqs ) {
 	uint32_t inforeq;
@@ -376,58 +375,57 @@ static size_t multiboot2_add_cmdline ( struct image *image, size_t offset ) {
 
 /**
  * FIXME Load raw multiboot image into memory
- *
- * @v image		Multiboot file
- * @v hdr		Multiboot header descriptor
- * @ret entry		Entry point
- * @ret max		Maximum used address
- * @ret rc		Return status code
  */
 static int multiboot2_load ( struct image *image, struct multiboot2_header_info *hdr,
 			     struct multiboot2_tags *tags, physaddr_t *load,
 			     physaddr_t *entry, physaddr_t *max ) {
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_PHYSICAL_ADDRESS efi_pa;
+	physaddr_t phys_start;
+	EFI_STATUS efirc;
 	userptr_t buffer;
 	size_t offset;
 	size_t filesz;
 	size_t memsz;
 	size_t doffset;
-	int rc;
 
 	offset = ( hdr->offset - tags->addr.header_addr + tags->addr.load_addr );
-
-	DBGC ( image, "MULTIBOOT2 offset %zx\n", offset );
 
 	// FIXME: multiboot1 has "image->len - offset" ???
 	filesz = ( tags->addr.load_end_addr ?
 		   ( tags->addr.load_end_addr - tags->addr.load_addr ) :
 		   image->len  );
 
-	DBGC ( image, "MULTIBOOT2 filesz %zx\n", filesz );
-
 	memsz = ( tags->addr.bss_end_addr ?
 		  ( tags->addr.bss_end_addr - tags->addr.load_addr ) : filesz );
 
-	DBGC ( image, "MULTIBOOT2 memsz %zx\n", memsz );
-
-	DBGC ( image, "MULTIBOOT2 page-aligned base %x\n", tags->addr.load_addr & (~EFI_PAGE_MASK));
+	phys_start = tags->addr.load_addr & ~EFI_PAGE_MASK;
+	buffer = phys_to_user ( phys_start );
 
 	doffset = tags->addr.load_addr & EFI_PAGE_MASK;
 
-	buffer = phys_to_user ( tags->addr.load_addr & (~EFI_PAGE_MASK));
-
-	// FIXME: is this right?
 	memsz += doffset;
 
-	// FIXME: do we even want to use this, it's an addition from mb2 patches
-	// for EFI anyway
-	if ( ( rc = prep_segment ( buffer, filesz, memsz ) ) != 0 ) {
-		DBGC ( image, "MULTIBOOT2 %p could not prepare segment: %s\n",
-		       image, strerror ( rc ) );
-		return rc;
+	efi_pa = phys_start;
+
+	DBGC ( image, "MULTIBOOT2 %s: buffer 0x%lx:0x%zx "
+	       "filesz 0x%zx memsz 0x%zx file offset 0x%zx\n",
+	       __func__, buffer, doffset, filesz, memsz, offset );
+
+	efirc = bs->AllocatePages ( AllocateAddress, EfiLoaderData,
+				    EFI_SIZE_TO_PAGES ( memsz ), &efi_pa );
+
+	if (efirc != 0) {
+		printf ( "Failed to allocate pages for kernel (%d) "
+			 "pa: 0x%llx size: 0x%zx\n", (int) efirc,
+			 efi_pa, memsz );
+		return -EEFI ( efirc );
 	}
 
-	/* Copy image to segment */
 	memcpy_user ( buffer, doffset, image->data, offset, filesz );
+	memset_user ( buffer, filesz, 0, (memsz - filesz) );
+
+	// FIXME: move all this into struct
 
 	*load = tags->addr.load_addr;
 	*max = ( tags->addr.load_addr + memsz );
@@ -904,12 +902,6 @@ static int multiboot2_exec ( struct image *image ) {
 	return -ECANCELED;  /* -EIMPOSSIBLE, anyone? */
 }
 
-/**
- * Probe multiboot2 image
- *
- * @v image		Multiboot file
- * @ret rc		Return status code
- */
 static int multiboot2_probe ( struct image *image ) {
 	struct multiboot2_header_info hdr;
 	int rc;
@@ -924,6 +916,18 @@ static int multiboot2_probe ( struct image *image ) {
 		   image, hdr.offset, hdr.mb.architecture, hdr.mb.header_length );
 	return 0;
 }
+
+#else /* EFIAPI */
+
+static int multiboot2_exec ( struct image *image ) {
+	return -ENOTSUP;
+}
+
+static int multiboot2_probe ( struct image *image ) {
+	return -ENOEXEC;
+}
+
+#endif
 
 /** Multiboot image type */
 struct image_type multiboot2_image_type __image_type ( PROBE_MULTIBOOT2 ) = {
