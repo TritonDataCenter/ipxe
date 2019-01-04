@@ -29,7 +29,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  *
  * Multiboot2 image format
  *
- * FIXME
+ * An Illumos kernel is not an EFI image, and multiboot 1 cannot load under UEFI.
+ * Thus, multiboot2 is the only hope we have when in UEFI. The format is similar
+ * to that of multiboot1.
+ *
+ * This implementation is certainly incomplete - aside from the lack of legacy
+ * BIOS support - but it's sufficient.
  */
 
 #include <stdio.h>
@@ -52,93 +57,84 @@ FEATURE ( FEATURE_IMAGE, "MBOOT2", DHCP_EB_FEATURE_MULTIBOOT2, 1 );
 
 #include <ipxe/efi/efi.h>
 
-/**
- * Maximum multiboot2 boot information size
- */
-#define MB_MAX_BOOTINFO_SIZE 4096
+#define BIB_MAX_SIZE 4096
+#define	BIB_ADDR(mb2) ((void *)&((mb2)->bib[(mb2)->bib_offset]))
+#define	BIB_SPACE(mb2, tagsize) (BIB_MAX_SIZE - (mb2)->bib_offset - (tagsize))
 
-/** Multiboot2 boot information buffer */
-// FIXME add an accesser define
-static union {
-	uint64_t align;
-	char bib[MB_MAX_BOOTINFO_SIZE];
-} mb2_bib;
-
-// FIXME: should collate all the stuff in here
-/** A multiboot2 header descriptor */
-struct multiboot2_header_info {
-	/** The actual multiboot2 header */
+struct mb2_image_header {
 	struct multiboot_header mb;
-	/** Offset of header within the multiboot2 image */
-	size_t offset;
+	size_t file_offset;
 };
 
-struct multiboot2_tags {
+struct mb2_entry {
+	enum entry_type {
+		ENTRY_I386,
+		ENTRY_EFI32,
+		ENTRY_EFI64
+	} type;
+	uint32_t addr;
+};
+
+struct mb2 {
+	struct image *image;
+	struct mb2_image_header image_hdr;
+
+	/* Tag information from image. */
+
+	struct multiboot_header_tag_address load;
+	struct mb2_entry entry;
 	int keep_boot_services;
 
-	// FIXME!
-	struct multiboot_header_tag_address addr;
+	union {
+		uint64_t bib_align;
+		char bib[BIB_MAX_SIZE];
+	};
 
-	int entry_addr_valid;
-	int entry_addr_efi32_valid;
-	int entry_addr_efi64_valid;
-	int relocatable_valid;
-
-	uint32_t entry_addr;
-	uint32_t entry_addr_efi32;
-	uint32_t entry_addr_efi64;
-	uint32_t reloc_min_addr;
-	uint32_t reloc_max_addr;
-	uint32_t reloc_align;
-	uint32_t reloc_preference;
+	size_t bib_offset;
 };
 
-/**
- * Find multiboot2 header
- *
- * @v image		Multiboot file
- * @v hdr		Multiboot header descriptor to fill in
- * @ret rc		Return status code
- */
+struct mb2 mb2;
+
 static int multiboot2_find_header ( struct image *image,
-				    struct multiboot2_header_info *hdr ) {
+				    struct mb2_image_header *hdr ) {
 	uint32_t buf[64];
 	size_t offset;
 	unsigned int buf_idx;
 	uint32_t checksum;
 
-	/* Scan through first MULTIBOOT_SEARCH of image file 256 bytes at a time.
-	 * (Use the buffering to avoid the overhead of a
+	/*
+	 * Scan through first MULTIBOOT_SEARCH of image file 256 bytes at
+	 * a time.  (Use the buffering to avoid the overhead of a
 	 * copy_from_user() for every dword.)
 	 */
-	for ( offset = 0 ; offset < MULTIBOOT_SEARCH ; offset += sizeof ( buf[0] ) ) {
-		/* Check for end of image */
+
+	for ( offset = 0 ; offset < MULTIBOOT_SEARCH ;
+	      offset += sizeof ( buf[0] ) ) {
 		if ( offset > image->len )
 			break;
+
 		/* Refill buffer if applicable */
 		buf_idx = ( ( offset % sizeof ( buf ) ) / sizeof ( buf[0] ) );
 		if ( buf_idx == 0 ) {
 			copy_from_user ( buf, image->data, offset,
 					 sizeof ( buf ) );
 		}
-		/* Check signature */
+
 		if ( buf[buf_idx] != MULTIBOOT2_HEADER_MAGIC )
 			continue;
-		/* Copy header and verify checksum */
+
 		copy_from_user ( &hdr->mb, image->data, offset,
 				 sizeof ( hdr->mb ) );
-		checksum = ( hdr->mb.magic + hdr->mb.architecture + hdr->mb.header_length +
-				 hdr->mb.checksum );
+
+		checksum = ( hdr->mb.magic + hdr->mb.architecture +
+			     hdr->mb.header_length + hdr->mb.checksum );
 		if ( checksum != 0 )
 			continue;
 
-		/* Make sure that the multiboot architecture is x86 */
-		if (hdr->mb.architecture != MULTIBOOT_ARCHITECTURE_I386) {
+		if ( hdr->mb.architecture != MULTIBOOT_ARCHITECTURE_I386 )
 			return -ENOEXEC;
-		}
 
-		/* Record offset of multiboot header and return */
-		hdr->offset = offset;
+		hdr->file_offset = offset;
 		return 0;
 	}
 
@@ -146,28 +142,36 @@ static int multiboot2_find_header ( struct image *image,
 	return -ENOEXEC;
 }
 
-static int multiboot2_validate_inforeq ( struct image *image, size_t offset, size_t num_reqs ) {
-	uint32_t inforeq;
+static int multiboot2_inforeq ( struct mb2 *mb2, size_t offset,
+				size_t nr_reqs ) {
+	size_t i;
 
-	while (num_reqs) {
-		copy_from_user ( &inforeq, image->data, offset, sizeof ( inforeq ) );
-		offset += sizeof(inforeq);
-		num_reqs--;
+	for ( i = 0; i < nr_reqs; i++ ) {
+		uint32_t inforeq;
 
-		DBGC ( image, "MULTIBOOT2 %p info request tag %d\n", image, inforeq);
+		copy_from_user ( &inforeq, mb2->image->data,
+				 offset + ( i * sizeof ( inforeq ) ),
+				 sizeof ( inforeq ) );
 
-		switch (inforeq) {
+		DBGC ( mb2->image, "MULTIBOOT2 %p inforeq tag %d\n",
+		       mb2->image, inforeq );
+
+		/*
+		 * Note that we don't actually supply framebuffer or bootdev
+		 * information, but we acknowledge the request.
+		 */
+
+		switch ( inforeq ) {
 		case MULTIBOOT_TAG_TYPE_BASIC_MEMINFO:
 		case MULTIBOOT_TAG_TYPE_MMAP:
 		case MULTIBOOT_TAG_TYPE_CMDLINE:
 		case MULTIBOOT_TAG_TYPE_MODULE:
-		case MULTIBOOT_TAG_TYPE_BOOTDEV: // FIXME?
+		case MULTIBOOT_TAG_TYPE_BOOTDEV:
 		case MULTIBOOT_TAG_TYPE_FRAMEBUFFER:
 			continue;
 
 		default:
-			DBGC ( image, "MULTIBOOT2 %p unsupported info request tag %d\n",
-				   image, inforeq );
+			printf ( "unsupported inforeq tag %d\n", inforeq );
 			return -ENOTSUP;
 		}
 	}
@@ -175,297 +179,249 @@ static int multiboot2_validate_inforeq ( struct image *image, size_t offset, siz
 	return 0;
 }
 
-static int multiboot2_validate_tags ( struct image *image, struct multiboot2_header_info *hdr,
-	   struct multiboot2_tags *tags ) {
-	size_t offset = hdr->offset + sizeof(struct multiboot_header);
-	size_t end_offset = offset + hdr->mb.header_length;
-	struct multiboot_header_tag tag;
+static int multiboot2_process_tag ( struct mb2 *mb2,
+				    struct multiboot_header_tag *tag,
+				    size_t offset ) {
+	struct multiboot_header_tag_entry_address entry_tag = { 0 };
+	int rc = 0;
 
-	/* Clear out the multiboot2 tags structure */
-	memset(tags, 0, sizeof(*tags));
+	switch ( tag->type ) {
+	case MULTIBOOT_HEADER_TAG_INFORMATION_REQUEST: {
+		size_t nr_inforeqs = ( tag->size - sizeof ( *tag ) ) /
+				       sizeof ( uint32_t );
 
-	while (offset < end_offset) {
-		copy_from_user ( &tag, image->data, offset, sizeof ( tag ) );
+		rc = multiboot2_inforeq ( mb2, offset + sizeof ( *tag ),
+					  nr_inforeqs );
+		if ( rc != 0 )
+			return rc;
+		break;
+	}
 
-		DBGC ( image, "MULTIBOOT2 %p (offset: %d) TAG type: %x flags: %x size: %d\n", image,
-				(int)(offset - hdr->offset), tag.type, tag.flags, tag.size );
+	case MULTIBOOT_HEADER_TAG_ADDRESS:
 
-		if (tag.type == MULTIBOOT_HEADER_TAG_END) {
-			DBGC ( image, "MULTIBOOT2 %p tag end\n", image );
+		copy_from_user ( &mb2->load, mb2->image->data,
+				 offset, tag->size );
+
+		DBGC ( mb2->image, "address tag: header_addr 0x%x, "
+		    "load_addr 0x%x, load_end_addr 0x%x "
+		    "bss_end_addr 0x%x\n", mb2->load.header_addr,
+		    mb2->load.load_addr, mb2->load.load_end_addr,
+		    mb2->load.bss_end_addr );
+		break;
+
+	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS: {
+		copy_from_user ( &entry_tag, mb2->image->data,
+				 offset, tag->size );
+
+		mb2->entry.type = ENTRY_I386;
+		mb2->entry.addr = entry_tag.entry_addr;
+		break;
+	}
+
+	case MULTIBOOT_HEADER_TAG_CONSOLE_FLAGS:
+		/* We should be OK to safely ignore this tag. */
+		break;
+
+	case MULTIBOOT_HEADER_TAG_FRAMEBUFFER:
+		/* Should be able to ignore this. */
+		break;
+
+	case MULTIBOOT_HEADER_TAG_MODULE_ALIGN:
+		/* Modules are umalloc()ed and hence always page-aligned. */
+		break;
+
+	case MULTIBOOT_HEADER_TAG_EFI_BS:
+		mb2->keep_boot_services = 1;
+		break;
+
+	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI32:
+		printf ( "unsupported tag ENTRY_ADDRESS_EFI32" );
+		rc = -ENOTSUP;
+		break;
+
+	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64: {
+		copy_from_user ( &entry_tag, mb2->image->data,
+				 offset, tag->size );
+
+		// FIXME: given both, which to prefer?
+
+		mb2->entry.type = ENTRY_EFI64;
+		mb2->entry.addr = entry_tag.entry_addr;
+		break;
+	}
+
+	case MULTIBOOT_HEADER_TAG_RELOCATABLE:
+		/* We will always map at the requested address. */
+		break;
+
+	default:
+		printf ( "unknown header tag %x\n", tag->type );
+		rc = -ENOTSUP;
+		break;
+	}
+
+	return rc;
+}
+
+/*
+ * Process the image's tags.
+ */
+static int multiboot2_process_tags ( struct mb2 *mb2 ) {
+	size_t offset = mb2->image_hdr.file_offset +
+			sizeof ( struct multiboot_header );
+	size_t end_offset = offset + mb2->image_hdr.mb.header_length;
+	int rc;
+
+	// FIXME: validate that we saw at least load address and entry addr.
+
+	while ( offset < end_offset ) {
+		struct multiboot_header_tag tag;
+
+		copy_from_user ( &tag, mb2->image->data,
+				 offset, sizeof ( tag ) );
+
+		DBGC ( mb2->image, "MULTIBOOT2 %p (offset: 0x%zx) tag type: %x "
+		       "flags: %x size: %d\n", mb2->image,
+		       offset - mb2->image_hdr.file_offset,
+		       tag.type, tag.flags, tag.size );
+
+		if ( tag.type == MULTIBOOT_HEADER_TAG_END )
 			return 0;
-		}
 
-		switch (tag.type) {
-		case MULTIBOOT_HEADER_TAG_INFORMATION_REQUEST:
-		{
-			size_t num_inforeqs;
+		rc = multiboot2_process_tag ( mb2, &tag, offset );
 
-			DBGC ( image, "MULTIBOOT2 %p has an information request tag\n",
-				   image );
-
-			num_inforeqs = (tag.size - sizeof(tag)) / sizeof(uint32_t);
-
-			if (multiboot2_validate_inforeq ( image, offset + sizeof(tag), num_inforeqs ) != 0) {
-				return -ENOTSUP;
-			}
-
-			break;
-		}
-		case MULTIBOOT_HEADER_TAG_ADDRESS:
-		{
-			struct multiboot_header_tag_address mb_tag = { 0 };
-
-			copy_from_user ( &mb_tag, image->data, offset, tag.size);
-
-			DBGC ( image, "MULTIBOOT2 %p has an address tag\n",
-				   image );
-
-			DBGC ( image, "header %x load %x end %x bss_end %x\n",
-			    mb_tag.header_addr, mb_tag.load_addr, mb_tag.load_end_addr,
-			    mb_tag.bss_end_addr);
-
-			tags->addr = mb_tag;
-
-			break;
-		}
-
-		case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS:
-		{
-			struct multiboot_header_tag_entry_address mb_tag = { 0 };
-			copy_from_user ( &mb_tag, image->data, offset, tag.size );
-
-			DBGC ( image, "MULTIBOOT2 %p has an entry address %x\n",
-				   image, mb_tag.entry_addr );
-
-			tags->entry_addr_valid = 1;
-			tags->entry_addr = mb_tag.entry_addr;
-			break;
-		}
-		case MULTIBOOT_HEADER_TAG_CONSOLE_FLAGS:
-			DBGC ( image, "MULTIBOOT2 %p has a console flags tag\n",
-				   image );
-
-			/* We should be OK to safely ignore this tag. */
-			break;
-
-		case MULTIBOOT_HEADER_TAG_FRAMEBUFFER:
-			DBGC ( image, "MULTIBOOT2 %p has a framebuffer tag\n",
-				   image );
-
-			/* Should be able to ignore this. */
-			break;
-
-		case MULTIBOOT_HEADER_TAG_MODULE_ALIGN:
-			DBGC ( image, "MULTIBOOT2 %p has a module align tag\n",
-				   image );
-			/* Modules are umalloc()ed and hence always page-aligned. */
-			break;
-
-		case MULTIBOOT_HEADER_TAG_EFI_BS:
-			DBGC ( image, "MULTIBOOT2 %p has a boot services tag\n",
-				   image );
-			tags->keep_boot_services = 1;
-			break;
-
-		// FIXME: we won't really support these two?
-		case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI32:
-		{
-			struct multiboot_header_tag_entry_address mb_tag = { 0 };
-			copy_from_user ( &mb_tag, image->data, offset, tag.size );
-
-			DBGC ( image, "MULTIBOOT2 %p has an entry address EFI32 tag\n",
-				   image );
-
-			tags->entry_addr_efi32_valid = 1;
-			tags->entry_addr_efi32 = mb_tag.entry_addr;
-			break;
-		}
-		case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64:
-		{
-			struct multiboot_header_tag_entry_address mb_tag = { 0 };
-			copy_from_user ( &mb_tag, image->data, offset, tag.size );
-
-			DBGC ( image, "MULTIBOOT2 %p has an entry address EFI64 tag: %x\n",
-				   image, mb_tag.entry_addr );
-
-			tags->entry_addr_efi64_valid = 1;
-			tags->entry_addr_efi64 = mb_tag.entry_addr;
-			break;
-		}
-		case MULTIBOOT_HEADER_TAG_RELOCATABLE:
-		{
-			struct multiboot_header_tag_relocatable mb_tag = { 0 };
-			copy_from_user ( &mb_tag, image->data, offset, tag.size );
-
-			DBGC ( image, "MULTIBOOT2 %p has a relocatable tag\n",
-				   image );
-
-			// FIXME: don't do anything with these
-			tags->relocatable_valid = 1;
-			tags->reloc_min_addr = mb_tag.min_addr;
-			tags->reloc_max_addr = mb_tag.max_addr;
-			tags->reloc_align = mb_tag.align;
-			tags->reloc_preference = mb_tag.preference;
-			break;
-		}
-		default:
-			DBGC ( image, "MULTIBOOT2 %p unknown tag %x\n",
-				   image, tag.type );
-			return -ENOTSUP;
-		}
+		if ( rc != 0 )
+			return rc;
 
 		offset += tag.size + (MULTIBOOT_TAG_ALIGN - 1);
 		offset = offset & ~(MULTIBOOT_TAG_ALIGN - 1);
 	}
 
-	/* If we did not get a MULTIBOOT_HEADER_TAG_END, fail out */
-	DBGC ( image, "MULTIBOOT %p missing tag end\n", image );
+	printf ( "%p missing end tag\n", mb2->image );
 	return -ENOTSUP;
 }
 
-static size_t multiboot2_add_bootloader ( struct image *image, size_t offset ) {
-	struct multiboot_tag_string *bootloader = (struct multiboot_tag_string *)&mb2_bib.bib[offset];
-	size_t remaining = MB_MAX_BOOTINFO_SIZE - offset - sizeof(*bootloader);
-	size_t len;
-	char *buf = bootloader->string;
+/*
+ * Load the image at the requested load address.
+ */
+static int multiboot2_load ( struct mb2 *mb2 ) {
+	struct multiboot_header_tag_address *load = &mb2->load;
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_PHYSICAL_ADDRESS buf_pa;
+	size_t file_offset;
+	size_t buf_offset;
+	EFI_STATUS efirc;
+	userptr_t buffer;
+	size_t filesz;
+	size_t memsz;
 
-	len = ( snprintf ( buf, remaining, "iPXE %s", product_version ) + 1 /* NUL */ );
-	if ( len > remaining )
-		len = remaining;
+	// FIXME: multiboot1 has "image->len - file_offset" here ???
+	filesz = ( load->load_end_addr ?
+		   ( load->load_end_addr - load->load_addr ) :
+		   mb2->image->len );
 
-	DBGC ( image, "MULTIBOOT2 %p bootloader: %s\n", image, bootloader->string );
+	memsz = ( load->bss_end_addr ?
+		  ( load->bss_end_addr - load->load_addr ) : filesz );
 
-	bootloader->type = MULTIBOOT_TAG_TYPE_BOOT_LOADER_NAME;
-	bootloader->size = len + sizeof(*bootloader);
-	return bootloader->size;
+	/*
+	 * Our buffer must be page-aligned.
+	 */
+	buf_pa = load->load_addr & ~EFI_PAGE_MASK;
+	buf_offset = load->load_addr & EFI_PAGE_MASK;
+
+	efirc = bs->AllocatePages ( AllocateAddress, EfiLoaderData,
+				    EFI_SIZE_TO_PAGES ( memsz + buf_offset ),
+				    &buf_pa );
+
+	if ( efirc != 0 ) {
+		printf ( "Failed to allocate pages for kernel (%d) "
+			 "pa: 0x%llx size: 0x%zx\n", (int)efirc,
+			 buf_pa, memsz + buf_offset );
+		return -EEFI ( efirc );
+	}
+
+	buffer = phys_to_user ( (physaddr_t)buf_pa );
+	file_offset = ( mb2->image_hdr.file_offset -
+			load->header_addr + load->load_addr );
+
+	DBGC ( mb2->image, "MULTIBOOT2 %s: buffer 0x%lx:0x%zx filesz 0x%zx "
+	       "memsz 0x%zx file_offset 0x%zx\n", __func__, buffer, buf_offset,
+	       filesz, memsz, file_offset );
+
+	memcpy_user ( buffer, buf_offset,
+		      mb2->image->data, file_offset, filesz );
+	memset_user ( buffer, buf_offset + filesz, 0, ( memsz - filesz ) );
+
+	return 0;
 }
 
-static size_t multiboot2_add_cmdline ( struct image *image, size_t offset ) {
-	struct multiboot_tag_string *cmdline = (struct multiboot_tag_string *)&mb2_bib.bib[offset];
-	size_t remaining = MB_MAX_BOOTINFO_SIZE - offset - sizeof(*cmdline);
-	size_t len;
+static void align_tag_offset ( size_t *offset ) {
+	if ( ( *offset & 7 ) != 0 )
+		*offset = ( ( *offset + 8 ) & ~7 );
+}
+
+// FIXME: in general, check we have space
+
+static int multiboot2_add_cmdline ( struct mb2 *mb2 ) {
+	struct multiboot_tag_string *cmdline = BIB_ADDR ( mb2 );
+	size_t remaining = BIB_SPACE ( mb2, sizeof ( *cmdline ) );
 	char *buf = cmdline->string;
+	size_t len;
 
+	DBGC ( mb2->image, "MULTIBOOT2 CMDLINE at 0x%zx\n", mb2->bib_offset );
 	cmdline->type = MULTIBOOT_TAG_TYPE_CMDLINE;
-	cmdline->size = sizeof(*cmdline);
+	cmdline->size = sizeof ( *cmdline );
 
-	/* Copy image URI to base memory buffer as start of command line */
-	len = ( format_uri ( image->uri, buf, remaining ) + 1 /* NUL */ );
-	if ( len > remaining )
-		len = remaining;
+	len = ( format_uri ( mb2->image->uri, buf, remaining ) + 1 );
 	buf += len;
 	remaining -= len;
 	cmdline->size += len;
 
 	/* Copy command line to base memory buffer, if present */
-	if ( image->cmdline ) {
+	if ( mb2->image->cmdline != NULL ) {
 		buf--;
 		cmdline->size--;
 		remaining++;
-		len = ( snprintf ( buf, remaining, " %s", image->cmdline ) + 1 /* NUL */ );
-		if ( len > remaining )
-			len = remaining;
+		len = snprintf ( buf, remaining, " %s",
+		      mb2->image->cmdline ) + 1;
+		cmdline->size += len;
 	}
 
-	DBGC ( image, "MULTIBOOT2 %p cmdline: %s\n", image, cmdline->string );
-
-	cmdline->size += len;
-	return cmdline->size;
-}
-
-/**
- * FIXME Load raw multiboot image into memory
- */
-static int multiboot2_load ( struct image *image, struct multiboot2_header_info *hdr,
-			     struct multiboot2_tags *tags, physaddr_t *load,
-			     physaddr_t *entry, physaddr_t *max ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	EFI_PHYSICAL_ADDRESS efi_pa;
-	physaddr_t phys_start;
-	EFI_STATUS efirc;
-	userptr_t buffer;
-	size_t offset;
-	size_t filesz;
-	size_t memsz;
-	size_t doffset;
-
-	offset = ( hdr->offset - tags->addr.header_addr + tags->addr.load_addr );
-
-	// FIXME: multiboot1 has "image->len - offset" ???
-	filesz = ( tags->addr.load_end_addr ?
-		   ( tags->addr.load_end_addr - tags->addr.load_addr ) :
-		   image->len  );
-
-	memsz = ( tags->addr.bss_end_addr ?
-		  ( tags->addr.bss_end_addr - tags->addr.load_addr ) : filesz );
-
-	phys_start = tags->addr.load_addr & ~EFI_PAGE_MASK;
-	buffer = phys_to_user ( phys_start );
-
-	doffset = tags->addr.load_addr & EFI_PAGE_MASK;
-
-	memsz += doffset;
-
-	efi_pa = phys_start;
-
-	DBGC ( image, "MULTIBOOT2 %s: buffer 0x%lx:0x%zx "
-	       "filesz 0x%zx memsz 0x%zx file offset 0x%zx\n",
-	       __func__, buffer, doffset, filesz, memsz, offset );
-
-	efirc = bs->AllocatePages ( AllocateAddress, EfiLoaderData,
-				    EFI_SIZE_TO_PAGES ( memsz ), &efi_pa );
-
-	if (efirc != 0) {
-		printf ( "Failed to allocate pages for kernel (%d) "
-			 "pa: 0x%llx size: 0x%zx\n", (int) efirc,
-			 efi_pa, memsz );
-		return -EEFI ( efirc );
-	}
-
-	memcpy_user ( buffer, doffset, image->data, offset, filesz );
-	memset_user ( buffer, filesz, 0, (memsz - filesz) );
-
-	// FIXME: move all this into struct
-
-	*load = tags->addr.load_addr;
-	*max = ( tags->addr.load_addr + memsz );
-
-	if (tags->entry_addr_efi64_valid) {
-		*entry = tags->entry_addr_efi64;
-	} else if (tags->entry_addr_efi32_valid) {
-		*entry = tags->entry_addr_efi32;
-	} else if (tags->entry_addr_valid) {
-		*entry = tags->entry_addr;
-	} else {
-		printf("ERROR: no entry address\n");
-		return -EINVAL;
-	}
-
+	mb2->bib_offset += cmdline->size;
+	align_tag_offset ( &mb2->bib_offset );
 	return 0;
 }
 
-static size_t adjust_tag_offset(size_t offset) {
-	if ((offset & 7) != 0) {
-		return ((offset + 8) & ~7);
-	}
-	return offset;
+static int multiboot2_add_bootloader ( struct mb2 *mb2 ) {
+	struct multiboot_tag_string *bootloader = BIB_ADDR ( mb2 );
+	size_t remaining = BIB_SPACE ( mb2, sizeof ( *bootloader ) );
+	char *buf = bootloader->string;
+	size_t len;
+
+	len = snprintf ( buf, remaining, "iPXE %s", product_version ) + 1;
+
+	DBGC ( mb2->image, "MULTIBOOT2 BOOT_LOADER_NAME at 0x%zx\n",
+	       mb2->bib_offset );
+	bootloader->type = MULTIBOOT_TAG_TYPE_BOOT_LOADER_NAME;
+	bootloader->size = len + sizeof ( *bootloader );
+
+	mb2->bib_offset += bootloader->size;
+	align_tag_offset ( &mb2->bib_offset );
+	return 0;
 }
 
-/**
- * Add multiboot modules
- */
-static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
-	struct image *module_image;
+static int multiboot2_add_modules ( struct mb2 * mb2 ) {
 	struct multiboot_tag_module *module;
-	char *buf;
+	struct image *module_image;
 	size_t remaining;
 	size_t len;
+	char *buf;
 
 	/* Add each image as a multiboot module */
 	for_each_image ( module_image ) {
 
 		/* Do not include kernel image itself as a module */
-		if ( module_image == image )
+		if ( module_image == mb2->image )
 			continue;
 
 		/*
@@ -476,17 +432,19 @@ static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
 		 */
 
 		/* Add module to list */
-		module = (struct multiboot_tag_module *)&mb2_bib.bib[offset];
+		DBGC ( mb2->image, "MULTIBOOT2 module %s at 0x%zx\n",
+		       module_image->name, mb2->bib_offset );
+		module = BIB_ADDR ( mb2 );
 		module->type = MULTIBOOT_TAG_TYPE_MODULE;
-		module->size = sizeof(*module);
+		module->size = sizeof ( *module );
 		module->mod_start = user_to_phys ( module_image->data, 0 );
 		module->mod_end = user_to_phys ( module_image->data, module_image->len );
 
 		buf = module->cmdline;
-		remaining = MB_MAX_BOOTINFO_SIZE - offset - sizeof(*module);
+		remaining = BIB_SPACE ( mb2, sizeof ( *module ) );
 
 		/* Copy image URI to base memory buffer as start of command line */
-		len = ( format_uri ( module_image->uri, buf, remaining ) + 1 /* NUL */ );
+		len = ( format_uri ( module_image->uri, buf, remaining ) + 1 );
 		if ( len > remaining )
 			len = remaining;
 		buf += len;
@@ -494,28 +452,27 @@ static size_t multiboot2_add_modules ( struct image *image, size_t offset ) {
 		module->size += len;
 
 		/* Copy command line to base memory buffer, if present */
-		if ( module_image->cmdline ) {
+		if ( module_image->cmdline != NULL ) {
 			buf--;
 			module->size--;
 			remaining++;
-			len = ( snprintf ( buf, remaining, " %s", module_image->cmdline ) + 1 /* NUL */ );
+			len = snprintf ( buf, remaining, " %s",
+				module_image->cmdline ) + 1;
 			if ( len > remaining )
 				len = remaining;
 			module->size += len;
 		}
 
-		offset += module->size;
-		offset = adjust_tag_offset(offset);
+		mb2->bib_offset += module->size;
+		align_tag_offset ( &mb2->bib_offset );
 
-		DBGC ( image, "MULTIBOOT2 %p module %s is [%x,%x): %s\n",
-			   image, module_image->name, module->mod_start,
-			   module->mod_end, module->cmdline );
+		DBGC ( mb2->image, "MULTIBOOT2 %p module %s is [%x,%x): %s\n",
+		       mb2->image, module_image->name, module->mod_start,
+		       module->mod_end, module->cmdline );
 	}
 
-	return offset;
+	return 0;
 }
-
-#ifdef EFIAPI
 
 #define EM_ENTRY(em, i) ((EFI_MEMORY_DESCRIPTOR *)	\
 	((em)->mmap_buf + (i) * ((em)->descr_size)))
@@ -532,7 +489,7 @@ struct efi_mmap {
 
 static EFI_STATUS get_efi_mmap ( struct efi_mmap *mp ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	UINTN size = sizeof (efi_mmap_buf);
+	UINTN size = sizeof ( efi_mmap_buf );
 	UINT32 descr_version;
 	EFI_STATUS efirc;
 	UINTN descr_size;
@@ -541,8 +498,8 @@ static EFI_STATUS get_efi_mmap ( struct efi_mmap *mp ) {
 	efirc = bs->GetMemoryMap ( &size, (EFI_MEMORY_DESCRIPTOR *)efi_mmap_buf,
 				   &key, &descr_size, &descr_version );
 
-	if (efirc != 0) {
-		printf ( "GetMemoryMap failed with %d\n", (int) efirc );
+	if ( efirc != 0 ) {
+		printf ( "GetMemoryMap failed with %d\n", (int)efirc );
 		return efirc;
 	}
 
@@ -551,13 +508,13 @@ static EFI_STATUS get_efi_mmap ( struct efi_mmap *mp ) {
 	mp->descr_size = descr_size;
 	mp->descr_version = descr_version;
 	mp->key = key;
-	return 0;
+	return EFI_SUCCESS;
 }
 
 static multiboot_uint32_t
-convert_efi_type(EFI_MEMORY_TYPE type)
+convert_efi_type ( EFI_MEMORY_TYPE type )
 {
-	switch (type) {
+	switch ( type ) {
 	case EfiReservedMemoryType:
 		return MULTIBOOT_MEMORY_RESERVED;
 
@@ -609,24 +566,24 @@ static ssize_t multiboot2_build_mmap ( struct image *image,
 	size_t nr = 0;
 	size_t i;
 
-	for (i = 0; i < em->nr_descrs; i++) {
-		EFI_MEMORY_DESCRIPTOR *d = EM_ENTRY(em, i);
-		multiboot_uint32_t mt = convert_efi_type(d->Type);
+	for ( i = 0; i < em->nr_descrs; i++ ) {
+		EFI_MEMORY_DESCRIPTOR *d = EM_ENTRY ( em, i );
+		multiboot_uint32_t mt = convert_efi_type ( d->Type );
 		struct multiboot_mmap_entry *me = &mmap[nr];
 
 		DBGC ( image, "EM[%zd]: PhysicalStart 0x%llx "
 		       "NumberOfPages %lld Type 0x%d\n", i, d->PhysicalStart,
 		       d->NumberOfPages, d->Type );
 
-		if (lastme != NULL && mt== lastme->type &&
-			d->PhysicalStart == lastme->addr + lastme->len) {
+		if ( lastme != NULL && mt== lastme->type &&
+			d->PhysicalStart == lastme->addr + lastme->len ) {
 			lastme->len += d->NumberOfPages << EFI_PAGE_SHIFT;
 			continue;
 		}
 
-		if (bufsize < (nr + 1) * sizeof (*me)) {
+		if ( bufsize < ( ++nr ) * sizeof ( *me ) ) {
 			printf ( "not enough space for mmap (%lx < %lx)\n",
-			    bufsize, (nr + 1) * sizeof(*me) );
+			    bufsize, nr * sizeof ( *me ) );
 			return -ENOMEM;
 		}
 
@@ -635,10 +592,9 @@ static ssize_t multiboot2_build_mmap ( struct image *image,
 		me->type = mt;
 		me->zero = 0;
 		lastme = me;
-		nr++;
 	}
 
-	return nr * sizeof (*mmap);
+	return nr * sizeof ( *mmap );
 }
 
 /**
@@ -647,54 +603,54 @@ static ssize_t multiboot2_build_mmap ( struct image *image,
  * least Illumos doesn't parse MULTIBOOT_TAG_TYPE_EFI_MMAP, so we must supply
  * MULTIBOOT_TAG_TYPE_MMAP as well.
  */
-static size_t multiboot2_add_mmap ( struct image *image, size_t offset ) {
-	struct multiboot_tag_efi_mmap *emt = (void *)&mb2_bib.bib[offset];
+static int multiboot2_add_mmap ( struct mb2 *mb2 ) {
+	struct multiboot_tag_efi_mmap *emt;
 	struct multiboot_tag_mmap *mt;
 	struct efi_mmap em;
 	EFI_STATUS efirc;
 	ssize_t size;
 
-	efirc = get_efi_mmap ( &em );
+	DBGC ( mb2->image, "MULTIBOOT2 EFI_MMAP at 0x%zx\n", mb2->bib_offset );
 
-	if (efirc != 0) {
-		// FIXME
-		return 0;
-        }
-
-	size = em.nr_descrs * em.descr_size;
-
+ 	emt = BIB_ADDR ( mb2 );
 	emt->type = MULTIBOOT_TAG_TYPE_EFI_MMAP;
-	emt->size = sizeof (*emt) + size;
 	emt->descr_size = em.descr_size;
 	emt->descr_vers = em.descr_version;
 
-	offset += sizeof (*emt);
+	mb2->bib_offset += sizeof ( *emt );
 
-	memcpy_user ( (userptr_t)mb2_bib.bib, offset,
+	if ( ( efirc = get_efi_mmap ( &em ) ) != 0 )
+		return -EEFI ( efirc );
+
+	size = em.nr_descrs * em.descr_size;
+
+	memcpy_user ( (userptr_t)mb2->bib, mb2->bib_offset,
 		      (userptr_t)em.mmap_buf, 0, size );
 
-	offset += size;
-	offset = adjust_tag_offset(offset);
+	emt->size = sizeof ( *emt ) + size;
+	mb2->bib_offset += size;
+	align_tag_offset ( &mb2->bib_offset );
 
-	mt = (void *)&mb2_bib.bib[offset];
+	DBGC ( mb2->image, "MULTIBOOT2 MMAP at 0x%zx\n", mb2->bib_offset );
+
+	mt = BIB_ADDR ( mb2 );
 	mt->type = MULTIBOOT_TAG_TYPE_MMAP;
-	mt->entry_size = sizeof(struct multiboot_mmap_entry);
+	mt->entry_size = sizeof ( struct multiboot_mmap_entry );
 	mt->entry_version = 0;
 
-	offset += sizeof(*mt);
+	mb2->bib_offset += sizeof ( *mt );
 
-	size = multiboot2_build_mmap ( image, &em, (void *)&mb2_bib.bib[offset],
-				       MB_MAX_BOOTINFO_SIZE - offset );
+	size = multiboot2_build_mmap ( mb2->image, &em, BIB_ADDR ( mb2 ),
+				       BIB_SPACE ( mb2, 0 ) );
 
-        if (size < 0) {
-		// FIXME
-		return 0;
-	}
+        if ( size < 0 )
+		return (int)size;
 
-	mt->size = sizeof (*mt) + size;
-	offset += size;
+	mt->size = sizeof ( *mt ) + size;
+	mb2->bib_offset += size;
+	align_tag_offset ( &mb2->bib_offset );
 
-	return offset;
+	return 0;
 }
 
 /*
@@ -706,195 +662,151 @@ static size_t multiboot2_add_mmap ( struct image *image, size_t offset ) {
  * The key is also why we need to re-get the mmap immediately before
  * ->ExitBootServices().
  */
-static void exit_boot_services ( struct image *image ) {
+static int exit_boot_services ( struct mb2 *mb2 ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	struct efi_mmap em;
 	EFI_STATUS efirc;
 	int tries = 0;
 
 again:
-	efirc = get_efi_mmap ( &em );
+	if ( ( efirc = get_efi_mmap ( &em ) ) != 0 )
+		return -EEFI ( efirc );
 
-	if (efirc != 0) {
-		// FIXME
-		return;
-        }
+	efirc = bs->ExitBootServices ( efi_image_handle, (UINTN)em.key );
 
-	efirc = bs->ExitBootServices ( efi_image_handle, (UINTN) em.key );
-
-	if (efirc == EFI_INVALID_PARAMETER && tries++ == 0)
+	if ( efirc == EFI_INVALID_PARAMETER && tries++ == 0 )
 		goto again;
 
-	if (efirc != 0) {
-		DBGC ( image, "ExitBootServices() failed with %d\n",
-		       (int) efirc );
-		//	while ( 1 ) {}
+	if ( efirc != 0 ) {
+		DBGC ( mb2->image, "ExitBootServices() failed with %d\n",
+		       (int)efirc );
+		return -EEFI ( efirc );
 	}
+
+	return 0;
 }
 
-#endif
-
-/**
- * Prepare segment for loading
- *
- * @v segment		Segment start
- * @v filesz		Size of the "allocated bytes" portion of the segment
- * @v memsz		Size of the segment
- * @ret rc		Return status code
- */
-void multiboot2_boot(uint32_t *bib, uint32_t entry) {
-#ifdef EFIAPI
+void multiboot2_boot ( uint32_t *bib, uint32_t entry ) {
 	__asm__ __volatile__ ( "push %%rbp\n\t"
-						   "call *%%rdi\n\t"
-						   "pop %%rbp\n\t"
-					   : : "a" ( MULTIBOOT2_BOOTLOADER_MAGIC ),
-						   "b" ( bib ),
-						   "D" ( entry )
-						 : "rcx", "rdx", "rsi", "memory" );
-#else
-	(void)bib;
-	(void)entry;
-#endif
+			       "call *%%rdi\n\t"
+			       "pop %%rbp\n\t"
+			       : : "a" ( MULTIBOOT2_BOOTLOADER_MAGIC ),
+                                   "b" ( bib ), "D" ( entry )
+			       : "rcx", "rdx", "rsi", "memory" );
 }
 
-/**
- * Execute multiboot2 image
- *
- * @v image		Multiboot image
- * @ret rc		Return status code
- */
 static int multiboot2_exec ( struct image *image ) {
-	struct multiboot2_header_info hdr;
-	struct multiboot2_tags mb_tags;
-	struct multiboot_tag *tag;
 	struct multiboot_tag_load_base_addr *load_base_addr_tag;
-#ifdef EFIAPI
+	struct multiboot_tag_efi64_ih *tag_efi64_ih;
 	struct multiboot_tag_efi64 *tag_efi64;
-#endif
-	uint32_t *total_size;
-	uint32_t *reserved;
-	physaddr_t load = 0;
-	physaddr_t entry = 0;
-	physaddr_t max;
-	size_t offset;
+	struct multiboot_tag *tag;
+	uint32_t *total_sizep;
 	int rc;
 
-	/* Locate multiboot2 header, if present */
-	if ( ( rc = multiboot2_find_header ( image, &hdr ) ) != 0 ) {
+	mb2.image = image;
+
+	if ( ( rc = multiboot2_find_header ( mb2.image,
+					     &mb2.image_hdr ) ) != 0 ) {
 		DBGC ( image, "MULTIBOOT2 %p has no multiboot header\n",
-			   image );
+		       image );
 		return rc;
 	}
 
-	/* Abort if we detect tags that we cannot support */
-	if ( ( rc = multiboot2_validate_tags ( image, &hdr, &mb_tags ) ) != 0 ) {
-		DBGC ( image, "MULTIBOOT2 %p contains unsupported tags\n",
-			   image );
-		return -ENOTSUP;
-	}
+	if ( ( rc = multiboot2_process_tags ( &mb2 ) ) != 0 )
+		return rc;
 
-	/* Attempt to load the image into memory of our choosing */
-	if ( ( rc = multiboot2_load ( image, &hdr, &mb_tags, &load, &entry, &max ) ) != 0) {
-		DBGC ( image, "MULTIBOOT2 %p could not load\n", image );
+	if ( ( rc = multiboot2_load ( &mb2 ) ) != 0) {
+		printf ( "MULTIBOOT2 %p: could not load (%d)\n", image, rc );
 		return rc;
 	}
 
-	/* Populate multiboot information structure */
-	offset = 0;
+	total_sizep = BIB_ADDR ( &mb2 );
+	mb2.bib_offset += sizeof ( *total_sizep );
 
-	total_size = (uint32_t *)&mb2_bib.bib[offset];
-	offset += sizeof(*total_size);
+	/* reserved field */
+	mb2.bib_offset += sizeof ( uint32_t );
 
-	reserved = (uint32_t *)&mb2_bib.bib[offset];
-	offset += sizeof(*reserved);
-
-	/* Clear out the reserved word */
-	*reserved = 0;
-
-	/* Add the load base address tag */
-	load_base_addr_tag = (struct multiboot_tag_load_base_addr *)&mb2_bib.bib[offset];
+	DBGC ( image, "MULTIBOOT2 LOAD_BASE_ADDR at 0x%zx\n", mb2.bib_offset );
+	load_base_addr_tag = BIB_ADDR ( &mb2 );
 	load_base_addr_tag->type = MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR;
-	load_base_addr_tag->size = sizeof(*load_base_addr_tag);
-	load_base_addr_tag->load_base_addr = load;
-	offset += load_base_addr_tag->size;
-	offset = adjust_tag_offset(offset);
+	load_base_addr_tag->size = sizeof ( *load_base_addr_tag );
+	load_base_addr_tag->load_base_addr = mb2.load.load_addr;
+	mb2.bib_offset += load_base_addr_tag->size;
+	align_tag_offset ( &mb2.bib_offset );
 
-#ifdef EFIAPI
-	if (mb_tags.keep_boot_services) {
-		/* Add the EFI boot services not terminated tag */
-		tag = (struct multiboot_tag *)&mb2_bib.bib[offset];
+	DBGC ( image, "MULTIBOOT2 EFI64_IH at 0x%zx\n", mb2.bib_offset );
+	tag_efi64_ih = BIB_ADDR ( &mb2 );
+	tag_efi64_ih->type = MULTIBOOT_TAG_TYPE_EFI64_IH;
+	tag_efi64_ih->size = sizeof ( *tag_efi64_ih );
+	tag_efi64_ih->pointer = (multiboot_uint64_t)efi_image_handle;
+	mb2.bib_offset += tag_efi64_ih->size;
+	align_tag_offset ( &mb2.bib_offset );
+
+	DBGC ( image, "MULTIBOOT2 EFI64 at 0x%zx\n", mb2.bib_offset );
+	tag_efi64 = BIB_ADDR ( &mb2 );
+	tag_efi64->type = MULTIBOOT_TAG_TYPE_EFI64;
+	tag_efi64->size = sizeof ( *tag_efi64 );
+	tag_efi64->pointer = (multiboot_uint64_t)efi_systab;
+	mb2.bib_offset += tag_efi64->size;
+	align_tag_offset ( &mb2.bib_offset );
+
+	if ( mb2.keep_boot_services ) {
+		DBGC ( image, "MULTIBOOT2 EFI_BS at 0x%zx\n", mb2.bib_offset );
+		tag = BIB_ADDR ( &mb2 );
 		tag->type = MULTIBOOT_TAG_TYPE_EFI_BS;
-		tag->size = sizeof(*tag);
-		offset += tag->size;
-		offset = adjust_tag_offset(offset);
+		tag->size = sizeof ( *tag );
+		mb2.bib_offset += tag->size;
+		align_tag_offset ( &mb2.bib_offset );
 	}
 
-	/* Add the EFI 64-bit image handle pointer */
-	tag_efi64 = (struct multiboot_tag_efi64 *)&mb2_bib.bib[offset];
-	tag_efi64->type = MULTIBOOT_TAG_TYPE_EFI64_IH;
-	tag_efi64->size = sizeof(*tag_efi64);
-	tag_efi64->pointer = (multiboot_uint64_t)efi_image_handle;
-	offset += tag_efi64->size;
-	offset = adjust_tag_offset(offset);
+	if ( ( rc = multiboot2_add_mmap ( &mb2 ) ) != 0 )
+		return rc;
 
-	/* Add the EFI 64-bit system table handle pointer */
-	tag_efi64 = (struct multiboot_tag_efi64 *)&mb2_bib.bib[offset];
-	tag_efi64->type = MULTIBOOT_TAG_TYPE_EFI64;
-	tag_efi64->size = sizeof(*tag_efi64);
-	tag_efi64->pointer = (multiboot_uint64_t)efi_systab;
-	offset += tag_efi64->size;
-	offset = adjust_tag_offset(offset);
+	if ( ( rc = multiboot2_add_cmdline ( &mb2 ) ) != 0 )
+		return rc;
 
-	// FIXME: = versus += really sucks
-	offset = multiboot2_add_mmap ( image, offset );
-	offset = adjust_tag_offset(offset);
-#endif
+	if ( ( rc = multiboot2_add_bootloader ( &mb2 ) ) != 0 )
+		return rc;
 
-	offset += multiboot2_add_cmdline ( image, offset );
-	offset = adjust_tag_offset(offset);
-
-	offset += multiboot2_add_bootloader ( image, offset );
-	offset = adjust_tag_offset(offset);
-
-	offset = multiboot2_add_modules ( image, offset );
-	offset = adjust_tag_offset(offset);
+	if ( ( rc = multiboot2_add_modules ( &mb2 ) ) != 0 )
+		return rc;
 
 	/* Terminate the tags */
-	tag = (struct multiboot_tag *)&mb2_bib.bib[offset];
+	tag = BIB_ADDR ( &mb2 );
 	tag->type = 0;
-	tag->size = sizeof(*tag);
-	offset += tag->size;
+	tag->size = sizeof ( *tag );
+	mb2.bib_offset += tag->size;
 
-	*total_size = offset;
+	*total_sizep = mb2.bib_offset;
 
-	DBGC ( image, "MULTIBOOT2 %p BIB is %d bytes\n", image, *total_size );
-	DBGC ( image, "MULTIBOOT2 %p starting execution at %lx\n", image, entry );
+	DBGC ( image, "MULTIBOOT2 %p BIB is %d bytes\n", image, *total_sizep );
+	DBGC ( image, "MULTIBOOT2 %p starting execution at %x\n",
+	       image, mb2.entry.addr );
 
-#ifdef EFIAPI
-	if ( !mb_tags.keep_boot_services ) {
-		exit_boot_services ( image );
+	if ( !mb2.keep_boot_services ) {
+		if ( ( rc = exit_boot_services ( &mb2 ) ) != 0 )
+			return rc;
 	} else {
 		/*
 		 * Multiboot images may not return and have no callback
 		 * interface, so shut everything down prior to booting the OS.
 		 */
-		shutdown_boot();
+		shutdown_boot ( );
 	}
-#endif
 
 	/* Jump to OS with flat physical addressing */
 
-	if ( mb_tags.entry_addr_efi64_valid ) {
-		multiboot2_boot ( total_size, entry );
+	if ( mb2.entry.type == ENTRY_EFI64 ) {
+		multiboot2_boot ( (uint32_t *)mb2.bib,
+				   (uint32_t)mb2.entry.addr );
 	} else {
-		// FIXME: efi32 not supported
+		extern void multiboot2_tramp ( uint32_t, uint64_t, uint64_t );
 
-		extern void multiboot2_tramp(uint32_t, uint64_t, uint64_t);
-
-		multiboot2_tramp ( MULTIBOOT2_BOOTLOADER_MAGIC, (uint64_t)total_size, entry );
+		multiboot2_tramp ( MULTIBOOT2_BOOTLOADER_MAGIC,
+				   (uint64_t)mb2.bib, mb2.entry.addr );
 	}
 
-	DBGC ( image, "MULTIBOOT2 %p returned\n", image );
+	DBGC ( image, "MULTIBOOT2 %p returned\n", mb2.image );
 
 	/* It isn't safe to continue after calling shutdown() */
 	while ( 1 ) {}
@@ -903,17 +815,19 @@ static int multiboot2_exec ( struct image *image ) {
 }
 
 static int multiboot2_probe ( struct image *image ) {
-	struct multiboot2_header_info hdr;
+	struct mb2_image_header hdr;
 	int rc;
 
-	/* Locate multiboot2 header, if present */
 	if ( ( rc = multiboot2_find_header ( image, &hdr ) ) != 0 ) {
 		DBGC ( image, "MULTIBOOT2 %p has no multiboot2 header\n",
 			   image );
 		return rc;
 	}
-	DBGC ( image, "MULTIBOOT2 %p found header at offset %zx with architecture %08x and header_length %d\n",
-		   image, hdr.offset, hdr.mb.architecture, hdr.mb.header_length );
+
+	DBGC ( image, "MULTIBOOT2 %p found header at offset %zx "
+	       "with architecture %08x and header_length %d\n", image,
+	       hdr.file_offset, hdr.mb.architecture, hdr.mb.header_length );
+
 	return 0;
 }
 
