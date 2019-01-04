@@ -857,11 +857,11 @@ static int multiboot2_probe ( struct image *image ) {
 
 #else /* EFIAPI */
 
-static int multiboot2_exec ( struct image *image ) {
+static int multiboot2_exec ( struct image *image __unused ) {
 	return -ENOTSUP;
 }
 
-static int multiboot2_probe ( struct image *image ) {
+static int multiboot2_probe ( struct image *image __unused ) {
 	return -ENOEXEC;
 }
 

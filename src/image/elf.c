@@ -85,7 +85,7 @@ static int elf_load_segment ( struct image *image, Elf_Phdr *phdr,
 static int elf_segment ( struct image *image, Elf_Ehdr *ehdr, Elf_Phdr *phdr,
 			 int ( * process ) ( struct image *image,
 					     Elf_Phdr *phdr, physaddr_t dest ),
-			 physaddr_t *load, physaddr_t *entry, physaddr_t *max ) {
+			 physaddr_t *entry, physaddr_t *max ) {
 	physaddr_t dest;
 	physaddr_t end;
 	unsigned long e_offset;
@@ -123,10 +123,6 @@ static int elf_segment ( struct image *image, Elf_Ehdr *ehdr, Elf_Phdr *phdr,
 	if ( ( rc = process ( image, phdr, dest ) ) != 0 )
 		return rc;
 
-	/* Set the load address if it hadn't been set yet */
-	if ( load && *load == 0 )
-		*load = dest;
-
 	/* Set execution address, if it lies within this segment */
 	if ( ( e_offset = ( ehdr->e_entry - dest ) ) < phdr->p_filesz ) {
 		*entry = ehdr->e_entry;
@@ -158,7 +154,7 @@ static int elf_segment ( struct image *image, Elf_Ehdr *ehdr, Elf_Phdr *phdr,
 int elf_segments ( struct image *image, Elf_Ehdr *ehdr,
 		   int ( * process ) ( struct image *image, Elf_Phdr *phdr,
 				       physaddr_t dest ),
-		   physaddr_t *load, physaddr_t *entry, physaddr_t *max ) {
+		   physaddr_t *entry, physaddr_t *max ) {
 	Elf_Phdr phdr;
 	Elf_Off phoff;
 	unsigned int phnum;
@@ -170,10 +166,6 @@ int elf_segments ( struct image *image, Elf_Ehdr *ehdr,
 	/* Invalidate entry point */
 	*entry = 0;
 
-	/* Invalidate load address */
-	if ( load )
-		*load = 0;
-
 	/* Read and process ELF program headers */
 	for ( phoff = ehdr->e_phoff , phnum = ehdr->e_phnum ; phnum ;
 	      phoff += ehdr->e_phentsize, phnum-- ) {
@@ -184,7 +176,7 @@ int elf_segments ( struct image *image, Elf_Ehdr *ehdr,
 		}
 		copy_from_user ( &phdr, image->data, phoff, sizeof ( phdr ) );
 		if ( ( rc = elf_segment ( image, ehdr, &phdr, process,
-					  load, entry, max ) ) != 0 )
+					  entry, max ) ) != 0 )
 			return rc;
 	}
 
@@ -206,7 +198,7 @@ int elf_segments ( struct image *image, Elf_Ehdr *ehdr,
  * @ret max		Maximum used address
  * @ret rc		Return status code
  */
-int elf_load ( struct image *image, physaddr_t *load, physaddr_t *entry, physaddr_t *max ) {
+int elf_load ( struct image *image, physaddr_t *entry, physaddr_t *max ) {
 	static const uint8_t e_ident[] = {
 		[EI_MAG0]	= ELFMAG0,
 		[EI_MAG1]	= ELFMAG1,
@@ -227,7 +219,7 @@ int elf_load ( struct image *image, physaddr_t *load, physaddr_t *entry, physadd
 
 	/* Load ELF segments into memory */
 	if ( ( rc = elf_segments ( image, &ehdr, elf_load_segment,
-				   load, entry, max ) ) != 0 )
+				   entry, max ) ) != 0 )
 		return rc;
 
 	return 0;

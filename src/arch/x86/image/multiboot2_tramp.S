@@ -44,6 +44,11 @@
 	.file	"multiboot2_tramp.s"
 
 /*
+ * This is really "if EFI", but that's not trivially available.
+ */
+#ifdef __x86_64__
+
+/*
  * dboot expects a 32-bit multiboot environment and to execute in 32-bit mode.
  *
  * EAX: MB magic
@@ -154,3 +159,5 @@ gdtaddr:	.long	0			/* base */
 		.long	0
 
 multiboot2_tramp_end:
+
+#endif /* __x86_64__ */
