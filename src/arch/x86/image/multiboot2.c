@@ -25,13 +25,11 @@
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /**
- * @file
- *
  * Multiboot2 image format
  *
- * An Illumos kernel is not an EFI image, and multiboot 1 cannot load under UEFI.
- * Thus, multiboot2 is the only hope we have when in UEFI. The format is similar
- * to that of multiboot1.
+ * An Illumos kernel is not an EFI image, and multiboot1 cannot load under
+ * UEFI.  Thus, multiboot2 is the only hope we have when in UEFI. The format is
+ * similar to that of multiboot1.
  *
  * This implementation is certainly incomplete - aside from the lack of legacy
  * BIOS support - but it's sufficient.
@@ -243,8 +241,6 @@ static int multiboot2_process_tag ( struct mb2 *mb2,
 		copy_from_user ( &entry_tag, mb2->image->data,
 				 offset, tag->size );
 
-		// FIXME: given both, which to prefer?
-
 		mb2->entry.type = ENTRY_EFI64;
 		mb2->entry.addr = entry_tag.entry_addr;
 		break;
@@ -270,9 +266,9 @@ static int multiboot2_process_tags ( struct mb2 *mb2 ) {
 	size_t offset = mb2->image_hdr.file_offset +
 			sizeof ( struct multiboot_header );
 	size_t end_offset = offset + mb2->image_hdr.mb.header_length;
+	int saw_entry = 0;
+	int saw_load = 0;
 	int rc;
-
-	// FIXME: validate that we saw at least load address and entry addr.
 
 	while ( offset < end_offset ) {
 		struct multiboot_header_tag tag;
@@ -285,8 +281,25 @@ static int multiboot2_process_tags ( struct mb2 *mb2 ) {
 		       offset - mb2->image_hdr.file_offset,
 		       tag.type, tag.flags, tag.size );
 
-		if ( tag.type == MULTIBOOT_HEADER_TAG_END )
+		switch ( tag.type ) {
+		case MULTIBOOT_HEADER_TAG_END:
+			if (!saw_load) {
+				printf ( "%p missing ADDRESS\n", mb2->image );
+				return -ENOEXEC;
+			}
+			if (!saw_entry) {
+				printf ( "%p missing entry\n", mb2->image );
+				return -ENOEXEC;
+			}
 			return 0;
+		case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64:
+		case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS:
+			saw_entry = 1;
+			break;
+		case MULTIBOOT_HEADER_TAG_ADDRESS:
+			saw_load = 1;
+			break;
+		}
 
 		rc = multiboot2_process_tag ( mb2, &tag, offset );
 
@@ -438,12 +451,12 @@ static int multiboot2_add_modules ( struct mb2 * mb2 ) {
 		module->type = MULTIBOOT_TAG_TYPE_MODULE;
 		module->size = sizeof ( *module );
 		module->mod_start = user_to_phys ( module_image->data, 0 );
-		module->mod_end = user_to_phys ( module_image->data, module_image->len );
+		module->mod_end = user_to_phys ( module_image->data,
+						 module_image->len );
 
 		buf = module->cmdline;
 		remaining = BIB_SPACE ( mb2, sizeof ( *module ) );
 
-		/* Copy image URI to base memory buffer as start of command line */
 		len = ( format_uri ( module_image->uri, buf, remaining ) + 1 );
 		if ( len > remaining )
 			len = remaining;
