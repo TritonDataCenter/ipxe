@@ -717,7 +717,7 @@ again:
 	return 0;
 }
 
-void multiboot2_boot ( uint32_t *bib, uint32_t entry ) {
+void multiboot2_efi64_entry ( uint32_t *bib, uint32_t entry ) {
 	__asm__ __volatile__ ( "push %%rbp\n\t"
 			       "call *%%rdi\n\t"
 			       "pop %%rbp\n\t"
@@ -821,12 +821,12 @@ static int multiboot2_exec ( struct image *image ) {
 	/* Jump to OS with flat physical addressing */
 
 	if ( mb2.entry.type == ENTRY_EFI64 ) {
-		multiboot2_boot ( (uint32_t *)mb2.bib,
+		multiboot2_efi64_entry ( (uint32_t *)mb2.bib,
 				   (uint32_t)mb2.entry.addr );
 	} else {
-		extern void multiboot2_tramp ( uint32_t, uint64_t, uint64_t );
+		extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
 
-		multiboot2_tramp ( MULTIBOOT2_BOOTLOADER_MAGIC,
+		multiboot2_entry ( MULTIBOOT2_BOOTLOADER_MAGIC,
 				   (uint64_t)mb2.bib, mb2.entry.addr );
 	}
 

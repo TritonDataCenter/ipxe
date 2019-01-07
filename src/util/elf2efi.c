@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2009 Michael Brown <mbrown@fensystems.co.uk>.
+ * Copyright (c) 2019, Joyent, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -647,6 +648,8 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 			break;
 		case ELF_MREL ( EM_386, R_386_32 ) :
 		case ELF_MREL ( EM_ARM, R_ARM_ABS32 ) :
+		case ELF_MREL ( EM_X86_64, R_X86_64_32 ) :
+		case ELF_MREL ( EM_X86_64, R_X86_64_32S ) :
 			/* Generate a 4-byte PE relocation */
 			generate_pe_reloc ( pe_reltab, offset, 4 );
 			break;
