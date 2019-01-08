@@ -328,10 +328,12 @@ static int multiboot2_load ( struct mb2 *mb2 ) {
 	size_t filesz;
 	size_t memsz;
 
-	// FIXME: multiboot1 has "image->len - file_offset" here ???
+	file_offset = ( mb2->image_hdr.file_offset -
+			load->header_addr + load->load_addr );
+
 	filesz = ( load->load_end_addr ?
 		   ( load->load_end_addr - load->load_addr ) :
-		   mb2->image->len );
+		   mb2->image->len - file_offset );
 
 	memsz = ( load->bss_end_addr ?
 		  ( load->bss_end_addr - load->load_addr ) : filesz );
@@ -354,8 +356,6 @@ static int multiboot2_load ( struct mb2 *mb2 ) {
 	}
 
 	buffer = phys_to_user ( (physaddr_t)buf_pa );
-	file_offset = ( mb2->image_hdr.file_offset -
-			load->header_addr + load->load_addr );
 
 	DBGC ( mb2->image, "MULTIBOOT2 %s: buffer 0x%lx:0x%zx filesz 0x%zx "
 	       "memsz 0x%zx file_offset 0x%zx\n", __func__, buffer, buf_offset,
@@ -566,7 +566,6 @@ convert_efi_type ( EFI_MEMORY_TYPE type )
 	case EfiConventionalMemory:
 		return MULTIBOOT_MEMORY_AVAILABLE;
 
-	// FIXME: loader doesn't do this: why?
 	case EfiUnusableMemory:
 		return MULTIBOOT_MEMORY_BADRAM;
 
