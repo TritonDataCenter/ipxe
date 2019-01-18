@@ -65,10 +65,10 @@ multiboot2_entry:
 	lgdt	(%rax)
 
 	/* Load our new %cs. */
-	ljmp	*l2p_vector
+	ljmp	*newcs_vector
 
 	.code32
-l2p_pmode:
+newcs:
 
 	movw	$GDTSEL_DATA, %ax
 	movw	%ax, %ds
@@ -98,8 +98,8 @@ l2p_pmode:
 
 	.data
 
-l2p_vector:
-	.long	l2p_pmode, GDTSEL_CODE
+newcs_vector:
+	.long	newcs, GDTSEL_CODE
 
 	.align 16
 entry_gdt:
