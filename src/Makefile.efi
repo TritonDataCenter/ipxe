@@ -8,6 +8,8 @@ LDSCRIPT	= scripts/efi.lds
 #
 LDFLAGS		+= -q -S
 
+CFLAGS		+= -DPXE_EFI
+
 # Media types.
 #
 NON_AUTO_MEDIA	+= efi

@@ -7,12 +7,9 @@
 
 
 #define	VLAN_CMD
+#ifndef PXE_EFI
 #define	PXE_CMD
+#endif
 
 #undef	BANNER_TIMEOUT
 #define	BANNER_TIMEOUT	50
-
-#if PLATFORM == efi
-	#undef PXE_STACK
-	#undef PXE_CMD
-#endif

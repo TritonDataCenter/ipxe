@@ -26,10 +26,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
 #define GDTSEL_CODE 0x8
 #define GDTSEL_DATA 0x10
 
-/*
- * This is really "if EFI", but that's not trivially available.
- */
-#ifdef __x86_64__
+#if defined(PXE_EFI) && defined(__x86_64__)
 
 	.section ".text", "ax", @progbits
 
@@ -124,4 +121,4 @@ entry_gdtr:
 entry_gdt_base:
 	.quad 0
 
-#endif /* __x86_64__ */
+#endif /* PXE_EFI && __x86_64__ */
