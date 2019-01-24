@@ -111,15 +111,22 @@ static int multiboot2_find_header ( struct image *image,
 		if ( offset > image->len )
 			break;
 
+		size_t remaining = image->len - offset;
+
 		/* Refill buffer if applicable */
 		buf_idx = ( ( offset % sizeof ( buf ) ) / sizeof ( buf[0] ) );
 		if ( buf_idx == 0 ) {
+			bzero ( buf, sizeof ( buf ) );
 			copy_from_user ( buf, image->data, offset,
-					 sizeof ( buf ) );
+				remaining > sizeof ( buf ) ?
+				sizeof ( buf ) : remaining );
 		}
 
 		if ( buf[buf_idx] != MULTIBOOT2_HEADER_MAGIC )
 			continue;
+
+		if ( remaining < sizeof ( hdr->mb ) )
+			return -ENOSPC;
 
 		copy_from_user ( &hdr->mb, image->data, offset,
 				 sizeof ( hdr->mb ) );
@@ -609,7 +616,7 @@ static ssize_t multiboot2_build_mmap ( struct image *image,
 		       "NumberOfPages %lld Type 0x%d\n", i, d->PhysicalStart,
 		       d->NumberOfPages, d->Type );
 
-		if ( lastme != NULL && mt== lastme->type &&
+		if ( lastme != NULL && mt == lastme->type &&
 			d->PhysicalStart == lastme->addr + lastme->len ) {
 			lastme->len += d->NumberOfPages << EFI_PAGE_SHIFT;
 			continue;
@@ -634,7 +641,7 @@ static ssize_t multiboot2_build_mmap ( struct image *image,
 /**
  *
  * Supply both MMAP tag type contents.  They're duplicating information, but at
- * least Illumos doesn't parse MULTIBOOT_TAG_TYPE_EFI_MMAP, so we must supply
+ * least illumos doesn't parse MULTIBOOT_TAG_TYPE_EFI_MMAP, so we must supply
  * MULTIBOOT_TAG_TYPE_MMAP as well.
  */
 static int multiboot2_add_mmap ( struct mb2 *mb2 ) {
@@ -685,9 +692,12 @@ static int multiboot2_add_mmap ( struct mb2 *mb2 ) {
 
 /*
  * To successfully exit boot services, we must pass a non-stale mmap key.
- * However, it's possible for EVT_SIGNAL_EXIT_BOOT_SERVICES handlers to
- * themselves do allocations.  They should only be called once, so we'll try
- * twice.
+ * However, the first time we call ->ExitBootServices, this can trigger
+ * EVT_SIGNAL_EXIT_BOOT_SERVICES handlers, which themselves can do allocations
+ * and hence make the key stale.
+ *
+ * A second call will not trigger such handlers again, so trying twice should be
+ * sufficient.
  *
  * The key is also why we need to re-get the mmap immediately before
  * ->ExitBootServices().

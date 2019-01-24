@@ -5,6 +5,7 @@
 #undef	SANBOOT_PROTO_IB_SRP
 #undef	SANBOOT_PROTO_FCP
 
+#define PING_CMD
 
 #define	VLAN_CMD
 #ifndef PXE_EFI
