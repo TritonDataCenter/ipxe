@@ -520,7 +520,8 @@ static int multiboot2_add_modules ( struct mb2 * mb2 ) {
 #define EM_ENTRY(em, i) ((EFI_MEMORY_DESCRIPTOR *)	\
 	((em)->mmap_buf + (i) * ((em)->descr_size)))
 
-static char efi_mmap_buf[EFI_PAGE_SIZE];
+static char *efi_mmap_buf;
+static size_t efi_mmap_bufsize;
 
 struct efi_mmap {
 	char *mmap_buf;
@@ -532,16 +533,29 @@ struct efi_mmap {
 
 static EFI_STATUS get_efi_mmap ( struct efi_mmap *mp ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	UINTN size = sizeof ( efi_mmap_buf );
+	UINTN size = efi_mmap_bufsize;
 	UINT32 descr_version;
 	EFI_STATUS efirc;
 	UINTN descr_size;
 	UINTN key;
 
+again:
 	efirc = bs->GetMemoryMap ( &size, (EFI_MEMORY_DESCRIPTOR *)efi_mmap_buf,
 				   &key, &descr_size, &descr_version );
 
 	if ( efirc ) {
+		if ( efirc == EFI_BUFFER_TOO_SMALL ) {
+			free ( efi_mmap_buf );
+
+			if ( ( efi_mmap_buf = malloc ( size ) ) == NULL ) {
+				printf ( "Failed to alloc %llx bytes for "
+					"EFI memory map buffer\n", size );
+				return EFI_BUFFER_TOO_SMALL;
+			}
+
+			goto again;
+		}
+
 		printf ( "GetMemoryMap failed with %d\n", (int)efirc );
 		return efirc;
 	}
@@ -551,6 +565,7 @@ static EFI_STATUS get_efi_mmap ( struct efi_mmap *mp ) {
 	mp->descr_size = descr_size;
 	mp->descr_version = descr_version;
 	mp->key = key;
+
 	return EFI_SUCCESS;
 }
 
