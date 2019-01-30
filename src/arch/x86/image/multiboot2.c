@@ -374,11 +374,6 @@ static int multiboot2_load ( struct mb2 *mb2 ) {
 	       "memsz 0x%zx file_offset 0x%zx\n", __func__, buffer, buf_offset,
 	       mb2->kernel_filesz, mb2->kernel_memsz, mb2->kernel_file_offset );
 
-	memcpy_user ( buffer, buf_offset, mb2->image->data,
-		      mb2->kernel_file_offset, mb2->kernel_filesz );
-	memset_user ( buffer, buf_offset + mb2->kernel_filesz,
-		      0, ( mb2->kernel_memsz - mb2->kernel_filesz ) );
-
 	return 0;
 }
 
@@ -763,6 +758,8 @@ static int exit_boot_services ( struct mb2 *mb2 ) {
 	EFI_STATUS efirc;
 	int tries = 0;
 
+	DBGC ( mb2->image, "MULTIBOOT2 exit_boot_services ( )\n");
+
 again:
 	if ( ( efirc = get_efi_mmap ( &em ) ) != 0 )
 		return -EEFI ( efirc );
@@ -781,13 +778,33 @@ again:
 	return 0;
 }
 
-void multiboot2_efi64_entry ( uint32_t *bib, uint32_t entry ) {
+// FIXME: fold in
+static void multiboot2_efi64_entry ( uint32_t *bib, uint32_t entry ) {
 	__asm__ __volatile__ ( "push %%rbp\n\t"
 			       "call *%%rdi\n\t"
 			       "pop %%rbp\n\t"
 			       : : "a" ( MULTIBOOT2_BOOTLOADER_MAGIC ),
                                    "b" ( bib ), "D" ( entry )
 			       : "rcx", "rdx", "rsi", "memory" );
+}
+
+static void multiboot2_kernel_bounce ( struct mb2 *mb2 ) {
+
+	memcpy_user ( mb2->kernel_load_addr, 0, mb2->image->data,
+		      mb2->kernel_file_offset, mb2->kernel_filesz );
+	memset_user ( mb2->kernel_load_addr, mb2->kernel_filesz,
+		      0, ( mb2->kernel_memsz - mb2->kernel_filesz ) );
+
+	if ( mb2->kernel_entry.type == ENTRY_EFI64 ) {
+		multiboot2_efi64_entry ( (uint32_t *)mb2->bib,
+				   (uint32_t)mb2->kernel_entry.addr );
+	} else {
+		// FIXME: fold in
+		extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
+
+		multiboot2_entry ( MULTIBOOT2_BOOTLOADER_MAGIC,
+				   (uint64_t)mb2->bib, mb2->kernel_entry.addr );
+	}
 }
 
 static int multiboot2_exec ( struct image *image ) {
@@ -869,21 +886,11 @@ static int multiboot2_exec ( struct image *image ) {
 	if ( ( rc = exit_boot_services ( &mb2 ) ) != 0 )
 		return rc;
 
-	/* Jump to OS with flat physical addressing */
-
-	if ( mb2.kernel_entry.type == ENTRY_EFI64 ) {
-		multiboot2_efi64_entry ( (uint32_t *)mb2.bib,
-				   (uint32_t)mb2.kernel_entry.addr );
-	} else {
-		extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
-
-		multiboot2_entry ( MULTIBOOT2_BOOTLOADER_MAGIC,
-				   (uint64_t)mb2.bib, mb2.kernel_entry.addr );
-	}
+	multiboot2_kernel_bounce ( &mb2 );
 
 	DBGC ( image, "MULTIBOOT2 %p returned\n", mb2.image );
 
-	/* It isn't safe to continue after calling shutdown() */
+	/* It isn't safe to continue after calling exiting boot services */
 	while ( 1 ) {}
 
 	return -ECANCELED;  /* -EIMPOSSIBLE, anyone? */
