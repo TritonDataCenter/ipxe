@@ -778,15 +778,6 @@ again:
 	return 0;
 }
 
-// FIXME: fold in
-static void multiboot2_efi64_entry ( uint32_t *bib, uint32_t entry ) {
-	__asm__ __volatile__ ( "push %%rbp\n\t"
-			       "call *%%rdi\n\t"
-			       "pop %%rbp\n\t"
-			       : : "a" ( MULTIBOOT2_BOOTLOADER_MAGIC ),
-                                   "b" ( bib ), "D" ( entry )
-			       : "rcx", "rdx", "rsi", "memory" );
-}
 
 static void multiboot2_kernel_bounce ( struct mb2 *mb2 ) {
 
@@ -796,8 +787,13 @@ static void multiboot2_kernel_bounce ( struct mb2 *mb2 ) {
 		      0, ( mb2->kernel_memsz - mb2->kernel_filesz ) );
 
 	if ( mb2->kernel_entry.type == ENTRY_EFI64 ) {
-		multiboot2_efi64_entry ( (uint32_t *)mb2->bib,
-				   (uint32_t)mb2->kernel_entry.addr );
+		__asm__ __volatile__ ( "push %%rbp\n\t"
+				       "call *%%rdi\n\t"
+				       "pop %%rbp\n\t" : :
+				       "a" ( MULTIBOOT2_BOOTLOADER_MAGIC ),
+	                               "b" ( (uint32_t *)mb2->bib ),
+				       "D" ( (uint32_t)mb2->kernel_entry.addr )
+				       : "rcx", "rdx", "rsi", "memory" );
 	} else {
 		// FIXME: fold in
 		extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
