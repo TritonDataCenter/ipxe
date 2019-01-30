@@ -78,10 +78,12 @@ struct mb2 {
 	struct image *image;
 	struct mb2_image_header image_hdr;
 
-	/* Tag information from image. */
-
-	struct multiboot_header_tag_address load;
-	struct mb2_entry entry;
+	/* Kernel information. */
+	struct mb2_entry kernel_entry;
+	uint32_t kernel_load_addr;
+	size_t kernel_file_offset;
+	size_t kernel_filesz;
+	size_t kernel_memsz;
 
 	union {
 		uint64_t bib_align;
@@ -202,26 +204,44 @@ static int multiboot2_process_tag ( struct mb2 *mb2,
 		break;
 	}
 
-	case MULTIBOOT_HEADER_TAG_ADDRESS:
+	case MULTIBOOT_HEADER_TAG_ADDRESS: {
+		struct multiboot_header_tag_address load;
 
-		copy_from_user ( &mb2->load, mb2->image->data,
-				 offset, tag->size );
+		if ( tag->size != sizeof ( load ) ) {
+			printf ( "invalid address tag size %x\n", tag->size );
+			return -EINVAL;
+		}
+
+		copy_from_user ( &load, mb2->image->data, offset, tag->size );
 
 		DBGC ( mb2->image, "address tag: header_addr 0x%x, "
-		    "load_addr 0x%x, load_end_addr 0x%x "
-		    "bss_end_addr 0x%x\n", mb2->load.header_addr,
-		    mb2->load.load_addr, mb2->load.load_end_addr,
-		    mb2->load.bss_end_addr );
-		break;
+		       "load_addr 0x%x, load_end_addr 0x%x "
+		       "bss_end_addr 0x%x\n", load.header_addr,
+		       load.load_addr, load.load_end_addr, load.bss_end_addr );
 
-	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS: {
+		mb2->kernel_load_addr = load.load_addr;
+
+		mb2->kernel_file_offset = ( mb2->image_hdr.file_offset -
+			load.header_addr + mb2->kernel_load_addr );
+
+		mb2->kernel_filesz = ( load.load_end_addr ?
+		   ( load.load_end_addr - mb2->kernel_load_addr ) :
+		   mb2->image->len - mb2->kernel_file_offset );
+
+		mb2->kernel_memsz = ( load.bss_end_addr ?
+		  ( load.bss_end_addr - mb2->kernel_load_addr ) :
+		  mb2->kernel_filesz );
+
+		break;
+	}
+
+	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS:
 		copy_from_user ( &entry_tag, mb2->image->data,
 				 offset, tag->size );
 
-		mb2->entry.type = ENTRY_I386;
-		mb2->entry.addr = entry_tag.entry_addr;
+		mb2->kernel_entry.type = ENTRY_I386;
+		mb2->kernel_entry.addr = entry_tag.entry_addr;
 		break;
-	}
 
 	case MULTIBOOT_HEADER_TAG_CONSOLE_FLAGS:
 		/* We should be OK to safely ignore this tag. */
@@ -245,14 +265,13 @@ static int multiboot2_process_tag ( struct mb2 *mb2,
 		rc = -ENOTSUP;
 		break;
 
-	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64: {
+	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI64:
 		copy_from_user ( &entry_tag, mb2->image->data,
 				 offset, tag->size );
 
-		mb2->entry.type = ENTRY_EFI64;
-		mb2->entry.addr = entry_tag.entry_addr;
+		mb2->kernel_entry.type = ENTRY_EFI64;
+		mb2->kernel_entry.addr = entry_tag.entry_addr;
 		break;
-	}
 
 	case MULTIBOOT_HEADER_TAG_RELOCATABLE:
 		/* We will always map at the requested address. */
@@ -326,40 +345,26 @@ static int multiboot2_process_tags ( struct mb2 *mb2 ) {
  * Load the image at the requested load address.
  */
 static int multiboot2_load ( struct mb2 *mb2 ) {
-	struct multiboot_header_tag_address *load = &mb2->load;
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	EFI_PHYSICAL_ADDRESS buf_pa;
-	size_t file_offset;
-	size_t buf_offset;
 	EFI_STATUS efirc;
 	userptr_t buffer;
-	size_t filesz;
-	size_t memsz;
-
-	file_offset = ( mb2->image_hdr.file_offset -
-			load->header_addr + load->load_addr );
-
-	filesz = ( load->load_end_addr ?
-		   ( load->load_end_addr - load->load_addr ) :
-		   mb2->image->len - file_offset );
-
-	memsz = ( load->bss_end_addr ?
-		  ( load->bss_end_addr - load->load_addr ) : filesz );
+	size_t buf_offset;
 
 	/*
 	 * Our buffer must be page-aligned.
 	 */
-	buf_pa = load->load_addr & ~EFI_PAGE_MASK;
-	buf_offset = load->load_addr & EFI_PAGE_MASK;
+	buf_pa = mb2->kernel_load_addr & ~EFI_PAGE_MASK;
+	buf_offset = mb2->kernel_load_addr & EFI_PAGE_MASK;
 
 	efirc = bs->AllocatePages ( AllocateAddress, EfiLoaderData,
-				    EFI_SIZE_TO_PAGES ( memsz + buf_offset ),
-				    &buf_pa );
+				    EFI_SIZE_TO_PAGES ( mb2->kernel_memsz +
+							buf_offset ), &buf_pa );
 
 	if ( efirc ) {
 		printf ( "Failed to allocate pages for kernel (%d) "
 			 "pa: 0x%llx size: 0x%zx\n", (int)efirc,
-			 buf_pa, memsz + buf_offset );
+			 buf_pa, mb2->kernel_memsz + buf_offset );
 		return -EEFI ( efirc );
 	}
 
@@ -367,11 +372,12 @@ static int multiboot2_load ( struct mb2 *mb2 ) {
 
 	DBGC ( mb2->image, "MULTIBOOT2 %s: buffer 0x%lx:0x%zx filesz 0x%zx "
 	       "memsz 0x%zx file_offset 0x%zx\n", __func__, buffer, buf_offset,
-	       filesz, memsz, file_offset );
+	       mb2->kernel_filesz, mb2->kernel_memsz, mb2->kernel_file_offset );
 
-	memcpy_user ( buffer, buf_offset,
-		      mb2->image->data, file_offset, filesz );
-	memset_user ( buffer, buf_offset + filesz, 0, ( memsz - filesz ) );
+	memcpy_user ( buffer, buf_offset, mb2->image->data,
+		      mb2->kernel_file_offset, mb2->kernel_filesz );
+	memset_user ( buffer, buf_offset + mb2->kernel_filesz,
+		      0, ( mb2->kernel_memsz - mb2->kernel_filesz ) );
 
 	return 0;
 }
@@ -613,7 +619,8 @@ convert_efi_type ( EFI_MEMORY_TYPE type )
  *
  * Convert an EFI mmap into a traditional multiboot structure.  As the types
  * are less specific, we will merge adjacent ranges that have the same multiboot
- * type.
+ * type. We explicitly mark things such as EfiBootServicesCode as available,
+ * because they will be post-ExitBootServices().
  */
 static ssize_t multiboot2_build_mmap ( struct image *image,
 				       struct efi_mmap *em,
@@ -708,7 +715,7 @@ static int multiboot2_add_mmap ( struct mb2 *mb2 ) {
 
 /*
  * To successfully exit boot services, we must pass a non-stale mmap key.
- * However, the first time we call ->ExitBootServices, this can trigger
+ * However, the first time we call ->ExitBootServices(), this can trigger
  * EVT_SIGNAL_EXIT_BOOT_SERVICES handlers, which themselves can do allocations
  * and hence make the key stale.
  *
@@ -786,7 +793,7 @@ static int multiboot2_exec ( struct image *image ) {
 	       MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR,
 	       sizeof ( *load_tag ) ) ) == NULL )
 		return -ENOSPC;
-	load_tag->load_base_addr = mb2.load.load_addr;
+	load_tag->load_base_addr = mb2.kernel_load_addr;
 	bib_close_tag ( &mb2, load_tag );
 
 	if ( ( efi64_ih_tag = bib_open_tag ( &mb2, MULTIBOOT_TAG_TYPE_EFI64_IH,
@@ -822,21 +829,21 @@ static int multiboot2_exec ( struct image *image ) {
 
 	DBGC ( image, "MULTIBOOT2 %p BIB is %d bytes\n", image, *total_sizep );
 	DBGC ( image, "MULTIBOOT2 %p starting execution at %x\n",
-	       image, mb2.entry.addr );
+	       image, mb2.kernel_entry.addr );
 
 	if ( ( rc = exit_boot_services ( &mb2 ) ) != 0 )
 		return rc;
 
 	/* Jump to OS with flat physical addressing */
 
-	if ( mb2.entry.type == ENTRY_EFI64 ) {
+	if ( mb2.kernel_entry.type == ENTRY_EFI64 ) {
 		multiboot2_efi64_entry ( (uint32_t *)mb2.bib,
-				   (uint32_t)mb2.entry.addr );
+				   (uint32_t)mb2.kernel_entry.addr );
 	} else {
 		extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
 
 		multiboot2_entry ( MULTIBOOT2_BOOTLOADER_MAGIC,
-				   (uint64_t)mb2.bib, mb2.entry.addr );
+				   (uint64_t)mb2.bib, mb2.kernel_entry.addr );
 	}
 
 	DBGC ( image, "MULTIBOOT2 %p returned\n", mb2.image );
