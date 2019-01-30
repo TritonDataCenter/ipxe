@@ -38,8 +38,9 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
-#include <multiboot2.h>
 #include <strings.h>
+#include <stdbool.h>
+
 #include <ipxe/uaccess.h>
 #include <ipxe/image.h>
 #include <ipxe/segment.h>
@@ -50,15 +51,21 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/uri.h>
 #include <ipxe/version.h>
 
+#include <multiboot2.h>
+
 FEATURE ( FEATURE_IMAGE, "MBOOT2", DHCP_EB_FEATURE_MULTIBOOT2, 1 );
 
 #ifdef EFIAPI
 
 #include <ipxe/efi/efi.h>
 
+#define P2ROUNDUP(x, align) (-(-(x) & -(align)))
+
 #define BIB_MAX_SIZE 4096
 #define	BIB_ADDR(mb2) ((void *)&((mb2)->bib[(mb2)->bib_offset]))
 #define BIB_REMAINING(mb2) (BIB_MAX_SIZE - (mb2)->bib_offset)
+
+#define	MB2_STACK_OFF (EFI_PAGE_SIZE * 2)
 
 struct mb2_image_header {
 	struct multiboot_header mb;
@@ -82,6 +89,7 @@ struct mb2 {
 	struct mb2_entry kernel_entry;
 	uint32_t kernel_load_addr;
 	size_t kernel_file_offset;
+	userptr_t kernel_image;
 	size_t kernel_filesz;
 	size_t kernel_memsz;
 
@@ -91,9 +99,12 @@ struct mb2 {
 	};
 
 	size_t bib_offset;
+
+	void *multiboot2_stack;
 };
 
-struct mb2 mb2;
+extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
+static void multiboot2_bounce ( struct mb2 * );
 
 static int multiboot2_find_header ( struct image *image,
 				    struct mb2_image_header *hdr ) {
@@ -232,6 +243,7 @@ static int multiboot2_process_tag ( struct mb2 *mb2,
 		  ( load.bss_end_addr - mb2->kernel_load_addr ) :
 		  mb2->kernel_filesz );
 
+		mb2->kernel_image = mb2->image->data;
 		break;
 	}
 
@@ -672,6 +684,15 @@ static int multiboot2_add_mmap ( struct mb2 *mb2 ) {
 	return 0;
 }
 
+static bool overlaps ( size_t s1, size_t e1, size_t s2, size_t e2 ) {
+	return s1 < e2 && e1 >= s2;
+}
+
+/*
+ * We've been requested to map the kernel at a certain fixed address.  If we
+ * find that something will still be in use after exiting boot services, then
+ * there's nothing we can do.
+ */
 static int multiboot2_check_mmap ( struct mb2 *mb2 ) {
 	size_t kern_start = mb2->kernel_load_addr;
 	size_t kern_end = mb2->kernel_load_addr + mb2->kernel_memsz;
@@ -692,12 +713,42 @@ static int multiboot2_check_mmap ( struct mb2 *mb2 ) {
 		if (mt == MULTIBOOT_MEMORY_AVAILABLE)
 			continue;
 
-		if ( ! ( kern_start < mm_end && kern_end >= mm_start ) )
+		if ( ! ( overlaps ( kern_start, kern_end, mm_start, mm_end ) ) )
 			continue;
 
-		printf ( "EFI map entry 0x%zx-0x%zx (type %d) intersects "
-			 "requested kernel mapping 0x%zx-0x%zx\n",
-			 mm_start, mm_end, d->Type, kern_start, kern_end );
+		printf ( "EFI map entry 0x%zx-0x%zx (type %d) overlaps "
+			 "kernel map 0x%zx-0x%zx\n", mm_start, mm_end, d->Type,
+			 kern_start, kern_end );
+		return -ENOSPC;
+	}
+
+
+	/*
+	 * These are (hopefully) less likely, but paranoia here is a good idea.
+	 */
+
+	if ( overlaps ( kern_start, kern_end, mb2->kernel_image,
+			mb2->kernel_image + mb2->kernel_memsz ) ) {
+		printf ( "Kernel image 0x%zx-0x%zx overlaps "
+			 "kernel map 0x%zx-0x%zx\n", mb2->kernel_image,
+			 mb2->kernel_image + mb2->kernel_memsz,
+			 kern_start, kern_end );
+		return -ENOSPC;
+	}
+
+	if ( overlaps ( kern_start, kern_end, (intptr_t)multiboot2_entry,
+			(intptr_t)multiboot2_entry + EFI_PAGE_SIZE ) ) {
+		printf ( "multiboot2_entry 0x%p overlaps "
+			 "kernel map 0x%zx-0x%zx\n", multiboot2_entry,
+			 kern_start, kern_end );
+		return -ENOSPC;
+	}
+
+	if ( overlaps ( kern_start, kern_end, (intptr_t)multiboot2_bounce,
+			(intptr_t)multiboot2_bounce + EFI_PAGE_SIZE ) ) {
+		printf ( "multiboot2_bounce 0x%p overlaps "
+			 "kernel map 0x%zx-0x%zx\n", multiboot2_bounce,
+			 kern_start, kern_end );
 		return -ENOSPC;
 	}
 
@@ -742,15 +793,37 @@ again:
 	return 0;
 }
 
+/*
+ * We need to copy the kernel image into the requested load address.  We've
+ * already exited boot services, so we know we're OK to use that region if
+ * it was previously EfiBootServicesCode/Data.  We've also already checked
+ * that it's not used by runtime services etc.
+ *
+ * However, it could still be in use by iPXE itself!  So we've made sure that by
+ * now we are executing code held in the bounce buffer, and only referencing
+ * memory from the same buffer - excepting the kernel image. Thus, the memmove()
+ * / memset() below won't pull the rug from under us.
+ *
+ * FIXME: do we need a stack?
+ */
+static void multiboot2_bounce ( struct mb2 *mb2 ) {
+	char *load_addr = (char *)(intptr_t) mb2->kernel_load_addr;
+	size_t i;
 
-static void multiboot2_kernel_bounce ( struct mb2 *mb2 ) {
+	/*
+	 * Not so great, but iPXE's memcpy() does this anyway...
+	 */
+	for ( i = 0; i < mb2->kernel_filesz; i++ ) {
+		load_addr[i] = ( (char *)mb2->kernel_image )
+			[mb2->kernel_file_offset + i];
+	}
 
-	memmove_user ( mb2->kernel_load_addr, 0, mb2->image->data,
-		      mb2->kernel_file_offset, mb2->kernel_filesz );
-	memset_user ( mb2->kernel_load_addr, mb2->kernel_filesz,
-		      0, ( mb2->kernel_memsz - mb2->kernel_filesz ) );
+	for ( i = 0; i < mb2->kernel_memsz - mb2->kernel_filesz; i++ ) {
+		load_addr[mb2->kernel_filesz + i] = '\0';
+	}
 
 	if ( mb2->kernel_entry.type == ENTRY_EFI64 ) {
+		// FIXME: uses the stack
 		__asm__ __volatile__ ( "push %%rbp\n\t"
 				       "call *%%rdi\n\t"
 				       "pop %%rbp\n\t" : :
@@ -759,15 +832,46 @@ static void multiboot2_kernel_bounce ( struct mb2 *mb2 ) {
 				       "D" ( (uint32_t)mb2->kernel_entry.addr )
 				       : "rcx", "rdx", "rsi", "memory" );
 	} else {
-		// FIXME: fold in
-		extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
-
+		// FIXME: uses the stack
 		multiboot2_entry ( MULTIBOOT2_BOOTLOADER_MAGIC,
 				   (uint64_t)mb2->bib, mb2->kernel_entry.addr );
 	}
 }
 
+/*
+ * We just need a small unused region that we're definitely not going to copy
+ * the kernel over during the bounce to kernel.
+ */
+static struct mb2 *multiboot2_alloc_bounce_buffer ( struct mb2 *mb2 ) {
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_PHYSICAL_ADDRESS phys_addr = P2ROUNDUP ( mb2->kernel_load_addr,
+						     EFI_PAGE_SIZE );
+	size_t size = EFI_PAGE_SIZE * 6; // FIXME
+	int efirc;
+	char *p;
+
+	if ( ( efirc = bs->AllocatePages ( AllocateMaxAddress,
+		EfiBootServicesData, EFI_SIZE_TO_PAGES ( size ),
+		&phys_addr ) ) != 0 ) {
+		printf ( "MULTIBOOT2 could not allocate 0x%zx bytes: %s\n",
+		      size, strerror ( -EEFI ( efirc ) ) );
+		return NULL;
+	}
+
+	memcpy_user ( phys_to_user ( phys_addr), 0,
+		      (userptr_t)mb2, 0, sizeof ( *mb2 ) );
+
+	p = (char *)phys_to_user ( phys_addr );
+	mb2 = (struct mb2 *)p;
+	assert ( sizeof ( *mb2 ) < MB2_STACK_OFF );
+	mb2->multiboot2_stack = p + MB2_STACK_OFF;
+	return mb2;
+}
+
+struct mb2 init_mb2 = { 0 };
+
 static int multiboot2_exec ( struct image *image ) {
+	struct mb2 *mb2 = &init_mb2;
 	struct multiboot_tag_load_base_addr *load_tag;
 	struct multiboot_tag_efi64_ih *efi64_ih_tag;
 	struct multiboot_tag_efi64 *efi64_tag;
@@ -775,75 +879,78 @@ static int multiboot2_exec ( struct image *image ) {
 	uint32_t *total_sizep;
 	int rc;
 
-	mb2.image = image;
+	mb2->image = image;
 
-	if ( ( rc = multiboot2_find_header ( mb2.image,
-					     &mb2.image_hdr ) ) != 0 ) {
+	if ( ( rc = multiboot2_find_header ( mb2->image,
+					     &mb2->image_hdr ) ) != 0 ) {
 		DBGC ( image, "MULTIBOOT2 %p has no multiboot header\n",
 		       image );
 		return rc;
 	}
 
-	if ( ( rc = multiboot2_process_tags ( &mb2 ) ) != 0 )
+	if ( ( rc = multiboot2_process_tags ( mb2 ) ) != 0 )
 		return rc;
 
-	if ( ( rc = multiboot2_check_mmap ( &mb2 ) ) != 0 )
+	if ( ( rc = multiboot2_check_mmap ( mb2 ) ) != 0 )
 		return rc;
 
-	total_sizep = BIB_ADDR ( &mb2 );
-	mb2.bib_offset += sizeof ( *total_sizep );
+	if ( ( mb2 = multiboot2_alloc_bounce_buffer ( mb2 ) ) == NULL )
+		return -ENOMEM;
+
+	total_sizep = BIB_ADDR ( mb2 );
+	mb2->bib_offset += sizeof ( *total_sizep );
 
 	/* reserved field */
-	mb2.bib_offset += sizeof ( uint32_t );
+	mb2->bib_offset += sizeof ( uint32_t );
 
-	if ( ( load_tag = bib_open_tag ( &mb2,
+	if ( ( load_tag = bib_open_tag ( mb2,
 	       MULTIBOOT_TAG_TYPE_LOAD_BASE_ADDR,
 	       sizeof ( *load_tag ) ) ) == NULL )
 		return -ENOSPC;
-	load_tag->load_base_addr = mb2.kernel_load_addr;
-	bib_close_tag ( &mb2, load_tag );
+	load_tag->load_base_addr = mb2->kernel_load_addr;
+	bib_close_tag ( mb2, load_tag );
 
-	if ( ( efi64_ih_tag = bib_open_tag ( &mb2, MULTIBOOT_TAG_TYPE_EFI64_IH,
+	if ( ( efi64_ih_tag = bib_open_tag ( mb2, MULTIBOOT_TAG_TYPE_EFI64_IH,
 	       sizeof ( *efi64_ih_tag ) ) ) == NULL )
 		return -ENOSPC;
 	efi64_ih_tag->pointer = (multiboot_uint64_t)efi_image_handle;
-	bib_close_tag ( &mb2, efi64_ih_tag );
+	bib_close_tag ( mb2, efi64_ih_tag );
 
-	if ( ( efi64_tag = bib_open_tag ( &mb2, MULTIBOOT_TAG_TYPE_EFI64,
+	if ( ( efi64_tag = bib_open_tag ( mb2, MULTIBOOT_TAG_TYPE_EFI64,
 	       sizeof ( *efi64_tag ) ) ) == NULL )
 		return -ENOSPC;
 	efi64_tag->pointer = (multiboot_uint64_t)efi_systab;
-	bib_close_tag ( &mb2, efi64_tag );
+	bib_close_tag ( mb2, efi64_tag );
 
-	if ( ( rc = multiboot2_add_mmap ( &mb2 ) ) != 0 )
+	if ( ( rc = multiboot2_add_mmap ( mb2 ) ) != 0 )
 		return rc;
 
-	if ( ( rc = multiboot2_add_cmdline ( &mb2 ) ) != 0 )
+	if ( ( rc = multiboot2_add_cmdline ( mb2 ) ) != 0 )
 		return rc;
 
-	if ( ( rc = multiboot2_add_bootloader ( &mb2 ) ) != 0 )
+	if ( ( rc = multiboot2_add_bootloader ( mb2 ) ) != 0 )
 		return rc;
 
-	if ( ( rc = multiboot2_add_modules ( &mb2 ) ) != 0 )
+	if ( ( rc = multiboot2_add_modules ( mb2 ) ) != 0 )
 		return rc;
 
-	if ( ( tag = bib_open_tag ( &mb2, MULTIBOOT_TAG_TYPE_END,
+	if ( ( tag = bib_open_tag ( mb2, MULTIBOOT_TAG_TYPE_END,
 	       sizeof ( *tag ) ) ) == NULL )
 		return -ENOSPC;
-	bib_close_tag ( &mb2, tag );
+	bib_close_tag ( mb2, tag );
 
-	*total_sizep = mb2.bib_offset;
+	*total_sizep = mb2->bib_offset;
 
 	DBGC ( image, "MULTIBOOT2 %p BIB is %d bytes\n", image, *total_sizep );
 	DBGC ( image, "MULTIBOOT2 %p starting execution at %x\n",
-	       image, mb2.kernel_entry.addr );
+	       image, mb2->kernel_entry.addr );
 
-	if ( ( rc = exit_boot_services ( &mb2 ) ) != 0 )
+	if ( ( rc = exit_boot_services ( mb2 ) ) != 0 )
 		return rc;
 
-	multiboot2_kernel_bounce ( &mb2 );
+	multiboot2_bounce ( mb2 );
 
-	DBGC ( image, "MULTIBOOT2 %p returned\n", mb2.image );
+	DBGC ( image, "MULTIBOOT2 %p returned\n", mb2->image );
 
 	/* It isn't safe to continue after calling exiting boot services */
 	while ( 1 ) {}
