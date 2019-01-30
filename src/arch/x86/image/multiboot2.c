@@ -713,6 +713,38 @@ static int multiboot2_add_mmap ( struct mb2 *mb2 ) {
 	return 0;
 }
 
+static int multiboot2_check_mmap ( struct mb2 *mb2 ) {
+	size_t kern_start = mb2->kernel_load_addr;
+	size_t kern_end = mb2->kernel_load_addr + mb2->kernel_memsz;
+	struct efi_mmap em;
+	EFI_STATUS efirc;
+	size_t i;
+
+	if ( ( efirc = get_efi_mmap ( &em ) ) != 0 )
+		return -EEFI ( efirc );
+
+	for ( i = 0; i < em.nr_descrs; i++ ) {
+		EFI_MEMORY_DESCRIPTOR *d = EM_ENTRY ( &em, i );
+		multiboot_uint32_t mt = convert_efi_type ( d->Type );
+		size_t mm_start = d->PhysicalStart;
+		size_t mm_end = d->PhysicalStart +
+				  ( d->NumberOfPages * EFI_PAGE_SIZE );
+
+		if (mt == MULTIBOOT_MEMORY_AVAILABLE)
+			continue;
+
+		if ( ! ( kern_start < mm_end && kern_end >= mm_start ) )
+			continue;
+
+		printf ( "EFI map entry 0x%zx-0x%zx (type %d) intersects "
+			 "requested kernel mapping 0x%zx-0x%zx\n",
+			 mm_start, mm_end, d->Type, kern_start, kern_end );
+		return -ENOSPC;
+	}
+
+	return 0;
+}
+
 /*
  * To successfully exit boot services, we must pass a non-stale mmap key.
  * However, the first time we call ->ExitBootServices(), this can trigger
@@ -776,6 +808,9 @@ static int multiboot2_exec ( struct image *image ) {
 	}
 
 	if ( ( rc = multiboot2_process_tags ( &mb2 ) ) != 0 )
+		return rc;
+
+	if ( ( rc = multiboot2_check_mmap ( &mb2 ) ) != 0 )
 		return rc;
 
 	if ( ( rc = multiboot2_load ( &mb2 ) ) != 0) {
