@@ -341,42 +341,6 @@ static int multiboot2_process_tags ( struct mb2 *mb2 ) {
 	return -ENOTSUP;
 }
 
-/*
- * Load the image at the requested load address.
- */
-static int multiboot2_load ( struct mb2 *mb2 ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	EFI_PHYSICAL_ADDRESS buf_pa;
-	EFI_STATUS efirc;
-	userptr_t buffer;
-	size_t buf_offset;
-
-	/*
-	 * Our buffer must be page-aligned.
-	 */
-	buf_pa = mb2->kernel_load_addr & ~EFI_PAGE_MASK;
-	buf_offset = mb2->kernel_load_addr & EFI_PAGE_MASK;
-
-	efirc = bs->AllocatePages ( AllocateAddress, EfiLoaderData,
-				    EFI_SIZE_TO_PAGES ( mb2->kernel_memsz +
-							buf_offset ), &buf_pa );
-
-	if ( efirc ) {
-		printf ( "Failed to allocate pages for kernel (%d) "
-			 "pa: 0x%llx size: 0x%zx\n", (int)efirc,
-			 buf_pa, mb2->kernel_memsz + buf_offset );
-		return -EEFI ( efirc );
-	}
-
-	buffer = phys_to_user ( (physaddr_t)buf_pa );
-
-	DBGC ( mb2->image, "MULTIBOOT2 %s: buffer 0x%lx:0x%zx filesz 0x%zx "
-	       "memsz 0x%zx file_offset 0x%zx\n", __func__, buffer, buf_offset,
-	       mb2->kernel_filesz, mb2->kernel_memsz, mb2->kernel_file_offset );
-
-	return 0;
-}
-
 static int bib_get_space ( struct mb2 *mb2, size_t size ) {
 	if ( BIB_REMAINING( mb2 ) < size ) {
 		printf ( "%p exceeded BIB_MAX_SIZE ", mb2->image );
@@ -825,11 +789,6 @@ static int multiboot2_exec ( struct image *image ) {
 
 	if ( ( rc = multiboot2_check_mmap ( &mb2 ) ) != 0 )
 		return rc;
-
-	if ( ( rc = multiboot2_load ( &mb2 ) ) != 0) {
-		printf ( "MULTIBOOT2 %p: could not load (%d)\n", image, rc );
-		return rc;
-	}
 
 	total_sizep = BIB_ADDR ( &mb2 );
 	mb2.bib_offset += sizeof ( *total_sizep );
