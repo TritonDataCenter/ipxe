@@ -790,7 +790,7 @@ static void multiboot2_efi64_entry ( uint32_t *bib, uint32_t entry ) {
 
 static void multiboot2_kernel_bounce ( struct mb2 *mb2 ) {
 
-	memcpy_user ( mb2->kernel_load_addr, 0, mb2->image->data,
+	memmove_user ( mb2->kernel_load_addr, 0, mb2->image->data,
 		      mb2->kernel_file_offset, mb2->kernel_filesz );
 	memset_user ( mb2->kernel_load_addr, mb2->kernel_filesz,
 		      0, ( mb2->kernel_memsz - mb2->kernel_filesz ) );
