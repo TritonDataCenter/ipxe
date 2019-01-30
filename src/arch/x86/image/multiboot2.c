@@ -82,7 +82,6 @@ struct mb2 {
 
 	struct multiboot_header_tag_address load;
 	struct mb2_entry entry;
-	int keep_boot_services;
 
 	union {
 		uint64_t bib_align;
@@ -237,7 +236,8 @@ static int multiboot2_process_tag ( struct mb2 *mb2,
 		break;
 
 	case MULTIBOOT_HEADER_TAG_EFI_BS:
-		mb2->keep_boot_services = 1;
+		printf ( "Keeping boot services unsupported" );
+		rc = -ENOTSUP;
 		break;
 
 	case MULTIBOOT_HEADER_TAG_ENTRY_ADDRESS_EFI32:
@@ -801,14 +801,6 @@ static int multiboot2_exec ( struct image *image ) {
 	efi64_tag->pointer = (multiboot_uint64_t)efi_systab;
 	bib_close_tag ( &mb2, efi64_tag );
 
-	if ( mb2.keep_boot_services ) {
-		if ( ( tag = bib_open_tag ( &mb2, MULTIBOOT_TAG_TYPE_EFI_BS,
-		       sizeof ( *tag ) ) ) == NULL )
-			return -ENOSPC;
-
-		bib_close_tag ( &mb2, tag );
-	}
-
 	if ( ( rc = multiboot2_add_mmap ( &mb2 ) ) != 0 )
 		return rc;
 
@@ -832,16 +824,8 @@ static int multiboot2_exec ( struct image *image ) {
 	DBGC ( image, "MULTIBOOT2 %p starting execution at %x\n",
 	       image, mb2.entry.addr );
 
-	if ( !mb2.keep_boot_services ) {
-		if ( ( rc = exit_boot_services ( &mb2 ) ) != 0 )
-			return rc;
-	} else {
-		/*
-		 * Multiboot images may not return and have no callback
-		 * interface, so shut everything down prior to booting the OS.
-		 */
-		shutdown_boot ( );
-	}
+	if ( ( rc = exit_boot_services ( &mb2 ) ) != 0 )
+		return rc;
 
 	/* Jump to OS with flat physical addressing */
 
