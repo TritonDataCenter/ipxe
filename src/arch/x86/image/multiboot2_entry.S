@@ -93,6 +93,19 @@ newcs:
 	movl	%edi, %eax
 	jmp	*%esi
 
+	/*
+	 * %rdi -> struct mb2 *
+	 * %rsi -> stack pointer to switch to
+	 * %rdx -> &multiboot2_enter_kernel
+	 */
+	.align 16
+	.code64
+	.globl multiboot2_bounce
+
+multiboot2_bounce:
+	movq	%rsi, %rsp
+	jmp	*%rdx
+
 	.data
 
 newcs_vector:

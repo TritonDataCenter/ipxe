@@ -103,8 +103,10 @@ struct mb2 {
 	void *multiboot2_stack;
 };
 
+extern void multiboot2_bounce ( struct mb2 *, void *,
+				void (*fp)( struct mb2 * ) );
 extern void multiboot2_entry ( uint32_t, uint64_t, uint64_t );
-static void multiboot2_bounce ( struct mb2 * );
+static void multiboot2_enter_kernel ( struct mb2 * );
 
 static int multiboot2_find_header ( struct image *image,
 				    struct mb2_image_header *hdr ) {
@@ -591,7 +593,7 @@ convert_efi_type ( EFI_MEMORY_TYPE type )
  * Convert an EFI mmap into a traditional multiboot structure.  As the types
  * are less specific, we will merge adjacent ranges that have the same multiboot
  * type. We explicitly mark things such as EfiBootServicesCode as available,
- * because they will be post-ExitBootServices().
+ * because they will be, post-ExitBootServices().
  */
 static ssize_t multiboot2_build_mmap ( struct image *image,
 				       struct efi_mmap *em,
@@ -693,7 +695,7 @@ static int multiboot2_check_mmap ( struct mb2 *mb2 ) {
 		size_t mm_end = d->PhysicalStart +
 				  ( d->NumberOfPages * EFI_PAGE_SIZE );
 
-		if (mt == MULTIBOOT_MEMORY_AVAILABLE)
+		if ( mt == MULTIBOOT_MEMORY_AVAILABLE )
 			continue;
 
 		if ( ! ( overlaps ( kern_start, kern_end, mm_start, mm_end ) ) )
@@ -708,6 +710,9 @@ static int multiboot2_check_mmap ( struct mb2 *mb2 ) {
 
 	/*
 	 * These are (hopefully) less likely, but paranoia here is a good idea.
+	 * If we do hit any of these, we'll have to implement more relocation
+	 * code (and somehow make sure that our code copies only have
+	 * %rip-relative relocations).
 	 */
 
 	if ( overlaps ( kern_start, kern_end, mb2->kernel_image,
@@ -727,15 +732,45 @@ static int multiboot2_check_mmap ( struct mb2 *mb2 ) {
 		return -ENOSPC;
 	}
 
-	if ( overlaps ( kern_start, kern_end, (intptr_t)multiboot2_bounce,
-			(intptr_t)multiboot2_bounce + EFI_PAGE_SIZE ) ) {
-		printf ( "multiboot2_bounce 0x%p overlaps "
-			 "kernel map 0x%zx-0x%zx\n", multiboot2_bounce,
+	if ( overlaps ( kern_start, kern_end, (intptr_t)multiboot2_enter_kernel,
+			(intptr_t)multiboot2_enter_kernel + EFI_PAGE_SIZE ) ) {
+		printf ( "multiboot2_enter_kernel 0x%p overlaps "
+			 "kernel map 0x%zx-0x%zx\n", multiboot2_enter_kernel,
 			 kern_start, kern_end );
 		return -ENOSPC;
 	}
 
 	return 0;
+}
+
+/*
+ * We just need a small unused region that we're definitely not going to copy
+ * the kernel over during the bounce to kernel.
+ */
+static struct mb2 *multiboot2_alloc_bounce_buffer ( struct mb2 *mb2 ) {
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_PHYSICAL_ADDRESS phys_addr = P2ROUNDUP ( mb2->kernel_load_addr,
+						     EFI_PAGE_SIZE );
+	size_t size = EFI_PAGE_SIZE * 3;
+	int efirc;
+	char *p;
+
+	if ( ( efirc = bs->AllocatePages ( AllocateMaxAddress,
+		EfiBootServicesData, EFI_SIZE_TO_PAGES ( size ),
+		&phys_addr ) ) != 0 ) {
+		printf ( "MULTIBOOT2 could not allocate 0x%zx bytes: %s\n",
+		      size, strerror ( -EEFI ( efirc ) ) );
+		return NULL;
+	}
+
+	memcpy_user ( phys_to_user ( phys_addr), 0,
+		      (userptr_t)mb2, 0, sizeof ( *mb2 ) );
+
+	p = (char *)phys_to_user ( phys_addr );
+	mb2 = (struct mb2 *)p;
+	assert ( sizeof ( *mb2 ) < MB2_STACK_OFF );
+	mb2->multiboot2_stack = p + MB2_STACK_OFF;
+	return mb2;
 }
 
 /*
@@ -779,17 +814,18 @@ again:
 /*
  * We need to copy the kernel image into the requested load address.  We've
  * already exited boot services, so we know we're OK to use that region if
- * it was previously EfiBootServicesCode/Data.  We've also already checked
- * that it's not used by runtime services etc.
+ * it was previously EfiBootServicesCode/Data. We've also checked that the
+ * region doesn't overlap with:
  *
- * However, it could still be in use by iPXE itself!  So we've made sure that by
- * now we are executing code held in the bounce buffer, and only referencing
- * memory from the same buffer - excepting the kernel image. Thus, the memmove()
- * / memset() below won't pull the rug from under us.
+ * - any runtime services code or data, unusable memory and the like
+ * - multiboot2_enter_kernel
+ * - multiboot2_entry
+ * - mb2->kernel_image
  *
- * FIXME: do we need a stack?
+ * Our stack, and "mb2" itself, come from our bounce buffer. Thus, we shouldn't
+ * be using anything that the relocation code below could over-write.
  */
-static void multiboot2_bounce ( struct mb2 *mb2 ) {
+static void multiboot2_enter_kernel ( struct mb2 *mb2 ) {
 	char *load_addr = (char *)(intptr_t) mb2->kernel_load_addr;
 	size_t i;
 
@@ -806,7 +842,6 @@ static void multiboot2_bounce ( struct mb2 *mb2 ) {
 	}
 
 	if ( mb2->kernel_entry.type == ENTRY_EFI64 ) {
-		// FIXME: uses the stack
 		__asm__ __volatile__ ( "push %%rbp\n\t"
 				       "call *%%rdi\n\t"
 				       "pop %%rbp\n\t" : :
@@ -815,40 +850,14 @@ static void multiboot2_bounce ( struct mb2 *mb2 ) {
 				       "D" ( (uint32_t)mb2->kernel_entry.addr )
 				       : "rcx", "rdx", "rsi", "memory" );
 	} else {
-		// FIXME: uses the stack
 		multiboot2_entry ( MULTIBOOT2_BOOTLOADER_MAGIC,
 				   (uint64_t)mb2->bib, mb2->kernel_entry.addr );
 	}
-}
 
-/*
- * We just need a small unused region that we're definitely not going to copy
- * the kernel over during the bounce to kernel.
- */
-static struct mb2 *multiboot2_alloc_bounce_buffer ( struct mb2 *mb2 ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	EFI_PHYSICAL_ADDRESS phys_addr = P2ROUNDUP ( mb2->kernel_load_addr,
-						     EFI_PAGE_SIZE );
-	size_t size = EFI_PAGE_SIZE * 6; // FIXME
-	int efirc;
-	char *p;
+	printf ( "MULTIBOOT2 entry returned !\n" );
 
-	if ( ( efirc = bs->AllocatePages ( AllocateMaxAddress,
-		EfiBootServicesData, EFI_SIZE_TO_PAGES ( size ),
-		&phys_addr ) ) != 0 ) {
-		printf ( "MULTIBOOT2 could not allocate 0x%zx bytes: %s\n",
-		      size, strerror ( -EEFI ( efirc ) ) );
-		return NULL;
+	for ( ;; ) {
 	}
-
-	memcpy_user ( phys_to_user ( phys_addr), 0,
-		      (userptr_t)mb2, 0, sizeof ( *mb2 ) );
-
-	p = (char *)phys_to_user ( phys_addr );
-	mb2 = (struct mb2 *)p;
-	assert ( sizeof ( *mb2 ) < MB2_STACK_OFF );
-	mb2->multiboot2_stack = p + MB2_STACK_OFF;
-	return mb2;
 }
 
 struct mb2 init_mb2 = { 0 };
@@ -931,12 +940,12 @@ static int multiboot2_exec ( struct image *image ) {
 	if ( ( rc = exit_boot_services ( mb2 ) ) != 0 )
 		return rc;
 
-	multiboot2_bounce ( mb2 );
-
-	DBGC ( image, "MULTIBOOT2 %p returned\n", mb2->image );
-
-	/* It isn't safe to continue after calling exiting boot services */
-	while ( 1 ) {}
+	/*
+	 * We have to bounce out and back again: GCC inline asm can't clobber
+	 * the stack pointer.
+	 */
+	multiboot2_bounce ( mb2, mb2->multiboot2_stack,
+			    multiboot2_enter_kernel );
 
 	return -ECANCELED;  /* -EIMPOSSIBLE, anyone? */
 }
