@@ -634,36 +634,19 @@ static ssize_t multiboot2_build_mmap ( struct image *image,
 
 /**
  *
- * Supply both MMAP tag type contents.  They're duplicating information, but at
- * least illumos doesn't parse MULTIBOOT_TAG_TYPE_EFI_MMAP, so we must supply
- * MULTIBOOT_TAG_TYPE_MMAP as well.
+ * Supply the MMAP tag. This is built from the EFI mmap, but we don't supply
+ * MULTIBOOT_TAG_TYPE_EFI_MMAP as well - illumos doesn't use it, and it can be
+ * significantly larger than the space we have available (e.g. 250 entries on
+ * one machine).
  */
 static int multiboot2_add_mmap ( struct mb2 *mb2 ) {
-	struct multiboot_tag_efi_mmap *etag;
 	struct multiboot_tag_mmap *tag;
 	struct efi_mmap em;
 	EFI_STATUS efirc;
 	ssize_t size;
 
-	if ( ( etag = bib_open_tag ( mb2, MULTIBOOT_TAG_TYPE_EFI_MMAP,
-	       sizeof ( *etag ) ) ) == NULL )
-		return -ENOSPC;
-
-	etag->descr_size = em.descr_size;
-	etag->descr_vers = em.descr_version;
-
 	if ( ( efirc = get_efi_mmap ( &em ) ) != 0 )
 		return -EEFI ( efirc );
-
-	size = em.nr_descrs * em.descr_size;
-
-	if ( bib_get_space ( mb2, size ) )
-		return -ENOSPC;
-
-	memcpy_user ( (userptr_t)mb2->bib, mb2->bib_offset - size,
-		      (userptr_t)em.mmap_buf, 0, size );
-
-	bib_close_tag ( mb2, etag );
 
 	if ( ( tag = bib_open_tag ( mb2, MULTIBOOT_TAG_TYPE_MMAP,
 	       sizeof ( *tag ) ) ) == NULL )
