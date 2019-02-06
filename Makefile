@@ -11,7 +11,7 @@ NAME = ipxe
 TOP :=	$(shell pwd)
 ROOT =	$(TOP)/proto
 
-RELEASE_TARBALL =	$(NAME)-$(STAMP).tgz
+RELEASE_TARBALL =	$(NAME)-$(STAMP).tar.gz
 
 # ipxe doesn't quite clean up after itself
 CLEAN_FILES += \
@@ -20,7 +20,7 @@ CLEAN_FILES += \
 	src/config/local/reboot.h \
 	src/config/local/usb.h \
 	$(ROOT) \
-	$(NAME)-*.tgz
+	$(NAME)-*.tar.gz
 
 #
 # ipxe assumes GNU without using prefixed commands.
@@ -35,7 +35,7 @@ IPXE_ENV = \
 
 CC =		/opt/local/bin/gcc
 LD =		/usr/bin/ld
-TAR =		/opt/local/bin/tar
+TAR =		/usr/bin/gtar
 MKDIR =		/usr/bin/mkdir
 MKFILE =	/usr/sbin/mkfile
 CP =		/usr/bin/cp
@@ -64,11 +64,17 @@ BOOT_ROOT =	$(ROOT)/boot
 ROOT_BOOT_BINS =	$(BOOT_BINS:%=$(BOOT_ROOT)/%)
 ROOT_BOOT =	$(ROOT_BOOT_BINS)
 
-include ./tools/mk/Makefile.defs
-
 $(BOOT_ROOT)/ipxe.lkrn :	FILEMODE = 755
 $(BOOT_ROOT)/default.ipxe :	FILEMODE = 644
 $(BOOT_ROOT)/undionly.kpxe :	FILEMODE = 644
+
+# our base image is triton-origin-multiarch-15.4.1
+BASE_IMAGE_UUID = 04a48d7d-6bb5-4e83-8c3b-e60a99e0f48f
+
+ENGBLD_USE_BUILDIMAGE = false
+ENGBLD_REQUIRE := $(shell git submodule update --init deps/eng)
+include ./deps/eng/tools/mk/Makefile.defs
+TOP ?= $(error Unable to access eng.git submodule Makefiles.)
 
 .PHONY: all
 all: src/bin/ipxe.lkrn $(EFI_TARGETS)
@@ -117,25 +123,15 @@ ipxe.clean:
 release: $(RELEASE_TARBALL)
 
 $(RELEASE_TARBALL): pkg
-	(cd $(ROOT); $(TAR) czf $(TOP)/$(RELEASE_TARBALL) .)
+	(cd $(ROOT); $(TAR) -I pigz -cf $(TOP)/$(RELEASE_TARBALL) .)
 
-publish: prepublish $(BITS_DIR)/$(NAME)/$(RELEASE_TARBALL)
-
-.PHONY: prepublish
-prepublish:
-	@if [[ -z "$(BITS_DIR)" ]]; then \
-		echo "error: 'BITS_DIR' must be set for 'publish' target"; \
+publish:
+	@if [[ -z "$(ENGBLD_BITS_DIR)" ]]; then \
+		echo "error: 'ENGBLD_BITS_DIR' must be set for 'publish' target"; \
 		exit 1; \
 	fi
-	@if [[ ! -d "$(BITS_DIR)" ]]; then \
-		echo "error: $(BITS_DIR) is not a directory"; \
-		exit 1; \
-	fi
+	mkdir -p $(ENGBLD_BITS_DIR)/ipxe
+	cp $(RELEASE_TARBALL) $(ENGBLD_BITS_DIR)/ipxe/$(RELEASE_TARBALL)
 
-$(BITS_DIR)/$(NAME)/$(RELEASE_TARBALL): $(RELEASE_TARBALL) | $(BITS_DIR)/$(NAME)
-	$(INS.file)
-
-$(BITS_DIR)/$(NAME):
-	$(INS.dir)
-
-include ./tools/mk/Makefile.targ
+include ./deps/eng/tools/mk/Makefile.deps
+include ./deps/eng/tools/mk/Makefile.targ
