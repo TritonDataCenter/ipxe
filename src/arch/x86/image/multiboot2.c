@@ -27,7 +27,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /**
  * Multiboot2 image format
  *
- * An Illumos kernel is not an EFI image, and multiboot1 cannot load under
+ * An illumos kernel is not an EFI image, and multiboot1 cannot load under
  * UEFI.  Thus, multiboot2 is the only hope we have when in UEFI. The format is
  * similar to that of multiboot1.
  *

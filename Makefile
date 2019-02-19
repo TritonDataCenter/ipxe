@@ -26,6 +26,7 @@ CLEAN_FILES += \
 # ipxe assumes GNU without using prefixed commands.
 #
 IPXE_ENV = \
+	CC=/opt/local/bin/gcc \
 	AS=/opt/local/bin/as \
 	LD=/opt/local/bin/gld \
 	AWK=/usr/bin/nawk \
@@ -33,8 +34,6 @@ IPXE_ENV = \
 	GITVERSION= \
 	V=1
 
-CC =		/opt/local/bin/gcc
-LD =		/usr/bin/ld
 TAR =		/usr/bin/gtar
 MKDIR =		/usr/bin/mkdir
 MKFILE =	/usr/sbin/mkfile
