@@ -830,7 +830,8 @@ static void multiboot2_enter_kernel ( struct mb2 *mb2 ) {
 	size_t i;
 
 	/*
-	 * Not so great, but iPXE's memcpy() does this anyway...
+	 * A lame byte-by-byte implementation, but iPXE's memcpy() does this
+	 * anyway...
 	 */
 	for ( i = 0; i < mb2->kernel_filesz; i++ ) {
 		load_addr[i] = ( (char *)mb2->kernel_image )
