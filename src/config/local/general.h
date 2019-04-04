@@ -5,10 +5,12 @@
 #undef	SANBOOT_PROTO_IB_SRP
 #undef	SANBOOT_PROTO_FCP
 
-#undef	IMAGE_BZIMAGE
+#define PING_CMD
 
 #define	VLAN_CMD
+#ifndef PXE_EFI
 #define	PXE_CMD
+#endif
 
 #undef	BANNER_TIMEOUT
 #define	BANNER_TIMEOUT	50
