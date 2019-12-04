@@ -1,4 +1,4 @@
-iPXE README File (as adapted to illumos systems)
+# iPXE README File (as adapted to illumos systems)
 
 To build:
 
@@ -26,3 +26,91 @@ systems.  This utility is used by util/genliso and util/gensdsk.  You
 will need to determine whether your use case requires these utilities.
 
 For any more detailed instructions, see http://ipxe.org
+
+## Updating
+
+Occasionally we'll want to sync with upstream, e.g., to pick up nic card
+driver updates. This documents that process.
+
+1. First you need an issue ID either in Jira or github for the sync up.
+2. Add a remote for the upstream ipxe repo if you don't already have one.
+
+        git remote add upstream https://github.com/ipxe/ipxe
+
+3. Add a remote tracking branch for the upstream repo and fetch their
+   changes.
+
+        git checkout -b upstream upstream/master
+        git fetch upstream
+
+4. Create a branch for the issue and merge from upstream.
+
+        git checkout -b <ISSUE_ID>
+        git merge upstream
+
+    Change the commit message to reflect Joyent's commit message format.
+
+5. Push the issue branch to Joyent.
+
+        git push -u origin HEAD:<branchname>
+
+    Jenkins will automatically create a build for you and push the build
+    artifacts to Manta and the experimental channel on updates.joyent.com.
+
+6. Once the jenkins build is done you'll need to update sdc-booter, so
+   cd to wherever you have a clone of that repo.
+
+        cd <wherever you keep your repos>/sdc-booter
+
+7. Again, create a branch for the issue.
+
+        git checkout -b <ISSUE_ID>
+
+8. Use the `update_ipxe` script. This will update `tftpboot/snponly.efi` and
+   `tfptboot/undionly.kpxe`. Again, commit the changes and push the branch
+   up.
+
+        ./tools/update_ipxe <ISSUE_ID>
+	git add tftpboot
+	git commit
+	git push -u origin HEAD:<branchname>
+
+    And again, Jenkins will automatically create a build and push it to
+    the experimental channel.
+
+    Note: You need to have write permission to Joyent's repo(s) for this step.
+    If you're an outside contributor push it to your own fork and open a pull
+    request.
+
+You're done. After testing, get code review, integration approval, then merge.
+
+**Note about merging:** If you are simply syncing from upstream, be sure to
+rebase and merge. If you are adding a Joyent specific change that doesn't
+exist upstream make sure to squash and merge.
+
+## Testing changes
+
+**Warning:** If there's a problem with the boot files the compute node(s) may
+not be able to boot at all. It is recomended to perform testing on hardware
+that you can access physically, or can withstand being down for an extended
+period of time in case something goes wrong.
+
+You'll need to test this on as many different hardware platforms and as many
+different configurations as you can, including virtualized hardware such as
+VMware, Linux KVM, and BHYVE. In particular, the following configurations
+need to be tested.
+
+* Booting from the USB in EFI mode
+* Booting from the USB in legacy mode
+* PXE booting from the hardware NIC and chain loading ipxe over the network
+  in EFI mode
+* PXE booting from the hardware NIC and chain loading ipxe over the network
+  in legacy mode
+* VMware (using images from
+  https://github.com/joyent/sdc-headnode/tree/master/vmware) which will chain
+  load iPXE from booter.
+
+To install the new ipxe files on an existing Triton USB, download the ipxe
+build either from Manta or updates.joyent.com. Extract the tar and copy the
+contents of the extracted boot directory to the boot directory on the USB,
+overwriting the existing files.
