@@ -224,6 +224,19 @@ version :
 
 ###############################################################################
 #
+# Predefined build shortcuts (for e.g. bin/ipxe.iso)
+
+# All drivers (excluding USB)
+#
+DRIVERS_ipxe	= $(DRIVERS_net) $(DRIVERS_infiniband) \
+		  $(DRIVERS_xen) $(DRIVERS_hyperv)
+
+# Raspberry Pi
+#
+DRIVERS_rpi	= smsc95xx lan78xx
+
+###############################################################################
+#
 # Drag in the bulk of the build system
 #
 

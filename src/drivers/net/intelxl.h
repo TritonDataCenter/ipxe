@@ -11,6 +11,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/if_ether.h>
+#include <ipxe/pcimsix.h>
 
 struct intelxl_nic;
 
@@ -19,9 +20,9 @@ struct intelxl_nic;
 
 /** Alignment
  *
- * No data structure requires greater than 128 byte alignment.
+ * No data structure requires greater than 256 byte alignment.
  */
-#define INTELXL_ALIGN 128
+#define INTELXL_ALIGN 256
 
 /******************************************************************************
  *
@@ -52,6 +53,24 @@ struct intelxl_nic;
 
 /** Admin Queue Tail Register (offset) */
 #define INTELXL_ADMIN_TAIL 0x400
+
+/** Admin queue register offsets
+ *
+ * The physical and virtual function register maps have no discernible
+ * relationship.
+ */
+struct intelxl_admin_offsets {
+	/** Base Address Low Register offset */
+	unsigned int bal;
+	/** Base Address High Register offset */
+	unsigned int bah;
+	/** Length Register offset */
+	unsigned int len;
+	/** Head Register offset */
+	unsigned int head;
+	/** Tail Register offset */
+	unsigned int tail;
+};
 
 /** Admin queue data buffer command parameters */
 struct intelxl_admin_buffer_params {
@@ -124,6 +143,20 @@ struct intelxl_admin_shutdown_params {
 
 /** Driver is unloading */
 #define INTELXL_ADMIN_SHUTDOWN_UNLOADING 0x01
+
+/** Admin queue Clear PXE Mode command */
+#define INTELXL_ADMIN_CLEAR_PXE 0x0110
+
+/** Admin queue Clear PXE Mode command parameters */
+struct intelxl_admin_clear_pxe_params {
+	/** Magic value */
+	uint8_t magic;
+	/** Reserved */
+	uint8_t reserved[15];
+} __attribute__ (( packed ));
+
+/** Clear PXE Mode magic value */
+#define INTELXL_ADMIN_CLEAR_PXE_MAGIC 0x02
 
 /** Admin queue Get Switch Configuration command */
 #define INTELXL_ADMIN_SWITCH 0x0200
@@ -271,6 +304,172 @@ struct intelxl_admin_link_params {
 /** Link is up */
 #define INTELXL_ADMIN_LINK_UP 0x01
 
+/** Admin queue Send Message to PF command */
+#define INTELXL_ADMIN_SEND_TO_PF 0x0801
+
+/** Admin queue Send Message to VF command */
+#define INTELXL_ADMIN_SEND_TO_VF 0x0802
+
+/** Admin Queue VF Reset opcode */
+#define INTELXL_ADMIN_VF_RESET 0x00000002
+
+/** Admin Queue VF Get Resources opcode */
+#define INTELXL_ADMIN_VF_GET_RESOURCES 0x00000003
+
+/** Admin Queue VF Get Resources data buffer */
+struct intelxl_admin_vf_get_resources_buffer {
+	/** Reserved */
+	uint8_t reserved_a[20];
+	/** VSI switching element ID */
+	uint16_t vsi;
+	/** Reserved */
+	uint8_t reserved_b[8];
+	/** MAC address */
+	uint8_t mac[ETH_ALEN];
+} __attribute__ (( packed ));
+
+/** Admin Queue VF Status Change Event opcode */
+#define INTELXL_ADMIN_VF_STATUS 0x00000011
+
+/** Link status change event type */
+#define INTELXL_ADMIN_VF_STATUS_LINK 0x00000001
+
+/** Link status change event data */
+struct intelxl_admin_vf_status_link {
+	/** Link speed */
+	uint32_t speed;
+	/** Link status */
+	uint8_t status;
+	/** Reserved */
+	uint8_t reserved[3];
+} __attribute__ (( packed ));
+
+/** Admin Queue VF Status Change Event data buffer */
+struct intelxl_admin_vf_status_buffer {
+	/** Event type */
+	uint32_t event;
+	/** Event data */
+	union {
+		/** Link change event data */
+		struct intelxl_admin_vf_status_link link;
+	} data;
+	/** Reserved */
+	uint8_t reserved[4];
+} __attribute__ (( packed ));
+
+/** Admin Queue VF Configure Queues opcode */
+#define INTELXL_ADMIN_VF_CONFIGURE 0x00000006
+
+/** Admin Queue VF Configure Queues data buffer */
+struct intelxl_admin_vf_configure_buffer {
+	/** VSI switching element ID */
+	uint16_t vsi;
+	/** Number of queue pairs */
+	uint16_t count;
+	/** Reserved */
+	uint8_t reserved_a[4];
+	/** Transmit queue */
+	struct {
+		/** VSI switching element ID */
+		uint16_t vsi;
+		/** Queue ID */
+		uint16_t id;
+		/** Queue count */
+		uint16_t count;
+		/** Reserved */
+		uint8_t reserved_a[2];
+		/** Base address */
+		uint64_t base;
+		/** Reserved */
+		uint8_t reserved_b[8];
+	} __attribute__ (( packed )) tx;
+	/** Receive queue */
+	struct {
+		/** VSI switching element ID */
+		uint16_t vsi;
+		/** Queue ID */
+		uint16_t id;
+		/** Queue count */
+		uint32_t count;
+		/** Reserved */
+		uint8_t reserved_a[4];
+		/** Data buffer length */
+		uint32_t len;
+		/** Maximum frame size */
+		uint32_t mfs;
+		/** Reserved */
+		uint8_t reserved_b[4];
+		/** Base address */
+		uint64_t base;
+		/** Reserved */
+		uint8_t reserved_c[8];
+	} __attribute__ (( packed )) rx;
+	/** Reserved
+	 *
+	 * This field exists only due to a bug in the PF driver's
+	 * message validation logic, which causes it to miscalculate
+	 * the expected message length.
+	 */
+	uint8_t reserved_b[64];
+} __attribute__ (( packed ));
+
+/** Admin Queue VF IRQ Map opcode */
+#define INTELXL_ADMIN_VF_IRQ_MAP 0x00000007
+
+/** Admin Queue VF IRQ Map data buffer */
+struct intelxl_admin_vf_irq_map_buffer {
+	/** Number of interrupt vectors */
+	uint16_t count;
+	/** VSI switching element ID */
+	uint16_t vsi;
+	/** Interrupt vector ID */
+	uint16_t vec;
+	/** Receive queue bitmap */
+	uint16_t rxmap;
+	/** Transmit queue bitmap */
+	uint16_t txmap;
+	/** Receive interrupt throttling index */
+	uint16_t rxitr;
+	/** Transmit interrupt throttling index */
+	uint16_t txitr;
+	/** Reserved
+	 *
+	 * This field exists only due to a bug in the PF driver's
+	 * message validation logic, which causes it to miscalculate
+	 * the expected message length.
+	 */
+	uint8_t reserved[12];
+} __attribute__ (( packed ));
+
+/** Admin Queue VF Enable Queues opcode */
+#define INTELXL_ADMIN_VF_ENABLE 0x00000008
+
+/** Admin Queue VF Disable Queues opcode */
+#define INTELXL_ADMIN_VF_DISABLE 0x00000009
+
+/** Admin Queue VF Enable/Disable Queues data buffer */
+struct intelxl_admin_vf_queues_buffer {
+	/** VSI switching element ID */
+	uint16_t vsi;
+	/** Reserved */
+	uint8_t reserved[2];
+	/** Receive queue bitmask */
+	uint32_t rx;
+	/** Transmit queue bitmask */
+	uint32_t tx;
+} __attribute__ (( packed ));
+
+/** Admin Queue VF Configure Promiscuous Mode opcode */
+#define INTELXL_ADMIN_VF_PROMISC 0x0000000e
+
+/** Admin Queue VF Configure Promiscuous Mode data buffer */
+struct intelxl_admin_vf_promisc_buffer {
+	/** VSI switching element ID */
+	uint16_t vsi;
+	/** Flags */
+	uint16_t flags;
+} __attribute__ (( packed ));
+
 /** Admin queue command parameters */
 union intelxl_admin_params {
 	/** Additional data buffer command parameters */
@@ -281,6 +480,8 @@ union intelxl_admin_params {
 	struct intelxl_admin_driver_params driver;
 	/** Shutdown command parameters */
 	struct intelxl_admin_shutdown_params shutdown;
+	/** Clear PXE Mode command parameters */
+	struct intelxl_admin_clear_pxe_params pxe;
 	/** Get Switch Configuration command parameters */
 	struct intelxl_admin_switch_params sw;
 	/** Get VSI Parameters command parameters */
@@ -301,6 +502,20 @@ union intelxl_admin_buffer {
 	struct intelxl_admin_switch_buffer sw;
 	/** Get VSI Parameters data buffer */
 	struct intelxl_admin_vsi_buffer vsi;
+	/** VF Get Resources data buffer */
+	struct intelxl_admin_vf_get_resources_buffer res;
+	/** VF Status Change Event data buffer */
+	struct intelxl_admin_vf_status_buffer stat;
+	/** VF Configure Queues data buffer */
+	struct intelxl_admin_vf_configure_buffer cfg;
+	/** VF Enable/Disable Queues data buffer */
+	struct intelxl_admin_vf_queues_buffer queues;
+	/** VF Configure Promiscuous Mode data buffer */
+	struct intelxl_admin_vf_promisc_buffer promisc;
+	/*** VF IRQ Map data buffer */
+	struct intelxl_admin_vf_irq_map_buffer irq;
+	/** Alignment padding */
+	uint8_t pad[INTELXL_ALIGN];
 } __attribute__ (( packed ));
 
 /** Admin queue descriptor */
@@ -313,10 +528,15 @@ struct intelxl_admin_descriptor {
 	uint16_t len;
 	/** Return value */
 	uint16_t ret;
-	/** Cookie */
-	uint32_t cookie;
-	/** Reserved */
-	uint32_t reserved;
+	/** Opaque cookie / VF opcode */
+	union {
+		/** Cookie */
+		uint32_t cookie;
+		/** VF opcode */
+		uint32_t vopcode;
+	};
+	/** VF return value */
+	int32_t vret;
 	/** Parameters */
 	union intelxl_admin_params params;
 } __attribute__ (( packed ));
@@ -340,25 +560,30 @@ struct intelxl_admin_descriptor {
 struct intelxl_admin {
 	/** Descriptors */
 	struct intelxl_admin_descriptor *desc;
+	/** Data buffers */
+	union intelxl_admin_buffer *buf;
 	/** Queue index */
 	unsigned int index;
 
-	/** Register block */
-	unsigned int reg;
-	/** Data buffer */
-	union intelxl_admin_buffer *buffer;
+	/** Register block base */
+	unsigned int base;
+	/** Register offsets */
+	const struct intelxl_admin_offsets *regs;
 };
 
 /**
  * Initialise admin queue
  *
  * @v admin		Admin queue
- * @v reg		Register block
+ * @v base		Register block base
+ * @v regs		Register offsets
  */
 static inline __attribute__ (( always_inline )) void
-intelxl_init_admin ( struct intelxl_admin *admin, unsigned int reg ) {
+intelxl_init_admin ( struct intelxl_admin *admin, unsigned int base,
+		     const struct intelxl_admin_offsets *regs ) {
 
-	admin->reg = reg;
+	admin->base = base;
+	admin->regs = regs;
 }
 
 /** Number of admin queue descriptors */
@@ -466,6 +691,9 @@ struct intelxl_context_rx {
 /** Receive queue data buffer length */
 #define INTELXL_CTX_RX_LEN( len ) ( (len) >> 1 )
 
+/** Use 32-byte receive descriptors */
+#define INTELXL_CTX_RX_FL_DSIZE 0x10
+
 /** Strip CRC from received packets */
 #define INTELXL_CTX_RX_FL_CRCSTRIP 0x20
 
@@ -524,6 +752,10 @@ struct intelxl_context_rx {
 /** Queue Tail Pointer Register (offset) */
 #define INTELXL_QXX_TAIL 0x8000
 
+/** Global RLAN Control 0 register */
+#define INTELXL_GLLAN_RCTL_0 0x12a500
+#define INTELXL_GLLAN_RCTL_0_PXE_MODE	0x00000001UL	/**< PXE mode */
+
 /** Transmit data descriptor */
 struct intelxl_tx_data_descriptor {
 	/** Buffer address */
@@ -569,6 +801,14 @@ struct intelxl_tx_writeback_descriptor {
 /** Transmit writeback descriptor complete */
 #define INTELXL_TX_WB_FL_DD 0x01
 
+/** Transmit descriptor */
+union intelxl_tx_descriptor {
+	/** Transmit data descriptor */
+	struct intelxl_tx_data_descriptor data;
+	/** Transmit writeback descriptor */
+	struct intelxl_tx_writeback_descriptor wb;
+};
+
 /** Receive data descriptor */
 struct intelxl_rx_data_descriptor {
 	/** Buffer address */
@@ -576,21 +816,30 @@ struct intelxl_rx_data_descriptor {
 	/** Flags */
 	uint32_t flags;
 	/** Reserved */
-	uint8_t reserved[4];
+	uint8_t reserved[20];
 } __attribute__ (( packed ));
 
 /** Receive writeback descriptor */
 struct intelxl_rx_writeback_descriptor {
 	/** Reserved */
-	uint8_t reserved[8];
+	uint8_t reserved_a[2];
+	/** VLAN tag */
+	uint16_t vlan;
+	/** Reserved */
+	uint8_t reserved_b[4];
 	/** Flags */
 	uint32_t flags;
 	/** Length */
 	uint32_t len;
+	/** Reserved */
+	uint8_t reserved_c[16];
 } __attribute__ (( packed ));
 
 /** Receive writeback descriptor complete */
 #define INTELXL_RX_WB_FL_DD 0x00000001UL
+
+/** Receive writeback descriptor VLAN tag present */
+#define INTELXL_RX_WB_FL_VLAN 0x00000004UL
 
 /** Receive writeback descriptor error */
 #define INTELXL_RX_WB_FL_RXE 0x00080000UL
@@ -599,21 +848,24 @@ struct intelxl_rx_writeback_descriptor {
 #define INTELXL_RX_WB_LEN(len) ( ( (len) >> 6 ) & 0x3fff )
 
 /** Packet descriptor */
-union intelxl_descriptor {
-	/** Transmit data descriptor */
-	struct intelxl_tx_data_descriptor tx;
-	/** Transmit writeback descriptor */
-	struct intelxl_tx_writeback_descriptor tx_wb;
+union intelxl_rx_descriptor {
 	/** Receive data descriptor */
-	struct intelxl_rx_data_descriptor rx;
+	struct intelxl_rx_data_descriptor data;
 	/** Receive writeback descriptor */
-	struct intelxl_rx_writeback_descriptor rx_wb;
+	struct intelxl_rx_writeback_descriptor wb;
 };
 
 /** Descriptor ring */
 struct intelxl_ring {
 	/** Descriptors */
-	union intelxl_descriptor *desc;
+	union {
+		/** Transmit descriptors */
+		union intelxl_tx_descriptor *tx;
+		/** Receive descriptors */
+		union intelxl_rx_descriptor *rx;
+		/** Raw data */
+		void *raw;
+	} desc;
 	/** Producer index */
 	unsigned int prod;
 	/** Consumer index */
@@ -621,6 +873,8 @@ struct intelxl_ring {
 
 	/** Register block */
 	unsigned int reg;
+	/** Tail register */
+	unsigned int tail;
 	/** Length (in bytes) */
 	size_t len;
 	/** Program queue context
@@ -636,33 +890,39 @@ struct intelxl_ring {
  *
  * @v ring		Descriptor ring
  * @v count		Number of descriptors
+ * @v len		Length of a single descriptor
  * @v context		Method to program queue context
  */
 static inline __attribute__ (( always_inline)) void
-intelxl_init_ring ( struct intelxl_ring *ring, unsigned int count,
+intelxl_init_ring ( struct intelxl_ring *ring, unsigned int count, size_t len,
 		    int ( * context ) ( struct intelxl_nic *intelxl,
 					physaddr_t address ) ) {
 
-	ring->len = ( count * sizeof ( ring->desc[0] ) );
+	ring->len = ( count * len );
 	ring->context = context;
 }
 
-/** Number of transmit descriptors */
-#define INTELXL_TX_NUM_DESC 16
+/** Number of transmit descriptors
+ *
+ * Chosen to exceed the receive ring fill level, in order to avoid
+ * running out of transmit descriptors when sending TCP ACKs.
+ */
+#define INTELXL_TX_NUM_DESC 64
 
 /** Transmit descriptor ring maximum fill level */
 #define INTELXL_TX_FILL ( INTELXL_TX_NUM_DESC - 1 )
 
 /** Number of receive descriptors
  *
- * In PXE mode (i.e. able to post single receive descriptors), 8
- * descriptors is the only permitted value covering all possible
- * numbers of PFs.
+ * Must be a multiple of 32.
  */
-#define INTELXL_RX_NUM_DESC 8
+#define INTELXL_RX_NUM_DESC 32
 
-/** Receive descriptor ring fill level */
-#define INTELXL_RX_FILL ( INTELXL_RX_NUM_DESC - 1 )
+/** Receive descriptor ring fill level
+ *
+ * Must be a multiple of 8 and greater than 8.
+ */
+#define INTELXL_RX_FILL 16
 
 /******************************************************************************
  *
@@ -673,9 +933,9 @@ intelxl_init_ring ( struct intelxl_ring *ring, unsigned int count,
 
 /** PF Interrupt Zero Dynamic Control Register */
 #define INTELXL_PFINT_DYN_CTL0 0x038480
-#define INTELXL_PFINT_DYN_CTL0_INTENA	0x00000001UL	/**< Enable */
-#define INTELXL_PFINT_DYN_CTL0_CLEARPBA	0x00000002UL	/**< Acknowledge */
-#define INTELXL_PFINT_DYN_CTL0_INTENA_MASK 0x80000000UL	/**< Ignore enable */
+#define INTELXL_INT_DYN_CTL_INTENA	0x00000001UL	/**< Enable */
+#define INTELXL_INT_DYN_CTL_CLEARPBA	0x00000002UL	/**< Acknowledge */
+#define INTELXL_INT_DYN_CTL_INTENA_MASK 0x80000000UL	/**< Ignore enable */
 
 /** PF Interrupt Zero Linked List Register */
 #define INTELXL_PFINT_LNKLST0 0x038500
@@ -773,11 +1033,26 @@ struct intelxl_nic {
 	unsigned int vsi;
 	/** Queue set handle */
 	unsigned int qset;
+	/** Interrupt control register */
+	unsigned int intr;
+	/** MSI-X capability */
+	struct pci_msix msix;
+	/** MSI-X dummy interrupt target */
+	uint32_t msg;
+	/** PCI Express capability offset */
+	unsigned int exp;
 
 	/** Admin command queue */
 	struct intelxl_admin command;
 	/** Admin event queue */
 	struct intelxl_admin event;
+
+	/** Current VF opcode */
+	unsigned int vopcode;
+	/** Current VF return value */
+	int vret;
+	/** Current VF event data buffer */
+	union intelxl_admin_buffer vbuf;
 
 	/** Transmit descriptor ring */
 	struct intelxl_ring tx;
@@ -786,5 +1061,31 @@ struct intelxl_nic {
 	/** Receive I/O buffers */
 	struct io_buffer *rx_iobuf[INTELXL_RX_NUM_DESC];
 };
+
+extern int intelxl_msix_enable ( struct intelxl_nic *intelxl,
+				 struct pci_device *pci );
+extern void intelxl_msix_disable ( struct intelxl_nic *intelxl,
+				   struct pci_device *pci );
+extern struct intelxl_admin_descriptor *
+intelxl_admin_command_descriptor ( struct intelxl_nic *intelxl );
+extern union intelxl_admin_buffer *
+intelxl_admin_command_buffer ( struct intelxl_nic *intelxl );
+extern int intelxl_admin_command ( struct intelxl_nic *intelxl );
+extern void intelxl_poll_admin ( struct net_device *netdev );
+extern int intelxl_open_admin ( struct intelxl_nic *intelxl );
+extern void intelxl_reopen_admin ( struct intelxl_nic *intelxl );
+extern void intelxl_close_admin ( struct intelxl_nic *intelxl );
+extern int intelxl_alloc_ring ( struct intelxl_nic *intelxl,
+				struct intelxl_ring *ring );
+extern void intelxl_free_ring ( struct intelxl_nic *intelxl,
+				struct intelxl_ring *ring );
+extern void intelxl_empty_rx ( struct intelxl_nic *intelxl );
+extern int intelxl_transmit ( struct net_device *netdev,
+			      struct io_buffer *iobuf );
+extern void intelxl_poll ( struct net_device *netdev );
+
+extern void intelxlvf_admin_event ( struct net_device *netdev,
+				    struct intelxl_admin_descriptor *evt,
+				    union intelxl_admin_buffer *buf );
 
 #endif /* _INTELXL_H */

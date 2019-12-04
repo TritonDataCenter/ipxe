@@ -185,6 +185,15 @@ WNST_TEST = $(CC) -Wstringop-truncation -x c -c /dev/null -o /dev/null \
 		  >/dev/null 2>&1
 WNST_FLAGS := $(shell $(WNST_TEST) && $(ECHO) '-Wno-stringop-truncation')
 WORKAROUND_CFLAGS += $(WNST_FLAGS)
+
+# gcc 9.1 generates warnings for taking address of packed member which
+# may result in an unaligned pointer value.  Inhibit the warnings.
+#
+WNAPM_TEST = $(CC) -Wno-address-of-packed-member -x c -c /dev/null \
+		   -o /dev/null >/dev/null 2>&1
+WNAPM_FLAGS := $(shell $(WNAPM_TEST) && \
+		 $(ECHO) '-Wno-address-of-packed-member')
+WORKAROUND_CFLAGS += $(WNAPM_FLAGS)
 endif
 
 # Some versions of gas choke on division operators, treating them as
@@ -445,7 +454,7 @@ endif
 CFLAGS		+= $(WORKAROUND_CFLAGS) $(EXTRA_CFLAGS)
 ASFLAGS		+= $(WORKAROUND_ASFLAGS) $(EXTRA_ASFLAGS)
 LDFLAGS		+= $(WORKAROUND_LDFLAGS) $(EXTRA_LDFLAGS)
-HOST_CFLAGS	+= $(WORKAROUND_CFLAGS) -O2 -g
+HOST_CFLAGS	+= -O2 -g
 
 # Inhibit -Werror if NO_WERROR is specified on make command line
 #
@@ -1032,11 +1041,6 @@ $(BIN)/NIC : $(AUTO_DEPS)
 	@$(ECHO) >> $@
 	@perl -ne 'chomp; print "$$1\n" if /\# NIC\t(.*)$$/' $^ >> $@
 CLEANUP		+= $(BIN)/NIC	# Doesn't match the $(BIN)/*.* pattern
-
-# Select drivers to be included in the all-drivers build
-#
-DRIVERS_ipxe	= $(DRIVERS_net) $(DRIVERS_infiniband) \
-		  $(DRIVERS_xen) $(DRIVERS_hyperv)
 
 # Analyse a target name (e.g. "bin/dfe538--prism2_pci.rom.tmp") and
 # derive the variables:
