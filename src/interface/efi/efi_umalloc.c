@@ -47,10 +47,14 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  *
  * Calling realloc() with a new size of zero is a valid way to free a
  * memory block.
+ *
+ * There is a Joyent hack here: we limit allocations to below 1Gb in the hope
+ * dboot can find space above the boot modules to do allocations on some memory
+ * layouts.  See OS-8138 for details.
  */
 static userptr_t efi_urealloc ( userptr_t old_ptr, size_t new_size ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	EFI_PHYSICAL_ADDRESS phys_addr;
+	EFI_PHYSICAL_ADDRESS phys_addr = 0x40000000UL;
 	unsigned int new_pages, old_pages;
 	userptr_t new_ptr = UNOWHERE;
 	size_t old_size;
@@ -62,7 +66,7 @@ static userptr_t efi_urealloc ( userptr_t old_ptr, size_t new_size ) {
 	 */
 	if ( new_size ) {
 		new_pages = ( EFI_SIZE_TO_PAGES ( new_size ) + 1 );
-		if ( ( efirc = bs->AllocatePages ( AllocateAnyPages,
+		if ( ( efirc = bs->AllocatePages ( AllocateMaxAddress,
 						   EfiBootServicesData,
 						   new_pages,
 						   &phys_addr ) ) != 0 ) {
