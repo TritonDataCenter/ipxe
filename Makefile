@@ -3,7 +3,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #
-# Copyright (c) 2019, Joyent, Inc.
+# Copyright 2019 Joyent, Inc.
 #
 
 NAME = ipxe
@@ -67,8 +67,8 @@ $(BOOT_ROOT)/ipxe.lkrn :	FILEMODE = 755
 $(BOOT_ROOT)/default.ipxe :	FILEMODE = 644
 $(BOOT_ROOT)/undionly.kpxe :	FILEMODE = 644
 
-# our base image is triton-origin-multiarch-15.4.1
-BASE_IMAGE_UUID = 04a48d7d-6bb5-4e83-8c3b-e60a99e0f48f
+# our base image is triton-origin-x86_64-19.4.0
+BASE_IMAGE_UUID = 59ba2e5e-976f-4e09-8aac-a4a7ef0395f5
 
 ENGBLD_USE_BUILDIMAGE = false
 ENGBLD_REQUIRE := $(shell git submodule update --init deps/eng)
