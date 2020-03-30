@@ -1,7 +1,7 @@
 /*
  * Parts copyright Michael Brown <mbrown@fensystems.co.uk>
  *
- * Copyright (c) 2019, Joyent, Inc.
+ * Copyright 2020 Joyent, Inc.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
@@ -61,8 +61,22 @@ multiboot2_entry:
 	leaq	entry_gdtr(%rip), %rax
 	lgdt	(%rax)
 
-	/* Load our new %cs. */
-	ljmp	*newcs_vector
+	/*
+	 * Load our new %cs.
+	 *
+	 * Note that originally, this was an ljmp; while this worked on many
+	 * systems, it appeared to have issues on at least VirtualBox (see
+	 * https://www.virtualbox.org/ticket/19414), so we set up on iretq frame
+	 * instead.
+	 */
+	movq	%rsp, %rax
+	pushq	$GDTSEL_DATA
+	pushq	%rax
+	pushf
+	pushq	$GDTSEL_CODE
+	lea	newcs(%rip), %rax
+	pushq	%rax
+	iretq
 
 	.code32
 newcs:
@@ -91,7 +105,9 @@ newcs:
 
 	/* %ebx still has our infop */
 	movl	%edi, %eax
+	/* off to dboot, never to return ... */
 	jmp	*%esi
+	.size	multiboot2_entry, . - multiboot2_entry
 
 	/*
 	 * %rdi -> struct mb2 *
@@ -100,18 +116,16 @@ newcs:
 	 */
 	.align 16
 	.code64
-	.globl multiboot2_bounce
 
+	.globl multiboot2_bounce
 multiboot2_bounce:
 	movq	%rsi, %rsp
 	jmp	*%rdx
-
-	.data
-
-newcs_vector:
-	.long	newcs, GDTSEL_CODE
+	.size	multiboot2_bounce, . - multiboot2_bounce
 
 	.align 16
+	.data
+
 entry_gdt:
 	/* null entry */
 	.word	0x0, 0x0
