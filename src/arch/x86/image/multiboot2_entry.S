@@ -67,7 +67,7 @@ multiboot2_entry:
 	 * Note that originally, this was an ljmp; while this worked on many
 	 * systems, it appeared to have issues on at least VirtualBox (see
 	 * https://www.virtualbox.org/ticket/19414) and KVM Linux. Instead,
-	 * we'll do an iretq instead.
+	 * we'll do an iretq.
 	 */
 	movq	%rsp, %rax
 	pushq	$GDTSEL_DATA
