@@ -31,7 +31,6 @@ IPXE_ENV = \
 	LD=/opt/local/bin/gld \
 	AWK=/usr/bin/nawk \
 	GREP=/usr/xpg4/bin/grep \
-	GITVERSION= \
 	V=1
 
 TAR =		/usr/bin/gtar
