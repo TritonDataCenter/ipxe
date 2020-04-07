@@ -1,6 +1,6 @@
 /*
  * Copyright (C) 2016 Star Lab Corp.
- * Copyright (c) 2019, Joyent, Inc.
+ * Copyright 2020 Joyent, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -608,9 +608,10 @@ static ssize_t multiboot2_build_mmap ( struct image *image,
 		multiboot_uint32_t mt = convert_efi_type ( d->Type );
 		struct multiboot_mmap_entry *me = &mmap[nr];
 
-		DBGC ( image, "EM[%zd]: PhysicalStart 0x%llx "
-		       "NumberOfPages %lld Type 0x%d\n", i, d->PhysicalStart,
-		       d->NumberOfPages, d->Type );
+		DBGC ( image, "EM[%zd]: 0x%llx-0x%llx Type 0x%d\n", i,
+			d->PhysicalStart,
+			d->PhysicalStart + EFI_PAGE_SIZE * d->NumberOfPages,
+			d->Type );
 
 		if ( lastme != NULL && mt == lastme->type &&
 			d->PhysicalStart == lastme->addr + lastme->len ) {
@@ -745,7 +746,10 @@ static int multiboot2_check_mmap ( struct mb2 *mb2 ) {
 
 /*
  * We just need a small unused region that we're definitely not going to copy
- * the kernel over during the bounce to kernel.
+ * the kernel over during the bounce to kernel. Unfortunately, on some Dell
+ * systems, boot services allocate all of the region below the kernel. In this
+ * case, we'll try a less bounded allocation, in the hope that we're not going
+ * to later clash with our kernel load area. If we do, we'll error out shortly.
  */
 static struct mb2 *multiboot2_alloc_bounce_buffer ( struct mb2 *mb2 ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
@@ -756,13 +760,22 @@ static struct mb2 *multiboot2_alloc_bounce_buffer ( struct mb2 *mb2 ) {
 	char *p;
 
 	if ( ( efirc = bs->AllocatePages ( AllocateMaxAddress,
-		EfiBootServicesData, EFI_SIZE_TO_PAGES ( size ),
+		EfiLoaderData, EFI_SIZE_TO_PAGES ( size ),
 		&phys_addr ) ) != 0 ) {
-		printf ( "MULTIBOOT2 could not allocate 0x%zx bytes: %s\n",
-		      size, strerror ( -EEFI ( efirc ) ) );
-		return NULL;
+			/* See efi_urealloc() hack. */
+			phys_addr = 0x40000000UL;
+		if ( ( efirc = bs->AllocatePages ( AllocateMaxAddress,
+			EfiLoaderData, EFI_SIZE_TO_PAGES ( size ),
+			&phys_addr ) ) != 0 ) {
+			printf ( "MULTIBOOT2 could not allocate bounce "
+			         "buffer: %s\n", strerror ( -EEFI ( efirc ) ) );
+			return NULL;
+		}
 	}
 
+	DBGC ( mb2->image, "MULTIBOOT2 bounce is at %llx\n", phys_addr);
+
+	memset ( (void *) phys_to_user ( phys_addr ), 0, size );
 	memcpy_user ( phys_to_user ( phys_addr), 0,
 		      (userptr_t)mb2, 0, sizeof ( *mb2 ) );
 
@@ -889,6 +902,14 @@ static int multiboot2_exec ( struct image *image ) {
 
 	if ( ( mb2 = multiboot2_alloc_bounce_buffer ( mb2 ) ) == NULL )
 		return -ENOMEM;
+
+	DBGC ( image, "MULTIBOOT2 multiboot2_enter_kernel is at %p\n",
+		multiboot2_enter_kernel);
+	DBGC ( image, "MULTIBOOT2 multiboot2_bounce is at %p\n",
+	       multiboot2_bounce);
+	DBGC ( image, "MULTIBOOT2 kernel at 0x%x-0x%zx\n",
+	       mb2->kernel_load_addr,
+	       mb2->kernel_load_addr + mb2->kernel_filesz);
 
 	total_sizep = BIB_ADDR ( mb2 );
 	mb2->bib_offset += sizeof ( *total_sizep );
