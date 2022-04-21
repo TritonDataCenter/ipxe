@@ -1,2 +1,2 @@
 #undef	PRODUCT_NAME
-#define	PRODUCT_NAME "Joyent"
+#define	PRODUCT_NAME "Triton"
