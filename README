@@ -25,7 +25,7 @@ You may need to obtain and install syslinux, which does build on illumos
 systems.  This utility is used by util/genliso and util/gensdsk.  You
 will need to determine whether your use case requires these utilities.
 
-For any more detailed instructions, see http://ipxe.org
+For any more detailed instructions, see <http://ipxe.org>
 
 ## Updating
 
@@ -48,14 +48,15 @@ driver updates. This documents that process.
         git checkout -b <ISSUE_ID>
         git merge upstream
 
-    Change the commit message to reflect Joyent's commit message format.
+    Change the commit message to reflect the Triton commit message format.
 
-5. Push the issue branch to Joyent.
+5. Push the issue branch.
 
         git push -u origin HEAD:<branchname>
 
     Jenkins will automatically create a build for you and push the build
-    artifacts to Manta and the experimental channel on updates.joyent.com.
+    artifacts to Manta and the experimental channel on
+    updates.tritondatacenter.com.
 
 6. Once the jenkins build is done you'll need to update sdc-booter, so
    cd to wherever you have a clone of that repo.
@@ -71,21 +72,21 @@ driver updates. This documents that process.
    up.
 
         ./tools/update_ipxe <ISSUE_ID>
-	git add tftpboot
-	git commit
-	git push -u origin HEAD:<branchname>
+        git add tftpboot
+        git commit
+        git push -u origin HEAD:<branchname>
 
     And again, Jenkins will automatically create a build and push it to
     the experimental channel.
 
-    Note: You need to have write permission to Joyent's repo(s) for this step.
-    If you're an outside contributor push it to your own fork and open a pull
-    request.
+    Note: You need to have write permission to TritonDataCenter's repo(s) for
+    this step. If you're an outside contributor push it to your own fork and
+    open a pull request.
 
 You're done. After testing, get code review, integration approval, then merge.
 
 **Note about merging:** If you are simply syncing from upstream, be sure to
-rebase and merge. If you are adding a Joyent specific change that doesn't
+rebase and merge. If you are adding a Triton specific change that doesn't
 exist upstream make sure to squash and merge.
 
 ## Testing changes
@@ -107,10 +108,10 @@ need to be tested.
 * PXE booting from the hardware NIC and chain loading ipxe over the network
   in legacy mode
 * VMware (using images from
-  https://github.com/joyent/sdc-headnode/tree/master/vmware) which will chain
-  load iPXE from booter.
+  <https://github.com/TritonDataCenter/sdc-headnode/tree/master/vmware>)
+  which will chain load iPXE from booter.
 
 To install the new ipxe files on an existing Triton USB, download the ipxe
-build either from Manta or updates.joyent.com. Extract the tar and copy the
-contents of the extracted boot directory to the boot directory on the USB,
-overwriting the existing files.
+build either from Manta or updates.tritondatacenter.com. Extract the tar and
+copy the contents of the extracted boot directory to the boot directory on the
+USB, overwriting the existing files.

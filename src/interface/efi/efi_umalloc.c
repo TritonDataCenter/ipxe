@@ -1,5 +1,7 @@
 /*
  * Copyright (C) 2008 Michael Brown <mbrown@fensystems.co.uk>.
+ * Copyright 2020 Joyent, Inc.
+ * Copyright 2022 MNX Cloud, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -48,7 +50,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * Calling realloc() with a new size of zero is a valid way to free a
  * memory block.
  *
- * There is a Joyent hack here: we limit allocations to below 1Gb in the hope
+ * There is a Triton hack here: we limit allocations to below 1Gb in the hope
  * dboot can find space above the boot modules to do allocations on some memory
  * layouts.  See OS-8138 for details.
  */
