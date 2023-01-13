@@ -83,11 +83,60 @@ driver updates. This documents that process.
     this step. If you're an outside contributor push it to your own fork and
     open a pull request.
 
-You're done. After testing, get code review, integration approval, then merge.
+You're done. After testing, get code review, integration approval, then
+update the merge commit message and commit.
 
-**Note about merging:** If you are simply syncing from upstream, be sure to
-rebase and merge. If you are adding a Triton specific change that doesn't
-exist upstream make sure to squash and merge.
+**Note about merging:** Github does not allow fast-forward merges so do not
+use the Github pull request's green button to bring in your upstream merge.
+Github MUST add a merge commit on top of your merge-from-upstream merge
+commit, never mind any post-merge adjustment commits you may need to make.
+Regardless, once approved via github PR review, you should, in your
+ipxe repo:
+
+	git checkout master
+	git merge <ISSUE_ID>
+
+if it does NOT say "fast-forward", you will need to start over from the
+updated master branch in our ipxe.  Here is what it should look like:
+
+```
+	smartos-build(~/ipxe)[0]% git merge TRITON-2354
+	Updating 1522fe85..c7814698
+	Fast-forward
+	smartos-build(~/ipxe)[0]% 
+```
+
+Finally update the merge message with the ISSUE_ID, and a list of commits
+from upstream.  To obtain list, first find the LAST upstream commit you
+merged priot to this one.  Call it LAST_COMMIT.  Then:
+
+```
+git log --format=oneline $LAST_COMMIT.. | awk '{print "commit " $1 ; $1 = "" ; print "   " $0}' > /tmp/list
+```
+
+The output in /tmp/list should appear in the merge commit below the
+issue. The above example looks a bit like this:
+
+```
+commit c7814698ae41c5247750b3a54e29c0c83601fc9d
+Merge: 1522fe85 3fe683eb
+Author: Dan McDonald <danmcd@mnx.io>
+Date:   Wed Dec 7 10:59:10 2022 -0500
+
+    TRITON-2354 Merge properly with ipxe/ipxe to restore merge-commit path.
+    
+    commit 3fe683ebab29afacf224e6b0921f6329bebcdca7
+        [lan78xx] Always enable automatic speed and duplex detection
+    commit 41a9a5c7b3674f0fac6d8fa3b633cde17c2df78f
+        [efi] Do not attempt EFI_USB_IO_PROTOCOL transfers during shutdown
+    <MORE COMMITS not shown here...
+```
+
+And the "3fe684eb..." commit will be used for LAST_COMMIT on your NEXT
+upstream merge.
+
+Once the message is updated, then you can use "git push" from the command
+line.  Github WILL be smart enough to close your PR.
 
 ## Testing changes
 
