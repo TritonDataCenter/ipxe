@@ -37,6 +37,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/netdevice.h>
 #include <ipxe/timer.h>
 #include <ipxe/fault.h>
+#include <ipxe/settings.h>
 #include <ipxe/pccrd.h>
 #include <ipxe/peerdisc.h>
 
@@ -71,6 +72,12 @@ static LIST_HEAD ( peerdisc_segments );
  * become available.
  */
 unsigned int peerdisc_timeout_secs = PEERDISC_DEFAULT_TIMEOUT_SECS;
+
+/** Most recently discovered peer (for any block) */
+static char *peerdisc_recent;
+
+/** Hosted cache server */
+static char *peerhost;
 
 static struct peerdisc_segment * peerdisc_find ( const char *id );
 static int peerdisc_discovered ( struct peerdisc_segment *segment,
@@ -379,6 +386,7 @@ static int peerdisc_discovered ( struct peerdisc_segment *segment,
 	struct peerdisc_peer *peer;
 	struct peerdisc_client *peerdisc;
 	struct peerdisc_client *tmp;
+	char *recent;
 
 	/* Ignore duplicate peers */
 	list_for_each_entry ( peer, &segment->peers, list ) {
@@ -398,6 +406,15 @@ static int peerdisc_discovered ( struct peerdisc_segment *segment,
 
 	/* Add to end of list of peers */
 	list_add_tail ( &peer->list, &segment->peers );
+
+	/* Record as most recently discovered peer */
+	if ( location != peerdisc_recent ) {
+		recent = strdup ( location );
+		if ( recent ) {
+			free ( peerdisc_recent );
+			peerdisc_recent = recent;
+		}
+	}
 
 	/* Notify all clients */
 	list_for_each_entry_safe ( peerdisc, tmp, &segment->clients, list )
@@ -442,6 +459,7 @@ static struct peerdisc_segment * peerdisc_create ( const char *id ) {
 	char *uuid_copy;
 	char *id_copy;
 	unsigned int i;
+	int rc;
 
 	/* Generate a random message UUID.  This does not require high
 	 * quality randomness.
@@ -458,7 +476,7 @@ static struct peerdisc_segment * peerdisc_create ( const char *id ) {
 	/* Allocate and initialise structure */
 	segment = zalloc ( sizeof ( *segment ) + id_len + uuid_len );
 	if ( ! segment )
-		return NULL;
+		goto err_alloc;
 	id_copy = ( ( ( void * ) segment ) + sizeof ( *segment ) );
 	memcpy ( id_copy, id, id_len );
 	uuid_copy = ( ( ( void * ) id_copy ) + id_len );
@@ -469,14 +487,40 @@ static struct peerdisc_segment * peerdisc_create ( const char *id ) {
 	INIT_LIST_HEAD ( &segment->peers );
 	INIT_LIST_HEAD ( &segment->clients );
 	timer_init ( &segment->timer, peerdisc_expired, &segment->refcnt );
-	DBGC2 ( segment, "PEERDISC %p discovering %s\n", segment, segment->id );
 
-	/* Start discovery timer */
-	start_timer_nodelay ( &segment->timer );
+	/* Add hosted cache server or initiate discovery */
+	if ( peerhost ) {
+
+		/* Add hosted cache server to list of peers */
+		if ( ( rc = peerdisc_discovered ( segment, peerhost ) ) != 0 )
+			goto err_peerhost;
+
+	} else {
+
+		/* Add most recently discovered peer to list of peers
+		 *
+		 * This is a performance optimisation: we assume that
+		 * the most recently discovered peer for any block has
+		 * a high probability of also having a copy of the
+		 * next block that we attempt to discover.
+		 */
+		if ( peerdisc_recent )
+			peerdisc_discovered ( segment, peerdisc_recent );
+
+		/* Start discovery timer */
+		start_timer_nodelay ( &segment->timer );
+		DBGC2 ( segment, "PEERDISC %p discovering %s\n",
+			segment, segment->id );
+	}
 
 	/* Add to list of segments, transfer reference to list, and return */
 	list_add_tail ( &segment->list, &peerdisc_segments );
 	return segment;
+
+ err_peerhost:
+	ref_put ( &segment->refcnt );
+ err_alloc:
+	return NULL;
 }
 
 /**
@@ -579,3 +623,43 @@ void peerdisc_close ( struct peerdisc_client *peerdisc ) {
 	if ( list_empty ( &peerdisc_segments ) )
 		peerdisc_socket_close ( 0 );
 }
+
+/******************************************************************************
+ *
+ * Settings
+ *
+ ******************************************************************************
+ */
+
+/** PeerDist hosted cache server setting */
+const struct setting peerhost_setting __setting ( SETTING_MISC, peerhost ) = {
+	.name = "peerhost",
+	.description = "PeerDist hosted cache",
+	.type = &setting_type_string,
+};
+
+/**
+ * Apply PeerDist discovery settings
+ *
+ * @ret rc		Return status code
+ */
+static int apply_peerdisc_settings ( void ) {
+
+	/* Free any existing hosted cache server */
+	free ( peerhost );
+	peerhost = NULL;
+
+	/* Fetch hosted cache server */
+	fetch_string_setting_copy ( NULL, &peerhost_setting, &peerhost );
+	if ( peerhost ) {
+		DBGC ( &peerhost, "PEERDISC using hosted cache %s\n",
+		       peerhost );
+	}
+
+	return 0;
+}
+
+/** PeerDist discovery settings applicator */
+struct settings_applicator peerdisc_applicator __settings_applicator = {
+	.apply = apply_peerdisc_settings,
+};

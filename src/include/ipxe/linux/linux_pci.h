@@ -23,6 +23,21 @@ extern int linux_pci_write ( struct pci_device *pci, unsigned long where,
 			     unsigned long value, size_t len );
 
 /**
+ * Find next PCI bus:dev.fn address range in system
+ *
+ * @v busdevfn		Starting PCI bus:dev.fn address
+ * @v range		PCI bus:dev.fn address range to fill in
+ */
+static inline __always_inline void
+PCIAPI_INLINE ( linux, pci_discover ) ( uint32_t busdevfn __unused,
+					struct pci_range *range ) {
+
+	/* Assume all buses in segment 0 may exist */
+	range->start = PCI_BUSDEVFN ( 0, 0, 0, 0 );
+	range->count = PCI_BUSDEVFN ( 1, 0, 0, 0 );
+}
+
+/**
  * Read byte from PCI configuration space
  *
  * @v pci	PCI device
@@ -125,6 +140,19 @@ PCIAPI_INLINE ( linux, pci_write_config_dword ) ( struct pci_device *pci,
 						  unsigned int where,
 						  uint32_t value ) {
 	return linux_pci_write ( pci, where, value, sizeof ( value ) );
+}
+
+/**
+ * Map PCI bus address as an I/O address
+ *
+ * @v bus_addr		PCI bus address
+ * @v len		Length of region
+ * @ret io_addr		I/O address, or NULL on error
+ */
+static inline __always_inline void *
+PCIAPI_INLINE ( linux, pci_ioremap ) ( struct pci_device *pci __unused,
+				       unsigned long bus_addr, size_t len ) {
+	return ioremap ( bus_addr, len );
 }
 
 #endif /* _IPXE_LINUX_PCI_H */

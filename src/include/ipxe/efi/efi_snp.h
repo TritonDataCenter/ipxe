@@ -19,6 +19,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/efi/Protocol/HiiConfigAccess.h>
 #include <ipxe/efi/Protocol/HiiDatabase.h>
 #include <ipxe/efi/Protocol/LoadFile.h>
+#include <ipxe/efi/Protocol/VlanConfig.h>
 
 /** SNP transmit completion ring size */
 #define EFI_SNP_NUM_TX 32
@@ -51,6 +52,8 @@ struct efi_snp_device {
 	struct list_head rx;
 	/** The network interface identifier */
 	EFI_NETWORK_INTERFACE_IDENTIFIER_PROTOCOL nii;
+	/** VLAN configuration protocol */
+	EFI_VLAN_CONFIG_PROTOCOL vcfg;
 	/** Component name protocol */
 	EFI_COMPONENT_NAME2_PROTOCOL name2;
 	/** Load file protocol handle */
@@ -76,7 +79,7 @@ struct efi_snp_device {
 };
 
 extern int efi_snp_hii_install ( struct efi_snp_device *snpdev );
-extern void efi_snp_hii_uninstall ( struct efi_snp_device *snpdev );
+extern int efi_snp_hii_uninstall ( struct efi_snp_device *snpdev );
 extern struct efi_snp_device * find_snpdev ( EFI_HANDLE handle );
 extern struct efi_snp_device * last_opened_snpdev ( void );
 extern void efi_snp_add_claim ( int delta );

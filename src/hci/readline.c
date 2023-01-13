@@ -38,7 +38,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  *
  */
 
-#define READLINE_MAX 256
+#define READLINE_MAX 1024
 
 /**
  * Synchronise console with edited string
@@ -248,6 +248,7 @@ void history_free ( struct readline_history *history ) {
  * @v prompt		Prompt string
  * @v prefill		Prefill string, or NULL for no prefill
  * @v history		History buffer, or NULL for no history
+ * @v timeout		Timeout period, in ticks (0=indefinite)
  * @ret line		Line read from console (excluding terminating newline)
  * @ret rc		Return status code
  *
@@ -255,9 +256,10 @@ void history_free ( struct readline_history *history ) {
  * eventually call free() to release the storage.
  */
 int readline_history ( const char *prompt, const char *prefill,
-		       struct readline_history *history, char **line ) {
-	char buf[READLINE_MAX];
+		       struct readline_history *history, unsigned long timeout,
+		       char **line ) {
 	struct edit_string string;
+	char *buf;
 	int key;
 	int move_by;
 	const char *new_string;
@@ -273,10 +275,14 @@ int readline_history ( const char *prompt, const char *prefill,
 	/* Ensure cursor is visible */
 	printf ( "\033[?25h" );
 
-	/* Initialise editable string */
+	/* Allocate buffer and initialise editable string */
+	buf = zalloc ( READLINE_MAX );
+	if ( ! buf ) {
+		rc = -ENOMEM;
+		goto done;
+	}
 	memset ( &string, 0, sizeof ( string ) );
-	init_editstring ( &string, buf, sizeof ( buf ) );
-	buf[0] = '\0';
+	init_editstring ( &string, buf, READLINE_MAX );
 
 	/* Prefill string, if applicable */
 	if ( prefill ) {
@@ -285,15 +291,29 @@ int readline_history ( const char *prompt, const char *prefill,
 	}
 
 	while ( 1 ) {
+
+		/* Get keypress */
+		key = getkey ( timeout );
+		if ( key < 0 ) {
+			rc = -ETIMEDOUT;
+			goto done;
+		}
+		timeout = 0;
+
 		/* Handle keypress */
-		key = edit_string ( &string, getkey ( 0 ) );
+		key = edit_string ( &string, key );
 		sync_console ( &string );
 		move_by = 0;
 		switch ( key ) {
 		case CR:
 		case LF:
-			*line = strdup ( buf );
-			rc = ( ( *line ) ? 0 : -ENOMEM );
+			/* Shrink string (ignoring failures) */
+			*line = realloc ( buf,
+					  ( strlen ( buf ) + 1 /* NUL */ ) );
+			if ( ! *line )
+				*line = buf;
+			buf = NULL;
+			rc = 0;
 			goto done;
 		case CTRL_C:
 			rc = -ECANCELED;
@@ -321,6 +341,7 @@ int readline_history ( const char *prompt, const char *prefill,
 
  done:
 	putchar ( '\n' );
+	free ( buf );
 	if ( history ) {
 		if ( *line && (*line)[0] )
 			history_append ( history, *line );
@@ -342,6 +363,6 @@ int readline_history ( const char *prompt, const char *prefill,
 char * readline ( const char *prompt ) {
 	char *line;
 
-	readline_history ( prompt, NULL, NULL, &line );
+	readline_history ( prompt, NULL, NULL, 0, &line );
 	return line;
 }

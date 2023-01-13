@@ -47,7 +47,7 @@ static char __bss16_array ( syslinux_version, [32] );
 #define syslinux_version __use_data16 ( syslinux_version )
 
 /** The "SYSLINUX" copyright string */
-static char __data16_array ( syslinux_copyright, [] ) = " http://ipxe.org";
+static char __data16_array ( syslinux_copyright, [] ) = " https://ipxe.org";
 #define syslinux_copyright __use_data16 ( syslinux_copyright )
 
 static char __data16_array ( syslinux_configuration_file, [] ) = "";
@@ -220,7 +220,7 @@ static int comboot_fetch_kernel ( char *kernel_file, char *cmdline ) {
 /**
  * Terminate program interrupt handler
  */
-static __asmcall void int20 ( struct i386_all_regs *ix86 __unused ) {
+static __asmcall __used void int20 ( struct i386_all_regs *ix86 __unused ) {
 	rmlongjmp ( comboot_return, COMBOOT_EXIT );
 }
 
@@ -228,7 +228,7 @@ static __asmcall void int20 ( struct i386_all_regs *ix86 __unused ) {
 /**
  * DOS-compatible API
  */
-static __asmcall void int21 ( struct i386_all_regs *ix86 ) {
+static __asmcall __used void int21 ( struct i386_all_regs *ix86 ) {
 	ix86->flags |= CF;
 
 	switch ( ix86->regs.ah ) {
@@ -311,7 +311,7 @@ __weak int pxe_api_call_weak ( struct i386_all_regs *ix86 __unused ) {
 /**
  * SYSLINUX API
  */
-static __asmcall void int22 ( struct i386_all_regs *ix86 ) {
+static __asmcall __used void int22 ( struct i386_all_regs *ix86 ) {
 	ix86->flags |= CF;
 
 	switch ( ix86->regs.ax ) {

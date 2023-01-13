@@ -12,6 +12,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define UACCESS_EFI
 #define IOMAP_VIRT
 #define PCIAPI_EFI
+#define DMAAPI_OP
 #define CONSOLE_EFI
 #define TIMER_EFI
 #define UMALLOC_EFI
@@ -23,6 +24,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define REBOOT_EFI
 #define ACPI_EFI
 #define FDT_EFI
+
+#define	NET_PROTO_IPV6		/* IPv6 protocol */
 
 #define DOWNLOAD_PROTO_FILE	/* Local filesystem access */
 
@@ -43,6 +46,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define	USB_HCD_EHCI		/* EHCI USB host controller */
 #define	USB_HCD_UHCI		/* UHCI USB host controller */
 #define	USB_EFI			/* Provide EFI_USB_IO_PROTOCOL interface */
+#define USB_BLOCK		/* USB block devices */
 
 #define	REBOOT_CMD		/* Reboot command */
 
@@ -50,11 +54,16 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define IOAPI_X86
 #define NAP_EFIX86
 #define	CPUID_CMD		/* x86 CPU feature detection command */
+#define	UNSAFE_STD		/* Avoid setting direction flag */
 #endif
 
 #if defined ( __arm__ ) || defined ( __aarch64__ )
 #define IOAPI_ARM
 #define NAP_EFIARM
+#endif
+
+#if defined ( __aarch64__ )
+#define	IMAGE_GZIP		/* GZIP image support */
 #endif
 
 #endif /* CONFIG_DEFAULTS_EFI_H */

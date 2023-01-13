@@ -10,6 +10,7 @@ LDFLAGS		:=
 HOST_CFLAGS	:=
 MAKEDEPS	:= Makefile
 CROSS_COMPILE	?= $(CROSS)
+SYMBOL_PREFIX	:=
 
 ###############################################################################
 #
@@ -23,6 +24,7 @@ CP		:= cp
 ECHO		:= echo
 PRINTF		:= printf
 PERL		:= perl
+PYTHON		:= python
 TRUE		:= true
 GREP		:= grep
 AWK		:= awk
@@ -50,9 +52,8 @@ ELF2EFI32	:= ./util/elf2efi32
 ELF2EFI64	:= ./util/elf2efi64
 EFIROM		:= ./util/efirom
 EFIFATBIN	:= ./util/efifatbin
-ICCFIX		:= ./util/iccfix
 EINFO		:= ./util/einfo
-GENKEYMAP	:= ./util/genkeymap.pl
+GENKEYMAP	:= ./util/genkeymap.py
 DOXYGEN		:= doxygen
 LCAB		:= lcab
 QEMUIMG		:= qemu-img
@@ -76,6 +77,7 @@ SRCDIRS		+= drivers/net/phantom
 SRCDIRS		+= drivers/net/vxge
 SRCDIRS		+= drivers/net/efi
 SRCDIRS		+= drivers/net/tg3
+SRCDIRS		+= drivers/net/bnxt
 SRCDIRS		+= drivers/net/sfc
 SRCDIRS		+= drivers/block
 SRCDIRS		+= drivers/nvs
@@ -191,7 +193,7 @@ vmware : bin/8086100f.mrom bin/808610d3.mrom bin/10222000.rom bin/15ad07b0.rom
 	@$(ECHO) '    bin/10222000.rom  -- vlance/pcnet32'
 	@$(ECHO) '    bin/15ad07b0.rom  -- vmxnet3'
 	@$(ECHO) 
-	@$(ECHO) 'For more information, see http://ipxe.org/howto/vmware'
+	@$(ECHO) 'For more information, see https://ipxe.org/howto/vmware'
 	@$(ECHO)
 	@$(ECHO) '==========================================================='
 
@@ -209,14 +211,27 @@ install :
 #
 # Version number calculations
 #
+ifneq ($(wildcard ../.git),)
+VERSIONS := $(shell git describe --tags --always --long --abbrev=1 --match "v*")
+VERSION_TUPLE	:= $(subst ., ,$(subst -, ,$(patsubst v%,%,$(VERSIONS))))
+VERSION_MAJOR	:= $(word 1,$(VERSION_TUPLE))
+VERSION_MINOR	:= $(word 2,$(VERSION_TUPLE))
+VERSION_PATCH	:= $(word 3,$(VERSION_TUPLE))
+ifeq ($(word 4,$(VERSION_TUPLE)),0)
+EXTRAVERSION	:=
+else
+EXTRAVERSION	:= +
+endif
+GITVERSION	= $(word 5,$(VERSION_TUPLE))
+else
 VERSION_MAJOR	= 1
 VERSION_MINOR	= 0
 VERSION_PATCH	= 0
 EXTRAVERSION	= +
+endif
 MM_VERSION	= $(VERSION_MAJOR).$(VERSION_MINOR)
 VERSION		= $(MM_VERSION).$(VERSION_PATCH)$(EXTRAVERSION)
-ifneq ($(wildcard ../.git),)
-GITVERSION := $(shell git describe --always --abbrev=1 --match "" 2>/dev/null)
+ifneq ($(GITVERSION),)
 VERSION		+= ($(GITVERSION))
 endif
 version :

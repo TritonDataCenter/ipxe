@@ -26,14 +26,18 @@ struct pci_device;
 extern void pcidirect_prepare ( struct pci_device *pci, int where );
 
 /**
- * Determine number of PCI buses within system
+ * Find next PCI bus:dev.fn address range in system
  *
- * @ret num_bus		Number of buses
+ * @v busdevfn		Starting PCI bus:dev.fn address
+ * @v range		PCI bus:dev.fn address range to fill in
  */
-static inline __always_inline int
-PCIAPI_INLINE ( direct, pci_num_bus ) ( void ) {
-	/* No way to work this out via Type 1 accesses */
-	return 0x100;
+static inline __always_inline void
+PCIAPI_INLINE ( direct, pci_discover ) ( uint32_t busdevfn __unused,
+					 struct pci_range *range ) {
+
+	/* Scan first bus and rely on bridge detection to find higher buses */
+	range->start = PCI_BUSDEVFN ( 0, 0, 0, 0 );
+	range->count = PCI_BUSDEVFN ( 0, 1, 0, 0 );
 }
 
 /**
@@ -137,5 +141,20 @@ PCIAPI_INLINE ( direct, pci_write_config_dword ) ( struct pci_device *pci,
 	outl ( value, PCIDIRECT_CONFIG_DATA );
 	return 0;
 }
+
+/**
+ * Map PCI bus address as an I/O address
+ *
+ * @v bus_addr		PCI bus address
+ * @v len		Length of region
+ * @ret io_addr		I/O address, or NULL on error
+ */
+static inline __always_inline void *
+PCIAPI_INLINE ( direct, pci_ioremap ) ( struct pci_device *pci __unused,
+					unsigned long bus_addr, size_t len ) {
+	return ioremap ( bus_addr, len );
+}
+
+extern struct pci_api pcidirect_api;
 
 #endif /* _PCIDIRECT_H */
