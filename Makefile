@@ -23,6 +23,8 @@ CLEAN_FILES += \
 	$(ROOT) \
 	$(NAME)-*.tar.gz
 
+BUILD_PLATFORM  = 20210826T002459Z
+
 #
 # ipxe assumes GNU without using prefixed commands.
 #
@@ -31,7 +33,7 @@ IPXE_ENV = \
 	AS=/opt/local/bin/as \
 	LD=/opt/local/bin/gld \
 	AWK=/usr/bin/nawk \
-	GREP=/usr/xpg4/bin/grep \
+	GREP=/usr/xpg5/bin/grep \
 	V=1
 
 TAR =		/usr/bin/gtar
