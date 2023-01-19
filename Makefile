@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #
 # Copyright 2020 Joyent, Inc.
+# Copyright 2023 MNX Cloud, Inc.
 #
 
 NAME = ipxe
@@ -66,8 +67,8 @@ $(BOOT_ROOT)/ipxe.lkrn :	FILEMODE = 755
 $(BOOT_ROOT)/default.ipxe :	FILEMODE = 644
 $(BOOT_ROOT)/undionly.kpxe :	FILEMODE = 644
 
-# our base image is triton-origin-x86_64-19.4.0
-BASE_IMAGE_UUID = 59ba2e5e-976f-4e09-8aac-a4a7ef0395f5
+# our base image is triton-origin-x86_64-21.4.0
+BASE_IMAGE_UUID = 502eeef2-8267-489f-b19c-a206906f57ef
 
 ENGBLD_USE_BUILDIMAGE = false
 ENGBLD_REQUIRE := $(shell git submodule update --init deps/eng)
