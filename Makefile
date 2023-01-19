@@ -23,8 +23,6 @@ CLEAN_FILES += \
 	$(ROOT) \
 	$(NAME)-*.tar.gz
 
-BUILD_PLATFORM  = 20210826T002459Z
-
 #
 # ipxe assumes GNU without using prefixed commands.
 #
@@ -76,6 +74,8 @@ ENGBLD_USE_BUILDIMAGE = false
 ENGBLD_REQUIRE := $(shell git submodule update --init deps/eng)
 include ./deps/eng/tools/mk/Makefile.defs
 TOP ?= $(error Unable to access eng.git submodule Makefiles.)
+
+BUILD_PLATFORM  = 20210826T002459Z
 
 .PHONY: all
 all: src/bin/ipxe.lkrn $(EFI_TARGETS)
