@@ -33,7 +33,7 @@ IPXE_ENV = \
 	AS=/opt/local/bin/as \
 	LD=/opt/local/bin/gld \
 	AWK=/usr/bin/nawk \
-	GREP=/usr/xpg5/bin/grep \
+	GREP=/usr/xpg4/bin/grep \
 	V=1
 
 TAR =		/usr/bin/gtar
