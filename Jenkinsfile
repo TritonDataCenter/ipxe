@@ -35,7 +35,7 @@ set -o errexit
 set -o pipefail
 
 export ENGBLD_BITS_UPLOAD_IMGAPI=true
-make -j 6 print-BRANCH print-STAMP all release publish bits-upload''')
+make -j 4 print-BRANCH print-STAMP all release publish bits-upload''')
             }
         }
     }
