@@ -934,11 +934,11 @@ static uint8_t efi_undi_checksum ( void *data, size_t len ) {
  */
 static unsigned int efi_undi_ifnum ( struct efi_snp_device *snpdev ) {
 
-	/* iPXE network device indexes are one-based (leaving zero
+	/* iPXE network device scope IDs are one-based (leaving zero
 	 * meaning "unspecified").  UNDI interface numbers are
 	 * zero-based.
 	 */
-	return ( snpdev->netdev->index - 1 );
+	return ( snpdev->netdev->scope_id - 1 );
 }
 
 /**
@@ -1777,9 +1777,10 @@ static struct efi_snp_device * efi_snp_demux ( struct net_device *netdev ) {
  * Create SNP device
  *
  * @v netdev		Network device
+ * @v priv		Private data
  * @ret rc		Return status code
  */
-static int efi_snp_probe ( struct net_device *netdev ) {
+static int efi_snp_probe ( struct net_device *netdev, void *priv __unused ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	struct efi_device *efidev;
 	struct efi_snp_device *snpdev;
@@ -2017,8 +2018,9 @@ static int efi_snp_probe ( struct net_device *netdev ) {
  * Handle SNP device or link state change
  *
  * @v netdev		Network device
+ * @v priv		Private data
  */
-static void efi_snp_notify ( struct net_device *netdev ) {
+static void efi_snp_notify ( struct net_device *netdev, void *priv __unused ) {
 	struct efi_snp_device *snpdev;
 
 	/* Locate SNP device */
@@ -2042,8 +2044,9 @@ static void efi_snp_notify ( struct net_device *netdev ) {
  * Destroy SNP device
  *
  * @v netdev		Network device
+ * @v priv		Private data
  */
-static void efi_snp_remove ( struct net_device *netdev ) {
+static void efi_snp_remove ( struct net_device *netdev, void *priv __unused ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	struct efi_snp_device *snpdev;
 	int leak = efi_shutdown_in_progress;

@@ -242,8 +242,8 @@ static int multiboot_add_modules ( struct image *image, physaddr_t start,
 			break;
 		}
 
-		/* Do not include kernel image itself as a module */
-		if ( module_image == image )
+		/* Skip hidden images */
+		if ( module_image->flags & IMAGE_HIDDEN )
 			continue;
 
 		/* Page-align the module */

@@ -197,11 +197,6 @@ static int script_exec ( struct image *image ) {
 	size_t saved_offset;
 	int rc;
 
-	/* Temporarily de-register image, so that a "boot" command
-	 * doesn't throw us into an execution loop.
-	 */
-	unregister_image ( image );
-
 	/* Preserve state of any currently-running script */
 	saved_offset = script_offset;
 
@@ -211,10 +206,6 @@ static int script_exec ( struct image *image ) {
 
 	/* Restore saved state */
 	script_offset = saved_offset;
-
-	/* Re-register image (unless we have been replaced) */
-	if ( ! image->replacement )
-		register_image ( image );
 
 	return rc;
 }
@@ -320,6 +311,7 @@ static int terminate_on_label_found ( int rc ) {
  * @ret rc		Return status code
  */
 static int goto_exec ( int argc, char **argv ) {
+	struct image *image = current_image.image;
 	struct goto_options opts;
 	size_t saved_offset;
 	int rc;
@@ -329,7 +321,7 @@ static int goto_exec ( int argc, char **argv ) {
 		return rc;
 
 	/* Sanity check */
-	if ( ! current_image ) {
+	if ( ! image ) {
 		rc = -ENOTTY;
 		printf ( "Not in a script: %s\n", strerror ( rc ) );
 		return rc;
@@ -340,10 +332,10 @@ static int goto_exec ( int argc, char **argv ) {
 
 	/* Find label */
 	saved_offset = script_offset;
-	if ( ( rc = process_script ( current_image, goto_find_label,
+	if ( ( rc = process_script ( image, goto_find_label,
 				     terminate_on_label_found ) ) != 0 ) {
 		script_offset = saved_offset;
-		DBGC ( current_image, "[%04zx] No such label :%s\n",
+		DBGC ( image, "[%04zx] No such label :%s\n",
 		       script_offset, goto_label );
 		return rc;
 	}
