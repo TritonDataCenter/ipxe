@@ -25,12 +25,11 @@ CLEAN_FILES += \
 
 #
 # ipxe assumes GNU without using prefixed commands.
-# XXX KEBE SAYS No gld available in pkgsrc 21.x
 #
 IPXE_ENV = \
 	CC=/opt/local/bin/gcc \
 	AS=/opt/local/bin/as \
-	LD=/opt/local/bin/gcc \
+	LD=/opt/local/bin/gld \
 	AWK=/usr/bin/nawk \
 	GREP=/usr/xpg4/bin/grep \
 	V=1
