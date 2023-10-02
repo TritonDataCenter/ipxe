@@ -755,6 +755,18 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 		case ELF_MREL ( EM_X86_64, R_X86_64_32 ) :
 		case ELF_MREL ( EM_X86_64, R_X86_64_32S ) :
 			/* Generate a 4-byte PE relocation */
+
+#if 1
+			/* XXX TRITON - move --hybrid processing here. */
+			/* Ignore 32-bit relocations in a hybrid
+			 * 32-bit BIOS and 64-bit UEFI binary,
+			 * otherwise fall through to treat as an
+			 * unknown type.
+			 */
+			if ( opts->hybrid )
+				break;
+#endif
+
 			generate_pe_reloc ( pe_reltab, offset, 4 );
 			break;
 		case ELF_MREL ( EM_X86_64, R_X86_64_64 ) :
@@ -790,6 +802,7 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 			 * loaded.
 			 */
 			break;
+#if 0	/* XXX TRITON - We handle this case for ourselves, see above. */
 		case ELF_MREL ( EM_X86_64, R_X86_64_32 ) :
 			/* Ignore 32-bit relocations in a hybrid
 			 * 32-bit BIOS and 64-bit UEFI binary,
@@ -799,6 +812,7 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 			if ( opts->hybrid )
 				break;
 			/* fallthrough */
+#endif /* XXX TRITON */
 		default:
 			eprintf ( "Unrecognised relocation type %d\n", type );
 			exit ( 1 );
