@@ -96,6 +96,12 @@ struct tls_header {
 #define TLS_RSA_WITH_AES_256_GCM_SHA384 0x009d
 #define TLS_DHE_RSA_WITH_AES_128_GCM_SHA256 0x009e
 #define TLS_DHE_RSA_WITH_AES_256_GCM_SHA384 0x009f
+#define TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA 0xc013
+#define TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA 0xc014
+#define TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256 0xc027
+#define TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384 0xc028
+#define TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256 0xc02f
+#define TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 0xc030
 
 /* TLS hash algorithm identifiers */
 #define TLS_MD5_ALGORITHM 1
@@ -118,6 +124,10 @@ struct tls_header {
 #define TLS_MAX_FRAGMENT_LENGTH_1024 2
 #define TLS_MAX_FRAGMENT_LENGTH_2048 3
 #define TLS_MAX_FRAGMENT_LENGTH_4096 4
+
+/* TLS named curve extension */
+#define TLS_NAMED_CURVE 10
+#define TLS_NAMED_CURVE_X25519 29
 
 /* TLS signature algorithms extension */
 #define TLS_SIGNATURE_ALGORITHMS 13
@@ -204,6 +214,25 @@ struct tls_cipher_suite {
 /** Declare a TLS cipher suite */
 #define __tls_cipher_suite( pref )					\
 	__table_entry ( TLS_CIPHER_SUITES, pref )
+
+/** TLS named curved type */
+#define TLS_NAMED_CURVE_TYPE 3
+
+/** A TLS named curve */
+struct tls_named_curve {
+	/** Elliptic curve */
+	struct elliptic_curve *curve;
+	/** Numeric code (in network-endian order) */
+	uint16_t code;
+};
+
+/** TLS named curve table */
+#define TLS_NAMED_CURVES						\
+	__table ( struct tls_named_curve, "tls_named_curves" )
+
+/** Declare a TLS named curve */
+#define __tls_named_curve( pref )					\
+	__table_entry ( TLS_NAMED_CURVES, pref )
 
 /** A TLS cipher specification */
 struct tls_cipherspec {
@@ -425,6 +454,7 @@ struct tls_connection {
 
 extern struct tls_key_exchange_algorithm tls_pubkey_exchange_algorithm;
 extern struct tls_key_exchange_algorithm tls_dhe_exchange_algorithm;
+extern struct tls_key_exchange_algorithm tls_ecdhe_exchange_algorithm;
 
 extern int add_tls ( struct interface *xfer, const char *name,
 		     struct x509_root *root, struct private_key *key );
