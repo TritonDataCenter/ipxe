@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2009 Michael Brown <mbrown@fensystems.co.uk>.
  * Copyright (c) 2019, Joyent, Inc.
- * Copyright 2023 MNX Cloud, Inc.
+ * Copyright 2024 MNX Cloud, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
