@@ -171,6 +171,28 @@ struct x509_link {
 	struct list_head list;
 	/** Certificate */
 	struct x509_certificate *cert;
+	/** Flags */
+	unsigned int flags;
+};
+
+/** X.509 certficate chain link flags */
+enum x509_link_flags {
+	/** Cross-signed certificate download has been attempted
+	 *
+	 * This indicates that a cross-signature download attempt has
+	 * been made to find a cross-signed issuer for this link's
+	 * certificate.
+	 */
+	X509_LINK_FL_CROSSED = 0x0001,
+	/** OCSP has been attempted
+	 *
+	 * This indicates that an OCSP attempt has been made using
+	 * this link's certificate as an issuer.  (We record the flag
+	 * on the issuer rather than on the issued certificate, since
+	 * we want to retry OCSP if an issuer is replaced with a
+	 * downloaded cross-signed certificate.)
+	 */
+	X509_LINK_FL_OCSPED = 0x0002,
 };
 
 /** An X.509 certificate chain */
@@ -374,6 +396,16 @@ x509_root_put ( struct x509_root *root ) {
 	ref_put ( &root->refcnt );
 }
 
+/**
+ * Check if X.509 certificate is self-signed
+ *
+ * @v cert		X.509 certificate
+ * @ret is_self_signed	X.509 certificate is self-signed
+ */
+static inline int x509_is_self_signed ( struct x509_certificate *cert ) {
+	return ( asn1_compare ( &cert->issuer.raw, &cert->subject.raw ) == 0 );
+}
+
 extern const char * x509_name ( struct x509_certificate *cert );
 extern int x509_parse ( struct x509_certificate *cert,
 			const struct asn1_cursor *raw );
@@ -391,6 +423,7 @@ extern int x509_append ( struct x509_chain *chain,
 			 struct x509_certificate *cert );
 extern int x509_append_raw ( struct x509_chain *chain, const void *data,
 			     size_t len );
+extern void x509_truncate ( struct x509_chain *chain, struct x509_link *link );
 extern int x509_auto_append ( struct x509_chain *chain,
 			      struct x509_chain *certs );
 extern int x509_validate_chain ( struct x509_chain *chain, time_t time,

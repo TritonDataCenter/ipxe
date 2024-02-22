@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2009 Michael Brown <mbrown@fensystems.co.uk>.
  * Copyright (c) 2019, Joyent, Inc.
- * Copyright 2023 MNX Cloud, Inc.
+ * Copyright 2024 MNX Cloud, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -53,6 +53,7 @@
 #define EFI_IMAGE_FILE_MACHINE		EFI_IMAGE_FILE_32BIT_MACHINE
 #define ELFCLASS   ELFCLASS32
 #define Elf_Ehdr   Elf32_Ehdr
+#define Elf_Phdr   Elf32_Phdr
 #define Elf_Shdr   Elf32_Shdr
 #define Elf_Sym    Elf32_Sym
 #define Elf_Addr   Elf32_Addr
@@ -68,6 +69,7 @@
 #define EFI_IMAGE_FILE_MACHINE		0
 #define ELFCLASS   ELFCLASS64
 #define Elf_Ehdr   Elf64_Ehdr
+#define Elf_Phdr   Elf64_Phdr
 #define Elf_Shdr   Elf64_Shdr
 #define Elf_Sym    Elf64_Sym
 #define Elf_Addr   Elf64_Addr
@@ -123,6 +125,9 @@
 #ifndef R_AARCH64_LDST64_ABS_LO12_NC
 #define R_AARCH64_LDST64_ABS_LO12_NC 286
 #endif
+#ifndef R_AARCH64_LDST128_ABS_LO12_NC
+#define R_AARCH64_LDST128_ABS_LO12_NC 299
+#endif
 #ifndef R_ARM_CALL
 #define R_ARM_CALL 28
 #endif
@@ -152,6 +157,12 @@
 #endif
 #ifndef R_LARCH_GOT_PC_LO12
 #define R_LARCH_GOT_PC_LO12 76
+#endif
+#ifndef R_X86_64_GOTPCRELX
+#define R_X86_64_GOTPCRELX 41
+#endif
+#ifndef R_X86_64_REX_GOTPCRELX
+#define R_X86_64_REX_GOTPCRELX 42
 #endif
 
 /*
@@ -201,6 +212,9 @@
  */
 #define EFI_IMAGE_ALIGN 0x1000
 
+/** Set PointerToRawData automatically */
+#define PTRD_AUTO 0xffffffffUL
+
 /** Number of data directory entries */
 #define NUMBER_OF_DIRECTORY_ENTRIES 8
 
@@ -213,7 +227,6 @@ struct elf_file {
 struct pe_section {
 	struct pe_section *next;
 	EFI_IMAGE_SECTION_HEADER hdr;
-	void ( * fixup ) ( struct pe_section *section );
 	int hidden;
 	uint8_t contents[0];
 };
@@ -248,6 +261,7 @@ static struct pe_header efi_pe_header = {
 					     DataDirectory[0] ) ) ),
 			.Characteristics = ( EFI_IMAGE_FILE_DLL |
 					     EFI_IMAGE_FILE_MACHINE |
+					     EFI_IMAGE_FILE_LARGE_ADDRESS_AWARE|
 					     EFI_IMAGE_FILE_EXECUTABLE_IMAGE ),
 		},
 		.OptionalHeader = {
@@ -257,7 +271,14 @@ static struct pe_header efi_pe_header = {
 			.SectionAlignment = EFI_IMAGE_ALIGN,
 			.FileAlignment = EFI_FILE_ALIGN,
 			.SizeOfImage = EFI_IMAGE_ALIGN,
-			.SizeOfHeaders = sizeof ( efi_pe_header ),
+			.SizeOfHeaders =
+				( sizeof ( efi_pe_header ) -
+				  ( ( EFI_IMAGE_NUMBER_OF_DIRECTORY_ENTRIES -
+				      NUMBER_OF_DIRECTORY_ENTRIES ) *
+				    sizeof ( efi_pe_header.nt.OptionalHeader.
+					     DataDirectory[0] ) ) ),
+			.DllCharacteristics =
+				IMAGE_DLLCHARACTERISTICS_NX_COMPAT,
 			.NumberOfRvaAndSizes = NUMBER_OF_DIRECTORY_ENTRIES,
 		},
 	},
@@ -459,6 +480,14 @@ static void read_elf_file ( const char *name, struct elf_file *elf ) {
 	}
 	elf->ehdr = ehdr;
 
+	/* Check program headers */
+	if ( ( elf->len < ehdr->e_phoff ) ||
+	     ( ( elf->len - ehdr->e_phoff ) <
+	       ( ( ( unsigned int ) ehdr->e_phnum ) * ehdr->e_phentsize ) ) ) {
+		eprintf ( "ELF program headers outside file in %s\n", name );
+		exit ( 1 );
+	}
+
 	/* Check section headers */
 	for ( i = 0 ; i < ehdr->e_shnum ; i++ ) {
 		offset = ( ehdr->e_shoff + ( i * ehdr->e_shentsize ) );
@@ -529,6 +558,39 @@ static const char * elf_string ( struct elf_file *elf, unsigned int section,
 }
 
 /**
+ * Get section load memory address
+ *
+ * @v elf		ELF file
+ * @v shdr		ELF section header
+ * @v name		ELF section name
+ * @ret lma		Load memory address
+ */
+static unsigned long elf_lma ( struct elf_file *elf, const Elf_Shdr *shdr,
+			       const char *name ) {
+	const Elf_Ehdr *ehdr = elf->ehdr;
+	const Elf_Phdr *phdr;
+	size_t offset;
+	unsigned int i;
+
+	/* Find containing segment */
+	for ( i = 0 ; i < ehdr->e_phnum ; i++ ) {
+		offset = ( ehdr->e_phoff + ( i * ehdr->e_phentsize ) );
+		phdr = ( elf->data + offset );
+		if ( ( phdr->p_type == PT_LOAD ) &&
+		     ( phdr->p_vaddr <= shdr->sh_addr ) &&
+		     ( ( shdr->sh_addr - phdr->p_vaddr + shdr->sh_size ) <=
+		       phdr->p_memsz ) ) {
+			/* Found matching segment */
+			return ( phdr->p_paddr +
+				 ( shdr->sh_addr - phdr->p_vaddr ) );
+		}
+	}
+
+	eprintf ( "No containing segment for section %s\n", name );
+	exit ( 1 );
+}
+
+/**
  * Set machine architecture
  *
  * @v elf		ELF file
@@ -570,41 +632,41 @@ static void set_machine ( struct elf_file *elf, struct pe_header *pe_header ) {
  * @v elf		ELF file
  * @v shdr		ELF section header
  * @v pe_header		PE file header
+ * @v opts		Options
  * @ret new		New PE section
  */
 static struct pe_section * process_section ( struct elf_file *elf,
 					     const Elf_Shdr *shdr,
-					     struct pe_header *pe_header ) {
+					     struct pe_header *pe_header,
+					     struct options *opts ) {
 	struct pe_section *new;
 	const char *name;
 	size_t name_len;
 	size_t section_memsz;
 	size_t section_filesz;
-	unsigned long code_start;
-	unsigned long code_end;
-	unsigned long data_start;
-	unsigned long data_mid;
-	unsigned long data_end;
-	unsigned long start;
-	unsigned long end;
-	unsigned long *applicable_start;
-	unsigned long *applicable_end;
+	uint32_t start;
+	uint32_t end;
+	uint32_t *code_start;
+	uint32_t *data_start;
+	uint32_t *code_size;
+	uint32_t *data_size;
+	uint32_t *bss_size;
+	uint32_t *applicable_start;
+	uint32_t *applicable_size;
 
 	/* Get section name */
 	name = elf_string ( elf, elf->ehdr->e_shstrndx, shdr->sh_name );
 
-	/* Extract current RVA limits from file header */
-	code_start = pe_header->nt.OptionalHeader.BaseOfCode;
-	code_end = ( code_start + pe_header->nt.OptionalHeader.SizeOfCode );
+	/* Identify start and size limit fields from file header */
+	code_start = &pe_header->nt.OptionalHeader.BaseOfCode;
+	code_size = &pe_header->nt.OptionalHeader.SizeOfCode;
 #if defined(EFI_TARGET32)
-	data_start = pe_header->nt.OptionalHeader.BaseOfData;
+	data_start = &pe_header->nt.OptionalHeader.BaseOfData;
 #elif defined(EFI_TARGET64)
-	data_start = code_end;
+	data_start = NULL;
 #endif
-	data_mid = ( data_start +
-		     pe_header->nt.OptionalHeader.SizeOfInitializedData );
-	data_end = ( data_mid +
-		     pe_header->nt.OptionalHeader.SizeOfUninitializedData );
+	data_size = &pe_header->nt.OptionalHeader.SizeOfInitializedData;
+	bss_size = &pe_header->nt.OptionalHeader.SizeOfUninitializedData;
 
 	/* Allocate PE section */
 	section_memsz = shdr->sh_size;
@@ -621,36 +683,51 @@ static struct pe_section * process_section ( struct elf_file *elf,
 	new->hdr.Misc.VirtualSize = section_memsz;
 	new->hdr.VirtualAddress = shdr->sh_addr;
 	new->hdr.SizeOfRawData = section_filesz;
+	if ( shdr->sh_type == SHT_PROGBITS ) {
+		if ( opts->hybrid ) {
+			new->hdr.PointerToRawData = elf_lma ( elf, shdr, name );
+			if ( new->hdr.PointerToRawData == 0 )
+				new->hidden = 1;
+		} else {
+			new->hdr.PointerToRawData = PTRD_AUTO;
+		}
+	}
 
-	/* Fill in section characteristics and update RVA limits */
+	/* Treat 16-bit sections as hidden in hybrid binaries */
+	if ( opts->hybrid && ( strlen ( name ) > 2 ) &&
+	     ( strcmp ( &name[ strlen ( name ) - 2 ], "16" ) == 0 ) ) {
+		new->hidden = 1;
+	}
+
+	/* Fill in section characteristics and identify applicable limits */
 	if ( ( shdr->sh_type == SHT_PROGBITS ) &&
-	     ( shdr->sh_flags & SHF_EXECINSTR ) ) {
-		/* .text-type section */
-		new->hdr.Characteristics =
-			( EFI_IMAGE_SCN_CNT_CODE |
-			  EFI_IMAGE_SCN_MEM_NOT_PAGED |
-			  EFI_IMAGE_SCN_MEM_EXECUTE |
-			  EFI_IMAGE_SCN_MEM_READ );
-		applicable_start = &code_start;
-		applicable_end = &code_end;
-	} else if ( ( shdr->sh_type == SHT_PROGBITS ) &&
-		    ( shdr->sh_flags & SHF_WRITE ) ) {
+	     ( shdr->sh_flags & SHF_WRITE ) ) {
 		/* .data-type section */
 		new->hdr.Characteristics =
 			( EFI_IMAGE_SCN_CNT_INITIALIZED_DATA |
 			  EFI_IMAGE_SCN_MEM_NOT_PAGED |
 			  EFI_IMAGE_SCN_MEM_READ |
 			  EFI_IMAGE_SCN_MEM_WRITE );
-		applicable_start = &data_start;
-		applicable_end = &data_mid;
+		applicable_start = data_start;
+		applicable_size = data_size;
+	} else if ( ( shdr->sh_type == SHT_PROGBITS ) &&
+		    ( shdr->sh_flags & SHF_EXECINSTR ) ) {
+		/* .text-type section */
+		new->hdr.Characteristics =
+			( EFI_IMAGE_SCN_CNT_CODE |
+			  EFI_IMAGE_SCN_MEM_NOT_PAGED |
+			  EFI_IMAGE_SCN_MEM_EXECUTE |
+			  EFI_IMAGE_SCN_MEM_READ );
+		applicable_start = code_start;
+		applicable_size = code_size;
 	} else if ( shdr->sh_type == SHT_PROGBITS ) {
 		/* .rodata-type section */
 		new->hdr.Characteristics =
 			( EFI_IMAGE_SCN_CNT_INITIALIZED_DATA |
 			  EFI_IMAGE_SCN_MEM_NOT_PAGED |
 			  EFI_IMAGE_SCN_MEM_READ );
-		applicable_start = &data_start;
-		applicable_end = &data_mid;
+		applicable_start = data_start;
+		applicable_size = data_size;
 	} else if ( shdr->sh_type == SHT_NOBITS ) {
 		/* .bss-type section */
 		new->hdr.Characteristics =
@@ -658,8 +735,8 @@ static struct pe_section * process_section ( struct elf_file *elf,
 			  EFI_IMAGE_SCN_MEM_NOT_PAGED |
 			  EFI_IMAGE_SCN_MEM_READ |
 			  EFI_IMAGE_SCN_MEM_WRITE );
-		applicable_start = &data_mid;
-		applicable_end = &data_end;
+		applicable_start = data_start;
+		applicable_size = bss_size;
 	} else {
 		eprintf ( "Unrecognised characteristics for section %s\n",
 			  name );
@@ -672,43 +749,67 @@ static struct pe_section * process_section ( struct elf_file *elf,
 			 shdr->sh_size );
 	}
 
-	/* Update RVA limits */
+	/* Update file header fields */
 	start = new->hdr.VirtualAddress;
-	end = ( start + new->hdr.Misc.VirtualSize );
-	if ( ! new->hidden ) {
-		if ( ( ! *applicable_start ) || ( *applicable_start >= start ) )
-			*applicable_start = start;
-		if ( *applicable_end < end )
-			*applicable_end = end;
-	}
-	if ( data_start < code_end )
-		data_start = code_end;
-	if ( data_mid < data_start )
-		data_mid = data_start;
-	if ( data_end < data_mid )
-		data_end = data_mid;
-
-	/* Write RVA limits back to file header */
-	pe_header->nt.OptionalHeader.BaseOfCode = code_start;
-	pe_header->nt.OptionalHeader.SizeOfCode = ( code_end - code_start );
-#if defined(EFI_TARGET32)
-	pe_header->nt.OptionalHeader.BaseOfData = data_start;
-#endif
-	pe_header->nt.OptionalHeader.SizeOfInitializedData =
-		( data_mid - data_start );
-	pe_header->nt.OptionalHeader.SizeOfUninitializedData =
-		( data_end - data_mid );
-
-	/* Update remaining file header fields */
 	if ( ! new->hidden ) {
 		pe_header->nt.FileHeader.NumberOfSections++;
 		pe_header->nt.OptionalHeader.SizeOfHeaders +=
 			sizeof ( new->hdr );
+		if ( applicable_start && ( ( *applicable_start == 0 ) ||
+					   ( start < *applicable_start ) ) ) {
+			*applicable_start = start;
+		}
+		if ( applicable_size ) {
+			*applicable_size += section_memsz;
+		}
 	}
-	pe_header->nt.OptionalHeader.SizeOfImage =
-		efi_image_align ( data_end );
+	end = efi_image_align ( start + section_memsz );
+	if ( end > pe_header->nt.OptionalHeader.SizeOfImage ) {
+		pe_header->nt.OptionalHeader.SizeOfImage = end;
+	}
 
 	return new;
+}
+
+/**
+ * Update image base address
+ *
+ * @v pe_header		PE file header
+ * @v pe_sections	List of PE sections
+ * @v pe_reltab		PE relocation table
+ */
+static void update_image_base ( struct pe_header *pe_header,
+				struct pe_section *pe_sections,
+				struct pe_relocs *pe_reltab ) {
+	struct pe_section *section;
+	struct pe_relocs *pe_rel;
+	unsigned long base = -1UL;
+
+	/* Set ImageBase to the highest possible value, leaving space
+	 * for the PE header itself.
+	 */
+	for ( section = pe_sections ; section ; section = section->next ) {
+		if ( ! section->hidden ) {
+			if ( base > section->hdr.VirtualAddress )
+				base = section->hdr.VirtualAddress;
+		}
+	}
+	base -= EFI_IMAGE_ALIGN;
+	pe_header->nt.OptionalHeader.ImageBase = base;
+
+	/* Adjust RVAs to match ImageBase */
+	pe_header->nt.OptionalHeader.AddressOfEntryPoint -= base;
+	pe_header->nt.OptionalHeader.BaseOfCode -= base;
+#if defined(EFI_TARGET32)
+	pe_header->nt.OptionalHeader.BaseOfData -= base;
+#endif
+	pe_header->nt.OptionalHeader.SizeOfImage -= base;
+	for ( section = pe_sections ; section ; section = section->next ) {
+		section->hdr.VirtualAddress -= base;
+	}
+	for ( pe_rel = pe_reltab ; pe_rel ; pe_rel = pe_rel->next ) {
+		pe_rel->start_rva -= base;
+	}
 }
 
 /**
@@ -783,6 +884,8 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 		case ELF_MREL ( EM_ARM, R_ARM_V4BX ):
 		case ELF_MREL ( EM_X86_64, R_X86_64_PC32 ) :
 		case ELF_MREL ( EM_X86_64, R_X86_64_PLT32 ) :
+		case ELF_MREL ( EM_X86_64, R_X86_64_GOTPCRELX ) :
+		case ELF_MREL ( EM_X86_64, R_X86_64_REX_GOTPCRELX ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_CALL26 ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_JUMP26 ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_ADR_PREL_LO21 ) :
@@ -792,6 +895,7 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_LDST16_ABS_LO12_NC ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_LDST32_ABS_LO12_NC ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_LDST64_ABS_LO12_NC ) :
+		case ELF_MREL ( EM_AARCH64, R_AARCH64_LDST128_ABS_LO12_NC ) :
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_B26):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_PCALA_HI20 ):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_PCALA_LO12 ):
@@ -881,6 +985,7 @@ create_reloc_section ( struct pe_header *pe_header,
 	reloc->hdr.Misc.VirtualSize = section_memsz;
 	reloc->hdr.VirtualAddress = pe_header->nt.OptionalHeader.SizeOfImage;
 	reloc->hdr.SizeOfRawData = section_filesz;
+	reloc->hdr.PointerToRawData = PTRD_AUTO;
 	reloc->hdr.Characteristics = ( EFI_IMAGE_SCN_CNT_INITIALIZED_DATA |
 				       EFI_IMAGE_SCN_MEM_DISCARDABLE |
 				       EFI_IMAGE_SCN_MEM_NOT_PAGED |
@@ -903,20 +1008,6 @@ create_reloc_section ( struct pe_header *pe_header,
 }
 
 /**
- * Fix up debug section
- *
- * @v debug		Debug section
- */
-static void fixup_debug_section ( struct pe_section *debug ) {
-	EFI_IMAGE_DEBUG_DIRECTORY_ENTRY *contents;
-
-	/* Fix up FileOffset */
-	contents = ( ( void * ) debug->contents );
-	contents->FileOffset += ( debug->hdr.PointerToRawData -
-				  debug->hdr.VirtualAddress );
-}
-
-/**
  * Create debug section
  *
  * @v pe_header		PE file header
@@ -931,27 +1022,31 @@ create_debug_section ( struct pe_header *pe_header, const char *filename ) {
 	struct {
 		EFI_IMAGE_DEBUG_DIRECTORY_ENTRY debug;
 		EFI_IMAGE_DEBUG_CODEVIEW_RSDS_ENTRY rsds;
-		char name[ strlen ( filename ) + 1 ];
+		char name[32];
 	} *contents;
 
 	/* Allocate PE section */
-	section_memsz = sizeof ( *contents );
-	section_filesz = efi_file_align ( section_memsz );
+	section_filesz = section_memsz = sizeof ( *contents );
 	debug = xmalloc ( sizeof ( *debug ) + section_filesz );
 	memset ( debug, 0, sizeof ( *debug ) + section_filesz );
 	contents = ( void * ) debug->contents;
+
+	/* Place at end of headers */
+	pe_header->nt.OptionalHeader.SizeOfHeaders += sizeof ( *contents );
+	pe_header->nt.OptionalHeader.SizeOfHeaders =
+		efi_file_align ( pe_header->nt.OptionalHeader.SizeOfHeaders );
+	pe_header->nt.OptionalHeader.SizeOfHeaders -= sizeof ( *contents );
 
 	/* Fill in section header details */
 	strncpy ( ( char * ) debug->hdr.Name, ".debug",
 		  sizeof ( debug->hdr.Name ) );
 	debug->hdr.Misc.VirtualSize = section_memsz;
-	debug->hdr.VirtualAddress = pe_header->nt.OptionalHeader.SizeOfImage;
+	debug->hdr.VirtualAddress =
+		pe_header->nt.OptionalHeader.SizeOfHeaders;
 	debug->hdr.SizeOfRawData = section_filesz;
-	debug->hdr.Characteristics = ( EFI_IMAGE_SCN_CNT_INITIALIZED_DATA |
-				       EFI_IMAGE_SCN_MEM_DISCARDABLE |
-				       EFI_IMAGE_SCN_MEM_NOT_PAGED |
-				       EFI_IMAGE_SCN_MEM_READ );
-	debug->fixup = fixup_debug_section;
+	debug->hdr.PointerToRawData =
+		pe_header->nt.OptionalHeader.SizeOfHeaders;
+	debug->hidden = 1;
 
 	/* Create section contents */
 	contents->debug.TimeDateStamp = 0x10d1a884;
@@ -966,10 +1061,7 @@ create_debug_section ( struct pe_header *pe_header, const char *filename ) {
 		   filename );
 
 	/* Update file header details */
-	pe_header->nt.FileHeader.NumberOfSections++;
-	pe_header->nt.OptionalHeader.SizeOfHeaders += sizeof ( debug->hdr );
-	pe_header->nt.OptionalHeader.SizeOfImage +=
-		efi_image_align ( section_memsz );
+	pe_header->nt.OptionalHeader.SizeOfHeaders += sizeof ( *contents );
 	debugdir = &(pe_header->nt.OptionalHeader.DataDirectory
 		     [EFI_IMAGE_DIRECTORY_ENTRY_DEBUG]);
 	debugdir->VirtualAddress = debug->hdr.VirtualAddress;
@@ -989,25 +1081,79 @@ static void write_pe_file ( struct pe_header *pe_header,
 			    struct pe_section *pe_sections,
 			    FILE *pe ) {
 	struct pe_section *section;
-	unsigned long fpos = 0;
+	unsigned long hdrmax;
+	unsigned long fpos;
+	unsigned long fposmax;
 	unsigned int count = 0;
 
+	/* Extend header length to reach first explicitly placed section */
+	hdrmax = -1UL;
+	for ( section = pe_sections ; section ; section = section->next ) {
+		if ( ( section->hdr.PointerToRawData != PTRD_AUTO ) &&
+		     ( section->hdr.SizeOfRawData > 0 ) &&
+		     ( ! section->hidden ) &&
+		     ( hdrmax > section->hdr.PointerToRawData ) ) {
+			hdrmax = section->hdr.PointerToRawData;
+		}
+	}
+	if ( ( hdrmax != -1UL ) &&
+	     ( pe_header->nt.OptionalHeader.SizeOfHeaders < hdrmax ) ) {
+		pe_header->nt.OptionalHeader.SizeOfHeaders = hdrmax;
+	}
+
 	/* Align length of headers */
-	fpos = pe_header->nt.OptionalHeader.SizeOfHeaders =
+	fpos = fposmax = pe_header->nt.OptionalHeader.SizeOfHeaders =
 		efi_file_align ( pe_header->nt.OptionalHeader.SizeOfHeaders );
+	if ( fpos > hdrmax ) {
+		eprintf ( "Cannot fit %lx bytes of headers before section at "
+			  "file offset %lx\n", fpos, hdrmax );
+		exit ( 1 );
+	}
 
 	/* Assign raw data pointers */
 	for ( section = pe_sections ; section ; section = section->next ) {
-		if ( section->hdr.SizeOfRawData ) {
-			section->hdr.PointerToRawData = fpos;
-			fpos += section->hdr.SizeOfRawData;
-			fpos = efi_file_align ( fpos );
+		if ( section->hdr.PointerToRawData == PTRD_AUTO ) {
+			fpos = fposmax;
+		} else {
+			fpos = section->hdr.PointerToRawData;
 		}
-		if ( section->fixup )
-			section->fixup ( section );
+		section->hdr.PointerToRawData = fpos;
+		fpos += section->hdr.SizeOfRawData;
+		fpos = efi_file_align ( fpos );
+		if ( fpos > fposmax )
+			fposmax = fpos;
+	}
+
+	/* Write sections */
+	for ( section = pe_sections ; section ; section = section->next ) {
+		if ( ( section->hdr.PointerToRawData & ( EFI_FILE_ALIGN - 1 ) )
+		     && ( ! section->hidden ) ) {
+			eprintf ( "Section %.8s file offset %x is "
+				  "misaligned\n", section->hdr.Name,
+				  section->hdr.PointerToRawData );
+			exit ( 1 );
+		}
+		if ( fseek ( pe, section->hdr.PointerToRawData,
+			     SEEK_SET ) != 0 ) {
+			eprintf ( "Could not seek to %x: %s\n",
+				  section->hdr.PointerToRawData,
+				  strerror ( errno ) );
+			exit ( 1 );
+		}
+		if ( section->hdr.SizeOfRawData &&
+		     ( fwrite ( section->contents, section->hdr.SizeOfRawData,
+				1, pe ) != 1 ) ) {
+			eprintf ( "Could not write section %.8s: %s\n",
+				  section->hdr.Name, strerror ( errno ) );
+			exit ( 1 );
+		}
 	}
 
 	/* Write file header */
+	if ( fseek ( pe, 0, SEEK_SET ) != 0 ) {
+		eprintf ( "Could not rewind: %s\n", strerror ( errno ) );
+		exit ( 1 );
+	}
 	if ( fwrite ( pe_header,
 		      ( offsetof ( typeof ( *pe_header ), nt.OptionalHeader ) +
 			pe_header->nt.FileHeader.SizeOfOptionalHeader ),
@@ -1028,24 +1174,6 @@ static void write_pe_file ( struct pe_header *pe_header,
 		count++;
 	}
 	assert ( count == pe_header->nt.FileHeader.NumberOfSections );
-
-	/* Write sections */
-	for ( section = pe_sections ; section ; section = section->next ) {
-		if ( fseek ( pe, section->hdr.PointerToRawData,
-			     SEEK_SET ) != 0 ) {
-			eprintf ( "Could not seek to %x: %s\n",
-				  section->hdr.PointerToRawData,
-				  strerror ( errno ) );
-			exit ( 1 );
-		}
-		if ( section->hdr.SizeOfRawData &&
-		     ( fwrite ( section->contents, section->hdr.SizeOfRawData,
-				1, pe ) != 1 ) ) {
-			eprintf ( "Could not write section %.8s: %s\n",
-				  section->hdr.Name, strerror ( errno ) );
-			exit ( 1 );
-		}
-	}
 }
 
 /**
@@ -1090,7 +1218,8 @@ static void elf2pe ( const char *elf_name, const char *pe_name,
 
 			/* Create output section */
 			*(next_pe_section) = process_section ( &elf, shdr,
-							       &pe_header );
+							       &pe_header,
+							       opts );
 			next_pe_section = &(*next_pe_section)->next;
 
 		} else if ( shdr->sh_type == SHT_REL ) {
@@ -1106,6 +1235,9 @@ static void elf2pe ( const char *elf_name, const char *pe_name,
 					 &pe_reltab, opts );
 		}
 	}
+
+	/* Update image base address */
+	update_image_base ( &pe_header, pe_sections, pe_reltab );
 
 	/* Create the .reloc section */
 	*(next_pe_section) = create_reloc_section ( &pe_header, pe_reltab );

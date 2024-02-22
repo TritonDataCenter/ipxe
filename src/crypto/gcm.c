@@ -469,13 +469,15 @@ int gcm_setkey ( struct gcm_context *context, const void *key, size_t keylen,
  * @v ivlen		Initialisation vector length
  */
 void gcm_setiv ( struct gcm_context *context, const void *iv, size_t ivlen ) {
-	union gcm_block *check = ( ( void * ) context );
 
-	/* Sanity checks */
-	linker_assert ( &context->hash == check, gcm_bad_layout );
-	linker_assert ( &context->len == check + 1, gcm_bad_layout );
-	linker_assert ( &context->ctr == check + 2, gcm_bad_layout );
-	linker_assert ( &context->key == check + 3, gcm_bad_layout );
+	/* Sanity check: ensure that memset()s will clear expected state */
+	build_assert ( &context->hash < &context->ctr );
+	build_assert ( &context->len < &context->ctr );
+	build_assert ( &context->ctr < &context->key );
+	build_assert ( ( ( void * ) &context->raw_cipher ) >
+		       ( ( void * ) &context->key ) );
+	build_assert ( ( ( void * ) context->raw_ctx ) >
+		       ( ( void * ) &context->key ) );
 
 	/* Reset non-key state */
 	memset ( context, 0, offsetof ( typeof ( *context ), key ) );
