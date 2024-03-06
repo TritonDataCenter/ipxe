@@ -14,3 +14,6 @@
 
 #undef	BANNER_TIMEOUT
 #define	BANNER_TIMEOUT	50
+
+/* Maybe revert when Mellanox support with works again (TRITON-2432). */
+#undef NET_PROTO_EAPOL
