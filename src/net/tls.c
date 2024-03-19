@@ -158,6 +158,10 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define EINFO_ENOTSUP_VERSION						\
 	__einfo_uniqify ( EINFO_ENOTSUP, 0x04,				\
 			  "Unsupported protocol version" )
+#define ENOTSUP_CURVE __einfo_error ( EINFO_ENOTSUP_CURVE )
+#define EINFO_ENOTSUP_CURVE						\
+	__einfo_uniqify ( EINFO_ENOTSUP, 0x05,				\
+			  "Unsupported elliptic curve" )
 #define EPERM_ALERT __einfo_error ( EINFO_EPERM_ALERT )
 #define EINFO_EPERM_ALERT						\
 	__einfo_uniqify ( EINFO_EPERM, 0x01,				\
@@ -1044,6 +1048,35 @@ tls_signature_hash_digest ( struct tls_signature_hash_id code ) {
 
 /******************************************************************************
  *
+ * Ephemeral Elliptic Curve Diffie-Hellman key exchange
+ *
+ ******************************************************************************
+ */
+
+/** Number of supported named curves */
+#define TLS_NUM_NAMED_CURVES table_num_entries ( TLS_NAMED_CURVES )
+
+/**
+ * Identify named curve
+ *
+ * @v named_curve	Named curve specification
+ * @ret curve		Named curve, or NULL
+ */
+static struct tls_named_curve *
+tls_find_named_curve ( unsigned int named_curve ) {
+	struct tls_named_curve *curve;
+
+	/* Identify named curve */
+	for_each_table_entry ( curve, TLS_NAMED_CURVES ) {
+		if ( curve->code == named_curve )
+			return curve;
+	}
+
+	return NULL;
+}
+
+/******************************************************************************
+ *
  * Record handling
  *
  ******************************************************************************
@@ -1122,6 +1155,67 @@ static int tls_client_hello ( struct tls_connection *tls,
 	struct tls_session *session = tls->session;
 	size_t name_len = strlen ( session->name );
 	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint16_t len;
+			struct {
+				uint8_t type;
+				uint16_t len;
+				uint8_t name[name_len];
+			} __attribute__ (( packed )) list[1];
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *server_name_ext;
+	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint8_t max;
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *max_fragment_length_ext;
+	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint16_t len;
+			struct tls_signature_hash_id
+				code[TLS_NUM_SIG_HASH_ALGORITHMS];
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *signature_algorithms_ext;
+	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint8_t len;
+			uint8_t data[ tls->secure_renegotiation ?
+				      sizeof ( tls->verify.client ) :0 ];
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *renegotiation_info_ext;
+	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint8_t data[session->ticket_len];
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *session_ticket_ext;
+	struct {
+		uint16_t type;
+		uint16_t len;
+		struct {
+			uint16_t len;
+			uint16_t code[TLS_NUM_NAMED_CURVES];
+		} __attribute__ (( packed )) data;
+	} __attribute__ (( packed )) *named_curve_ext;
+	struct {
+		typeof ( *server_name_ext ) server_name;
+		typeof ( *max_fragment_length_ext ) max_fragment_length;
+		typeof ( *signature_algorithms_ext ) signature_algorithms;
+		typeof ( *renegotiation_info_ext ) renegotiation_info;
+		typeof ( *session_ticket_ext ) session_ticket;
+		typeof ( *named_curve_ext )
+			named_curve[TLS_NUM_NAMED_CURVES ? 1 : 0];
+	} __attribute__ (( packed )) *extensions;
+	struct {
 		uint32_t type_length;
 		uint16_t version;
 		uint8_t random[32];
@@ -1132,45 +1226,11 @@ static int tls_client_hello ( struct tls_connection *tls,
 		uint8_t compression_methods_len;
 		uint8_t compression_methods[1];
 		uint16_t extensions_len;
-		struct {
-			uint16_t server_name_type;
-			uint16_t server_name_len;
-			struct {
-				uint16_t len;
-				struct {
-					uint8_t type;
-					uint16_t len;
-					uint8_t name[name_len];
-				} __attribute__ (( packed )) list[1];
-			} __attribute__ (( packed )) server_name;
-			uint16_t max_fragment_length_type;
-			uint16_t max_fragment_length_len;
-			struct {
-				uint8_t max;
-			} __attribute__ (( packed )) max_fragment_length;
-			uint16_t signature_algorithms_type;
-			uint16_t signature_algorithms_len;
-			struct {
-				uint16_t len;
-				struct tls_signature_hash_id
-					code[TLS_NUM_SIG_HASH_ALGORITHMS];
-			} __attribute__ (( packed )) signature_algorithms;
-			uint16_t renegotiation_info_type;
-			uint16_t renegotiation_info_len;
-			struct {
-				uint8_t len;
-				uint8_t data[ tls->secure_renegotiation ?
-					      sizeof ( tls->verify.client ) :0];
-			} __attribute__ (( packed )) renegotiation_info;
-			uint16_t session_ticket_type;
-			uint16_t session_ticket_len;
-			struct {
-				uint8_t data[session->ticket_len];
-			} __attribute__ (( packed )) session_ticket;
-		} __attribute__ (( packed )) extensions;
+		typeof ( *extensions ) extensions;
 	} __attribute__ (( packed )) hello;
 	struct tls_cipher_suite *suite;
 	struct tls_signature_hash_algorithm *sighash;
+	struct tls_named_curve *curve;
 	unsigned int i;
 
 	/* Construct record */
@@ -1188,43 +1248,66 @@ static int tls_client_hello ( struct tls_connection *tls,
 		hello.cipher_suites[i++] = suite->code;
 	hello.compression_methods_len = sizeof ( hello.compression_methods );
 	hello.extensions_len = htons ( sizeof ( hello.extensions ) );
-	hello.extensions.server_name_type = htons ( TLS_SERVER_NAME );
-	hello.extensions.server_name_len
-		= htons ( sizeof ( hello.extensions.server_name ) );
-	hello.extensions.server_name.len
-		= htons ( sizeof ( hello.extensions.server_name.list ) );
-	hello.extensions.server_name.list[0].type = TLS_SERVER_NAME_HOST_NAME;
-	hello.extensions.server_name.list[0].len
-		= htons ( sizeof ( hello.extensions.server_name.list[0].name ));
-	memcpy ( hello.extensions.server_name.list[0].name, session->name,
-		 sizeof ( hello.extensions.server_name.list[0].name ) );
-	hello.extensions.max_fragment_length_type
-		= htons ( TLS_MAX_FRAGMENT_LENGTH );
-	hello.extensions.max_fragment_length_len
-		= htons ( sizeof ( hello.extensions.max_fragment_length ) );
-	hello.extensions.max_fragment_length.max
-		= TLS_MAX_FRAGMENT_LENGTH_4096;
-	hello.extensions.signature_algorithms_type
-		= htons ( TLS_SIGNATURE_ALGORITHMS );
-	hello.extensions.signature_algorithms_len
-		= htons ( sizeof ( hello.extensions.signature_algorithms ) );
-	hello.extensions.signature_algorithms.len
-		= htons ( sizeof ( hello.extensions.signature_algorithms.code));
+	extensions = &hello.extensions;
+
+	/* Construct server name extension */
+	server_name_ext = &extensions->server_name;
+	server_name_ext->type = htons ( TLS_SERVER_NAME );
+	server_name_ext->len = htons ( sizeof ( server_name_ext->data ) );
+	server_name_ext->data.len
+		= htons ( sizeof ( server_name_ext->data.list ) );
+	server_name_ext->data.list[0].type = TLS_SERVER_NAME_HOST_NAME;
+	server_name_ext->data.list[0].len
+		= htons ( sizeof ( server_name_ext->data.list[0].name ) );
+	memcpy ( server_name_ext->data.list[0].name, session->name,
+		 sizeof ( server_name_ext->data.list[0].name ) );
+
+	/* Construct maximum fragment length extension */
+	max_fragment_length_ext = &extensions->max_fragment_length;
+	max_fragment_length_ext->type = htons ( TLS_MAX_FRAGMENT_LENGTH );
+	max_fragment_length_ext->len
+		= htons ( sizeof ( max_fragment_length_ext->data ) );
+	max_fragment_length_ext->data.max = TLS_MAX_FRAGMENT_LENGTH_4096;
+
+	/* Construct supported signature algorithms extension */
+	signature_algorithms_ext = &extensions->signature_algorithms;
+	signature_algorithms_ext->type = htons ( TLS_SIGNATURE_ALGORITHMS );
+	signature_algorithms_ext->len
+		= htons ( sizeof ( signature_algorithms_ext->data ) );
+	signature_algorithms_ext->data.len
+		= htons ( sizeof ( signature_algorithms_ext->data.code ) );
 	i = 0 ; for_each_table_entry ( sighash, TLS_SIG_HASH_ALGORITHMS )
-		hello.extensions.signature_algorithms.code[i++] = sighash->code;
-	hello.extensions.renegotiation_info_type
-		= htons ( TLS_RENEGOTIATION_INFO );
-	hello.extensions.renegotiation_info_len
-		= htons ( sizeof ( hello.extensions.renegotiation_info ) );
-	hello.extensions.renegotiation_info.len
-		= sizeof ( hello.extensions.renegotiation_info.data );
-	memcpy ( hello.extensions.renegotiation_info.data, tls->verify.client,
-		 sizeof ( hello.extensions.renegotiation_info.data ) );
-	hello.extensions.session_ticket_type = htons ( TLS_SESSION_TICKET );
-	hello.extensions.session_ticket_len
-		= htons ( sizeof ( hello.extensions.session_ticket ) );
-	memcpy ( hello.extensions.session_ticket.data, session->ticket,
-		 sizeof ( hello.extensions.session_ticket.data ) );
+		signature_algorithms_ext->data.code[i++] = sighash->code;
+
+	/* Construct renegotiation information extension */
+	renegotiation_info_ext = &extensions->renegotiation_info;
+	renegotiation_info_ext->type = htons ( TLS_RENEGOTIATION_INFO );
+	renegotiation_info_ext->len
+		= htons ( sizeof ( renegotiation_info_ext->data ) );
+	renegotiation_info_ext->data.len
+		= sizeof ( renegotiation_info_ext->data.data );
+	memcpy ( renegotiation_info_ext->data.data, tls->verify.client,
+		 sizeof ( renegotiation_info_ext->data.data ) );
+
+	/* Construct session ticket extension */
+	session_ticket_ext = &extensions->session_ticket;
+	session_ticket_ext->type = htons ( TLS_SESSION_TICKET );
+	session_ticket_ext->len
+		= htons ( sizeof ( session_ticket_ext->data ) );
+	memcpy ( session_ticket_ext->data.data, session->ticket,
+		 sizeof ( session_ticket_ext->data.data ) );
+
+	/* Construct named curves extension, if applicable */
+	if ( sizeof ( extensions->named_curve ) ) {
+		named_curve_ext = &extensions->named_curve[0];
+		named_curve_ext->type = htons ( TLS_NAMED_CURVE );
+		named_curve_ext->len
+			= htons ( sizeof ( named_curve_ext->data ) );
+		named_curve_ext->data.len
+			= htons ( sizeof ( named_curve_ext->data.code ) );
+		i = 0 ; for_each_table_entry ( curve, TLS_NAMED_CURVES )
+			named_curve_ext->data.code[i++] = curve->code;
+	}
 
 	return action ( tls, &hello, sizeof ( hello ) );
 }
@@ -1336,13 +1419,6 @@ static int tls_send_client_key_exchange_pubkey ( struct tls_connection *tls ) {
 	tls_generate_master_secret ( tls, &pre_master_secret,
 				     sizeof ( pre_master_secret ) );
 
-	/* Generate keys */
-	if ( ( rc = tls_generate_keys ( tls ) ) != 0 ) {
-		DBGC ( tls, "TLS %p could not generate keys: %s\n",
-		       tls, strerror ( rc ) );
-		return rc;
-	}
-
 	/* Encrypt pre-master secret using server's public key */
 	memset ( &key_xchg, 0, sizeof ( key_xchg ) );
 	len = pubkey_encrypt ( pubkey, cipherspec->pubkey_ctx,
@@ -1374,21 +1450,18 @@ struct tls_key_exchange_algorithm tls_pubkey_exchange_algorithm = {
 };
 
 /**
- * Transmit Client Key Exchange record using DHE key exchange
+ * Verify Diffie-Hellman parameter signature
  *
  * @v tls		TLS connection
+ * @v param_len		Diffie-Hellman parameter length
  * @ret rc		Return status code
  */
-static int tls_send_client_key_exchange_dhe ( struct tls_connection *tls ) {
+static int tls_verify_dh_params ( struct tls_connection *tls,
+				  size_t param_len ) {
 	struct tls_cipherspec *cipherspec = &tls->tx_cipherspec_pending;
 	struct pubkey_algorithm *pubkey;
 	struct digest_algorithm *digest;
 	int use_sig_hash = tls_version ( tls, TLS_VERSION_TLS_1_2 );
-	uint8_t private[ sizeof ( tls->client_random.random ) ];
-	const struct {
-		uint16_t len;
-		uint8_t data[0];
-	} __attribute__ (( packed )) *dh_val[3];
 	const struct {
 		struct tls_signature_hash_id sig_hash[use_sig_hash];
 		uint16_t signature_len;
@@ -1396,7 +1469,91 @@ static int tls_send_client_key_exchange_dhe ( struct tls_connection *tls ) {
 	} __attribute__ (( packed )) *sig;
 	const void *data;
 	size_t remaining;
+	int rc;
+
+	/* Signature follows parameters */
+	assert ( param_len <= tls->server_key_len );
+	data = ( tls->server_key + param_len );
+	remaining = ( tls->server_key_len - param_len );
+
+	/* Parse signature from ServerKeyExchange */
+	sig = data;
+	if ( ( sizeof ( *sig ) > remaining ) ||
+	     ( ntohs ( sig->signature_len ) > ( remaining -
+						sizeof ( *sig ) ) ) ) {
+		DBGC ( tls, "TLS %p received underlength ServerKeyExchange\n",
+		       tls );
+		DBGC_HDA ( tls, 0, tls->server_key, tls->server_key_len );
+		return -EINVAL_KEY_EXCHANGE;
+	}
+
+	/* Identify signature and hash algorithm */
+	if ( use_sig_hash ) {
+		pubkey = tls_signature_hash_pubkey ( sig->sig_hash[0] );
+		digest = tls_signature_hash_digest ( sig->sig_hash[0] );
+		if ( ( ! pubkey ) || ( ! digest ) ) {
+			DBGC ( tls, "TLS %p ServerKeyExchange unsupported "
+			       "signature and hash algorithm\n", tls );
+			return -ENOTSUP_SIG_HASH;
+		}
+		if ( pubkey != cipherspec->suite->pubkey ) {
+			DBGC ( tls, "TLS %p ServerKeyExchange incorrect "
+			       "signature algorithm %s (expected %s)\n", tls,
+			       pubkey->name, cipherspec->suite->pubkey->name );
+			return -EPERM_KEY_EXCHANGE;
+		}
+	} else {
+		pubkey = cipherspec->suite->pubkey;
+		digest = &md5_sha1_algorithm;
+	}
+
+	/* Verify signature */
+	{
+		const void *signature = sig->signature;
+		size_t signature_len = ntohs ( sig->signature_len );
+		uint8_t ctx[digest->ctxsize];
+		uint8_t hash[digest->digestsize];
+
+		/* Calculate digest */
+		digest_init ( digest, ctx );
+		digest_update ( digest, ctx, &tls->client_random,
+				sizeof ( tls->client_random ) );
+		digest_update ( digest, ctx, tls->server_random,
+				sizeof ( tls->server_random ) );
+		digest_update ( digest, ctx, tls->server_key, param_len );
+		digest_final ( digest, ctx, hash );
+
+		/* Verify signature */
+		if ( ( rc = pubkey_verify ( pubkey, cipherspec->pubkey_ctx,
+					    digest, hash, signature,
+					    signature_len ) ) != 0 ) {
+			DBGC ( tls, "TLS %p ServerKeyExchange failed "
+			       "verification\n", tls );
+			DBGC_HDA ( tls, 0, tls->server_key,
+				   tls->server_key_len );
+			return -EPERM_KEY_EXCHANGE;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * Transmit Client Key Exchange record using DHE key exchange
+ *
+ * @v tls		TLS connection
+ * @ret rc		Return status code
+ */
+static int tls_send_client_key_exchange_dhe ( struct tls_connection *tls ) {
+	uint8_t private[ sizeof ( tls->client_random.random ) ];
+	const struct {
+		uint16_t len;
+		uint8_t data[0];
+	} __attribute__ (( packed )) *dh_val[3];
+	const void *data;
+	size_t remaining;
 	size_t frag_len;
+	size_t param_len;
 	unsigned int i;
 	int rc;
 
@@ -1419,68 +1576,11 @@ static int tls_send_client_key_exchange_dhe ( struct tls_connection *tls ) {
 		data += frag_len;
 		remaining -= frag_len;
 	}
-	sig = data;
-	if ( ( sizeof ( *sig ) > remaining ) ||
-	     ( ntohs ( sig->signature_len ) > ( remaining -
-						sizeof ( *sig ) ) ) ) {
-		DBGC ( tls, "TLS %p received underlength ServerKeyExchange\n",
-		       tls );
-		DBGC_HDA ( tls, 0, tls->server_key, tls->server_key_len );
-		rc = -EINVAL_KEY_EXCHANGE;
-		goto err_header;
-	}
+	param_len = ( tls->server_key_len - remaining );
 
-	/* Identify signature and hash algorithm */
-	if ( use_sig_hash ) {
-		pubkey = tls_signature_hash_pubkey ( sig->sig_hash[0] );
-		digest = tls_signature_hash_digest ( sig->sig_hash[0] );
-		if ( ( ! pubkey ) || ( ! digest ) ) {
-			DBGC ( tls, "TLS %p ServerKeyExchange unsupported "
-			       "signature and hash algorithm\n", tls );
-			rc = -ENOTSUP_SIG_HASH;
-			goto err_sig_hash;
-		}
-		if ( pubkey != cipherspec->suite->pubkey ) {
-			DBGC ( tls, "TLS %p ServerKeyExchange incorrect "
-			       "signature algorithm %s (expected %s)\n", tls,
-			       pubkey->name, cipherspec->suite->pubkey->name );
-			rc = -EPERM_KEY_EXCHANGE;
-			goto err_sig_hash;
-		}
-	} else {
-		pubkey = cipherspec->suite->pubkey;
-		digest = &md5_sha1_algorithm;
-	}
-
-	/* Verify signature */
-	{
-		const void *signature = sig->signature;
-		size_t signature_len = ntohs ( sig->signature_len );
-		uint8_t ctx[digest->ctxsize];
-		uint8_t hash[digest->digestsize];
-
-		/* Calculate digest */
-		digest_init ( digest, ctx );
-		digest_update ( digest, ctx, &tls->client_random,
-				sizeof ( tls->client_random ) );
-		digest_update ( digest, ctx, tls->server_random,
-				sizeof ( tls->server_random ) );
-		digest_update ( digest, ctx, tls->server_key,
-				( tls->server_key_len - remaining ) );
-		digest_final ( digest, ctx, hash );
-
-		/* Verify signature */
-		if ( ( rc = pubkey_verify ( pubkey, cipherspec->pubkey_ctx,
-					    digest, hash, signature,
-					    signature_len ) ) != 0 ) {
-			DBGC ( tls, "TLS %p ServerKeyExchange failed "
-			       "verification\n", tls );
-			DBGC_HDA ( tls, 0, tls->server_key,
-				   tls->server_key_len );
-			rc = -EPERM_KEY_EXCHANGE;
-			goto err_verify;
-		}
-	}
+	/* Verify parameter signature */
+	if ( ( rc = tls_verify_dh_params ( tls, param_len ) ) != 0 )
+		goto err_verify;
 
 	/* Generate Diffie-Hellman private key */
 	if ( ( rc = tls_generate_random ( tls, private,
@@ -1540,13 +1640,6 @@ static int tls_send_client_key_exchange_dhe ( struct tls_connection *tls ) {
 		/* Generate master secret */
 		tls_generate_master_secret ( tls, pre_master_secret, len );
 
-		/* Generate keys */
-		if ( ( rc = tls_generate_keys ( tls ) ) != 0 ) {
-			DBGC ( tls, "TLS %p could not generate keys: %s\n",
-			       tls, strerror ( rc ) );
-			goto err_generate_keys;
-		}
-
 		/* Transmit Client Key Exchange record */
 		if ( ( rc = tls_send_handshake ( tls, key_xchg,
 						 sizeof ( *key_xchg ) ) ) !=0){
@@ -1554,14 +1647,12 @@ static int tls_send_client_key_exchange_dhe ( struct tls_connection *tls ) {
 		}
 
 	err_send_handshake:
-	err_generate_keys:
 	err_dhe_key:
 		free ( dynamic );
 	}
  err_alloc:
  err_random:
  err_verify:
- err_sig_hash:
  err_header:
 	return rc;
 }
@@ -1573,6 +1664,119 @@ struct tls_key_exchange_algorithm tls_dhe_exchange_algorithm = {
 };
 
 /**
+ * Transmit Client Key Exchange record using ECDHE key exchange
+ *
+ * @v tls		TLS connection
+ * @ret rc		Return status code
+ */
+static int tls_send_client_key_exchange_ecdhe ( struct tls_connection *tls ) {
+	struct tls_named_curve *curve;
+	const struct {
+		uint8_t curve_type;
+		uint16_t named_curve;
+		uint8_t public_len;
+		uint8_t public[0];
+	} __attribute__ (( packed )) *ecdh;
+	size_t param_len;
+	int rc;
+
+	/* Parse ServerKeyExchange record */
+	ecdh = tls->server_key;
+	if ( ( sizeof ( *ecdh ) > tls->server_key_len ) ||
+	     ( ecdh->public_len > ( tls->server_key_len - sizeof ( *ecdh ) ))){
+		DBGC ( tls, "TLS %p received underlength ServerKeyExchange\n",
+		       tls );
+		DBGC_HDA ( tls, 0, tls->server_key, tls->server_key_len );
+		return -EINVAL_KEY_EXCHANGE;
+	}
+	param_len = ( sizeof ( *ecdh ) + ecdh->public_len );
+
+	/* Verify parameter signature */
+	if ( ( rc = tls_verify_dh_params ( tls, param_len ) ) != 0 )
+		return rc;
+
+	/* Identify named curve */
+	if ( ecdh->curve_type != TLS_NAMED_CURVE_TYPE ) {
+		DBGC ( tls, "TLS %p unsupported curve type %d\n",
+		       tls, ecdh->curve_type );
+		DBGC_HDA ( tls, 0, tls->server_key, tls->server_key_len );
+		return -ENOTSUP_CURVE;
+	}
+	curve = tls_find_named_curve ( ecdh->named_curve );
+	if ( ! curve ) {
+		DBGC ( tls, "TLS %p unsupported named curve %d\n",
+		       tls, ntohs ( ecdh->named_curve ) );
+		DBGC_HDA ( tls, 0, tls->server_key, tls->server_key_len );
+		return -ENOTSUP_CURVE;
+	}
+
+	/* Check key length */
+	if ( ecdh->public_len != curve->curve->keysize ) {
+		DBGC ( tls, "TLS %p invalid %s key\n",
+		       tls, curve->curve->name );
+		DBGC_HDA ( tls, 0, tls->server_key, tls->server_key_len );
+		return -EINVAL_KEY_EXCHANGE;
+	}
+
+	/* Construct pre-master secret and ClientKeyExchange record */
+	{
+		size_t len = curve->curve->keysize;
+		uint8_t private[len];
+		uint8_t pre_master_secret[len];
+		struct {
+			uint32_t type_length;
+			uint8_t public_len;
+			uint8_t public[len];
+		} __attribute__ (( packed )) key_xchg;
+
+		/* Generate ephemeral private key */
+		if ( ( rc = tls_generate_random ( tls, private,
+						  sizeof ( private ) ) ) != 0){
+			return rc;
+		}
+
+		/* Calculate pre-master secret */
+		if ( ( rc = elliptic_multiply ( curve->curve,
+						ecdh->public, private,
+						pre_master_secret ) ) != 0 ) {
+			DBGC ( tls, "TLS %p could not exchange ECDHE key: %s\n",
+			       tls, strerror ( rc ) );
+			return rc;
+		}
+
+		/* Generate master secret */
+		tls_generate_master_secret ( tls, pre_master_secret, len );
+
+		/* Generate Client Key Exchange record */
+		key_xchg.type_length =
+			( cpu_to_le32 ( TLS_CLIENT_KEY_EXCHANGE ) |
+			  htonl ( sizeof ( key_xchg ) -
+				  sizeof ( key_xchg.type_length ) ) );
+		key_xchg.public_len = len;
+		if ( ( rc = elliptic_multiply ( curve->curve, NULL, private,
+						key_xchg.public ) ) != 0 ) {
+			DBGC ( tls, "TLS %p could not generate ECDHE key: %s\n",
+			       tls, strerror ( rc ) );
+			return rc;
+		}
+
+		/* Transmit Client Key Exchange record */
+		if ( ( rc = tls_send_handshake ( tls, &key_xchg,
+						 sizeof ( key_xchg ) ) ) !=0){
+			return rc;
+		}
+	}
+
+	return 0;
+}
+
+/** Ephemeral Elliptic Curve Diffie-Hellman key exchange algorithm */
+struct tls_key_exchange_algorithm tls_ecdhe_exchange_algorithm = {
+	.name = "ecdhe",
+	.exchange = tls_send_client_key_exchange_ecdhe,
+};
+
+/**
  * Transmit Client Key Exchange record
  *
  * @v tls		TLS connection
@@ -1581,9 +1785,23 @@ struct tls_key_exchange_algorithm tls_dhe_exchange_algorithm = {
 static int tls_send_client_key_exchange ( struct tls_connection *tls ) {
 	struct tls_cipherspec *cipherspec = &tls->tx_cipherspec_pending;
 	struct tls_cipher_suite *suite = cipherspec->suite;
+	int rc;
 
 	/* Transmit Client Key Exchange record via key exchange algorithm */
-	return suite->exchange->exchange ( tls );
+	if ( ( rc = suite->exchange->exchange ( tls ) ) != 0 ) {
+		DBGC ( tls, "TLS %p could not exchange keys: %s\n",
+		       tls, strerror ( rc ) );
+		return rc;
+	}
+
+	/* Generate keys from master secret */
+	if ( ( rc = tls_generate_keys ( tls ) ) != 0 ) {
+		DBGC ( tls, "TLS %p could not generate keys: %s\n",
+		       tls, strerror ( rc ) );
+		return rc;
+	}
+
+	return 0;
 }
 
 /**
@@ -2727,9 +2945,9 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 	} __attribute__ (( packed )) iv;
 	struct tls_auth_header authhdr;
 	struct tls_header *tlshdr;
-	void *plaintext = NULL;
-	size_t plaintext_len = len;
-	struct io_buffer *ciphertext = NULL;
+	void *plaintext;
+	size_t plaintext_len;
+	struct io_buffer *ciphertext;
 	size_t ciphertext_len;
 	size_t padding_len;
 	uint8_t mac[digest->digestsize];
@@ -2738,7 +2956,10 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 
 	/* Construct initialisation vector */
 	memcpy ( iv.fixed, cipherspec->fixed_iv, sizeof ( iv.fixed ) );
-	tls_generate_random ( tls, iv.record, sizeof ( iv.record ) );
+	if ( ( rc = tls_generate_random ( tls, iv.record,
+					  sizeof ( iv.record ) ) ) != 0 ) {
+		goto err_random;
+	}
 
 	/* Construct authentication data */
 	authhdr.seq = cpu_to_be64 ( tls->tx_seq );
@@ -2747,7 +2968,7 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 	authhdr.header.length = htons ( len );
 
 	/* Calculate padding length */
-	plaintext_len += suite->mac_len;
+	plaintext_len = ( len + suite->mac_len );
 	if ( is_block_cipher ( cipher ) ) {
 		padding_len = ( ( ( cipher->blocksize - 1 ) &
 				  -( plaintext_len + 1 ) ) + 1 );
@@ -2762,7 +2983,7 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 		DBGC ( tls, "TLS %p could not allocate %zd bytes for "
 		       "plaintext\n", tls, plaintext_len );
 		rc = -ENOMEM_TX_PLAINTEXT;
-		goto done;
+		goto err_plaintext;
 	}
 
 	/* Assemble plaintext */
@@ -2796,7 +3017,7 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 		DBGC ( tls, "TLS %p could not allocate %zd bytes for "
 		       "ciphertext\n", tls, ciphertext_len );
 		rc = -ENOMEM_TX_CIPHERTEXT;
-		goto done;
+		goto err_ciphertext;
 	}
 
 	/* Assemble ciphertext */
@@ -2821,15 +3042,22 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 				       iob_disown ( ciphertext ) ) ) != 0 ) {
 		DBGC ( tls, "TLS %p could not deliver ciphertext: %s\n",
 		       tls, strerror ( rc ) );
-		goto done;
+		goto err_deliver;
 	}
 
 	/* Update TX state machine to next record */
 	tls->tx_seq += 1;
 
- done:
-	free ( plaintext );
+	assert ( plaintext == NULL );
+	assert ( ciphertext == NULL );
+	return 0;
+
+ err_deliver:
 	free_iob ( ciphertext );
+ err_ciphertext:
+	free ( plaintext );
+ err_plaintext:
+ err_random:
 	return rc;
 }
 

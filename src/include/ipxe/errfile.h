@@ -79,6 +79,9 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_cachedhcp	       ( ERRFILE_CORE | 0x00270000 )
 #define ERRFILE_acpimac		       ( ERRFILE_CORE | 0x00280000 )
 #define ERRFILE_efi_strings	       ( ERRFILE_CORE | 0x00290000 )
+#define ERRFILE_uuid		       ( ERRFILE_CORE | 0x002a0000 )
+#define ERRFILE_efi_path	       ( ERRFILE_CORE | 0x002b0000 )
+#define ERRFILE_efi_mp		       ( ERRFILE_CORE | 0x002c0000 )
 
 #define ERRFILE_eisa		     ( ERRFILE_DRIVER | 0x00000000 )
 #define ERRFILE_isa		     ( ERRFILE_DRIVER | 0x00010000 )
@@ -297,6 +300,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_httpntlm		( ERRFILE_NET | 0x004a0000 )
 #define ERRFILE_eap			( ERRFILE_NET | 0x004b0000 )
 #define ERRFILE_lldp			( ERRFILE_NET | 0x004c0000 )
+#define ERRFILE_eap_md5			( ERRFILE_NET | 0x004d0000 )
+#define ERRFILE_eap_mschapv2		( ERRFILE_NET | 0x004e0000 )
 
 #define ERRFILE_image		      ( ERRFILE_IMAGE | 0x00000000 )
 #define ERRFILE_elf		      ( ERRFILE_IMAGE | 0x00010000 )
@@ -407,6 +412,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_efi_rng		      ( ERRFILE_OTHER | 0x005c0000 )
 #define ERRFILE_efi_shim	      ( ERRFILE_OTHER | 0x005d0000 )
 #define ERRFILE_efi_settings	      ( ERRFILE_OTHER | 0x005e0000 )
+#define ERRFILE_x25519		      ( ERRFILE_OTHER | 0x005f0000 )
+#define ERRFILE_des		      ( ERRFILE_OTHER | 0x00600000 )
 
 /** @} */
 
