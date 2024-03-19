@@ -8,6 +8,8 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
+#include <assert.h>
+
 /**
  * Define a big-integer type
  *
@@ -177,6 +179,30 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	} while ( 0 )
 
 /**
+ * Copy big integer
+ *
+ * @v source		Source big integer
+ * @v dest		Destination big integer
+ */
+#define bigint_copy( source, dest ) do {				\
+	build_assert ( sizeof ( *(source) ) == sizeof ( *(dest) ) );	\
+	bigint_shrink ( (source), (dest) );				\
+	} while ( 0 )
+
+/**
+ * Conditionally swap big integers (in constant time)
+ *
+ * @v first		Big integer to be conditionally swapped
+ * @v second		Big integer to be conditionally swapped
+ * @v swap		Swap first and second big integers
+ */
+#define bigint_swap( first, second, swap ) do {				\
+	unsigned int size = bigint_size (first);			\
+	bigint_swap_raw ( (first)->element, (second)->element, size,	\
+			  (swap) );					\
+	} while ( 0 )
+
+/**
  * Multiply big integers
  *
  * @v multiplicand	Big integer to be multiplied
@@ -184,10 +210,11 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * @v result		Big integer to hold result
  */
 #define bigint_multiply( multiplicand, multiplier, result ) do {	\
-	unsigned int size = bigint_size (multiplicand);			\
+	unsigned int multiplicand_size = bigint_size (multiplicand);	\
+	unsigned int multiplier_size = bigint_size (multiplier);	\
 	bigint_multiply_raw ( (multiplicand)->element,			\
-			      (multiplier)->element, (result)->element,	\
-			      size );					\
+			      multiplicand_size, (multiplier)->element,	\
+			      multiplier_size, (result)->element );	\
 	} while ( 0 )
 
 /**
@@ -282,10 +309,13 @@ void bigint_grow_raw ( const bigint_element_t *source0,
 void bigint_shrink_raw ( const bigint_element_t *source0,
 			 unsigned int source_size, bigint_element_t *dest0,
 			 unsigned int dest_size );
+void bigint_swap_raw ( bigint_element_t *first0, bigint_element_t *second0,
+		       unsigned int size, int swap );
 void bigint_multiply_raw ( const bigint_element_t *multiplicand0,
+			   unsigned int multiplicand_size,
 			   const bigint_element_t *multiplier0,
-			   bigint_element_t *result0,
-			   unsigned int size );
+			   unsigned int multiplier_size,
+			   bigint_element_t *result0 );
 void bigint_mod_multiply_raw ( const bigint_element_t *multiplicand0,
 			       const bigint_element_t *multiplier0,
 			       const bigint_element_t *modulus0,
