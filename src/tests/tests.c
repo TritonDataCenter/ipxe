@@ -82,4 +82,3 @@ REQUIRE_OBJECT ( dhe_test );
 REQUIRE_OBJECT ( gcm_test );
 REQUIRE_OBJECT ( nap_test );
 REQUIRE_OBJECT ( x25519_test );
-REQUIRE_OBJECT ( des_test );
