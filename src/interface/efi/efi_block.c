@@ -1042,12 +1042,8 @@ static int efi_block_boot ( unsigned int drive,
 
 			/* Check if this handle is eligible to be
 			 * given a local virtual drive number.
-			 *
-			 * Do not record this as the overall error
-			 * status, since it is not an interesting
-			 * error.
 			 */
-			if ( efi_block_local ( handle ) != 0 ) {
+			if ( ( rc = efi_block_local ( handle ) ) != 0 ) {
 				/* Do not consume virtual drive number */
 				vdrive--;
 				continue;
