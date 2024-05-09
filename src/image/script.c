@@ -219,7 +219,8 @@ static int script_exec ( struct image *image ) {
 static int script_probe ( struct image *image ) {
 	static const char ipxe_magic[] = "#!ipxe";
 	static const char gpxe_magic[] = "#!gpxe";
-	static_assert ( sizeof ( ipxe_magic ) == sizeof ( gpxe_magic ) );
+	linker_assert ( sizeof ( ipxe_magic ) == sizeof ( gpxe_magic ),
+			magic_size_mismatch );
 	char test[ sizeof ( ipxe_magic ) - 1 /* NUL */
 		   + 1 /* terminating space */];
 
