@@ -76,7 +76,7 @@ assert_printf ( const char *fmt, ... ) asm ( "printf" );
 #define build_assert( condition )					     \
 	do { 								     \
 		if ( ! (condition) ) {					     \
-			extern void __attribute__ (( warning (		     \
+			extern void __attribute__ (( error (		     \
 				"build_assert(" #condition ") failed"	     \
 			) )) _C2 ( build_assert_, __LINE__ ) ( void );	     \
 			_C2 ( build_assert_, __LINE__ ) ();		     \
