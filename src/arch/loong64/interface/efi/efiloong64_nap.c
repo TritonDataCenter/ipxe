@@ -46,12 +46,8 @@ static void efiloong64_cpu_nap ( void ) {
 	 * The EFI shell doesn't seem to bother sleeping the CPU; it
 	 * just sits there idly burning power.
 	 *
-	 * If a shutdown is in progess, there may be nothing to
-	 * generate an interrupt since the timer is disabled in the
-	 * first step of ExitBootServices().
 	 */
-	if ( ! efi_shutdown_in_progress )
-		__asm__ __volatile__ ( "idle 0" );
+	__asm__ __volatile__ ( "idle 0" );
 }
 
 PROVIDE_NAP ( efiloong64, cpu_nap, efiloong64_cpu_nap );
