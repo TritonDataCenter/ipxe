@@ -37,6 +37,3 @@ PROVIDE_REQUIRING_SYMBOL();
 #ifdef EAP_METHOD_MD5
 REQUIRE_OBJECT ( eap_md5 );
 #endif
-#ifdef EAP_METHOD_MSCHAPV2
-REQUIRE_OBJECT ( eap_mschapv2 );
-#endif
