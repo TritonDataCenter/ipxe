@@ -303,9 +303,7 @@ bigint_done_raw ( const uint32_t *value0, unsigned int size __unused,
 }
 
 extern void bigint_multiply_raw ( const uint32_t *multiplicand0,
-				  unsigned int multiplicand_size,
 				  const uint32_t *multiplier0,
-				  unsigned int multiplier_size,
-				  uint32_t *value0 );
+				  uint32_t *value0, unsigned int size );
 
 #endif /* _BITS_BIGINT_H */

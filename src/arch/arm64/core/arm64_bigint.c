@@ -36,23 +36,19 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * Multiply big integers
  *
  * @v multiplicand0	Element 0 of big integer to be multiplied
- * @v multiplicand_size	Number of elements in multiplicand
  * @v multiplier0	Element 0 of big integer to be multiplied
- * @v multiplier_size	Number of elements in multiplier
  * @v result0		Element 0 of big integer to hold result
+ * @v size		Number of elements
  */
 void bigint_multiply_raw ( const uint64_t *multiplicand0,
-			   unsigned int multiplicand_size,
 			   const uint64_t *multiplier0,
-			   unsigned int multiplier_size,
-			   uint64_t *result0 ) {
-	unsigned int result_size = ( multiplicand_size + multiplier_size );
-	const bigint_t ( multiplicand_size ) __attribute__ (( may_alias ))
-		*multiplicand = ( ( const void * ) multiplicand0 );
-	const bigint_t ( multiplier_size ) __attribute__ (( may_alias ))
-		*multiplier = ( ( const void * ) multiplier0 );
-	bigint_t ( result_size ) __attribute__ (( may_alias ))
-		*result = ( ( void * ) result0 );
+			   uint64_t *result0, unsigned int size ) {
+	const bigint_t ( size ) __attribute__ (( may_alias )) *multiplicand =
+		( ( const void * ) multiplicand0 );
+	const bigint_t ( size ) __attribute__ (( may_alias )) *multiplier =
+		( ( const void * ) multiplier0 );
+	bigint_t ( size * 2 ) __attribute__ (( may_alias )) *result =
+		( ( void * ) result0 );
 	unsigned int i;
 	unsigned int j;
 	uint64_t multiplicand_element;
@@ -67,9 +63,9 @@ void bigint_multiply_raw ( const uint64_t *multiplicand0,
 	memset ( result, 0, sizeof ( *result ) );
 
 	/* Multiply integers one element at a time */
-	for ( i = 0 ; i < multiplicand_size ; i++ ) {
+	for ( i = 0 ; i < size ; i++ ) {
 		multiplicand_element = multiplicand->element[i];
-		for ( j = 0 ; j < multiplier_size ; j++ ) {
+		for ( j = 0 ; j < size ; j++ ) {
 			multiplier_element = multiplier->element[j];
 			result_elements = &result->element[ i + j ];
 			/* Perform a single multiply, and add the
@@ -78,7 +74,7 @@ void bigint_multiply_raw ( const uint64_t *multiplicand0,
 			 * never overflow beyond the end of the
 			 * result, since:
 			 *
-			 *     a < 2^{n}, b < 2^{m} => ab < 2^{n+m}
+			 *     a < 2^{n}, b < 2^{n} => ab < 2^{2n}
 			 */
 			__asm__ __volatile__ ( "mul %1, %6, %7\n\t"
 					       "umulh %2, %6, %7\n\t"
