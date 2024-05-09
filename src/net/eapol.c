@@ -167,7 +167,6 @@ static int eapol_eap_rx ( struct eapol_supplicant *supplicant,
 		/* Delay EAPoL-Start until after next expected packet */
 		DBGC ( netdev, "EAPOL %s deferring Start\n", netdev->name );
 		start_timer_fixed ( &supplicant->timer, EAP_WAIT_TIMEOUT );
-		supplicant->count = 0;
 	}
 
  drop:
@@ -251,12 +250,6 @@ static void eapol_expired ( struct retry_timer *timer, int fail __unused ) {
 		container_of ( timer, struct eapol_supplicant, timer );
 	struct net_device *netdev = supplicant->eap.netdev;
 
-	/* Stop transmitting after maximum number of attempts */
-	if ( supplicant->count++ >= EAPOL_START_COUNT ) {
-		DBGC ( netdev, "EAPOL %s giving up\n", netdev->name );
-		return;
-	}
-
 	/* Schedule next transmission */
 	start_timer_fixed ( timer, EAPOL_START_INTERVAL );
 
@@ -324,7 +317,6 @@ static void eapol_notify ( struct net_device *netdev, void *priv ) {
 
 	/* Otherwise, start sending EAPoL-Start */
 	start_timer_nodelay ( &supplicant->timer );
-	supplicant->count = 0;
 	DBGC ( netdev, "EAPOL %s starting up\n", netdev->name );
 }
 
