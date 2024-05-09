@@ -665,10 +665,10 @@ efi_pecoff_debug_name ( EFI_LOADED_IMAGE_PROTOCOL *loaded ) {
 	snprintf ( buf, sizeof ( buf ), "%s", name );
 
 	/* Strip file suffix, if present */
-	if ( ( tmp = strrchr ( buf, '.' ) ) != NULL )
+	if ( ( tmp = strrchr ( name, '.' ) ) != NULL )
 		*tmp = '\0';
 
-	return buf;
+	return name;
 }
 
 /**
