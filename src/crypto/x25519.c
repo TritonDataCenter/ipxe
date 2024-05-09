@@ -59,7 +59,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <stdint.h>
 #include <string.h>
 #include <assert.h>
-#include <errno.h>
 #include <ipxe/init.h>
 #include <ipxe/x25519.h>
 
@@ -782,11 +781,10 @@ static void x25519_reverse ( struct x25519_value *value ) {
  * @v base		Base point
  * @v scalar		Scalar multiple
  * @v result		Point to hold result (may overlap base point)
- * @ret rc		Return status code
  */
-int x25519_key ( const struct x25519_value *base,
-		 const struct x25519_value *scalar,
-		 struct x25519_value *result ) {
+void x25519_key ( const struct x25519_value *base,
+		  const struct x25519_value *scalar,
+		  struct x25519_value *result ) {
 	struct x25519_value *tmp = result;
 	union x25519_quad257 point;
 
@@ -807,7 +805,4 @@ int x25519_key ( const struct x25519_value *base,
 	/* Reverse result */
 	bigint_done ( &point.value, result->raw, sizeof ( result->raw ) );
 	x25519_reverse ( result );
-
-	/* Fail if result was all zeros (as required by RFC8422) */
-	return ( bigint_is_zero ( &point.value ) ? -EPERM : 0 );
 }
