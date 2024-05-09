@@ -116,7 +116,7 @@ const struct setting skip_san_boot_setting __setting ( SETTING_SANBOOT_EXTRA,
  * @v root_paths	Root path(s)
  * @v root_path_count	Number of root paths
  * @v drive		SAN drive (if applicable)
- * @v san_config	SAN boot configuration parameters
+ * @v san_filename	SAN filename (or NULL to use default)
  * @v flags		Boot action flags
  * @ret rc		Return status code
  *
@@ -128,9 +128,8 @@ const struct setting skip_san_boot_setting __setting ( SETTING_SANBOOT_EXTRA,
  */
 int uriboot ( struct uri *filename, struct uri **root_paths,
 	      unsigned int root_path_count, int drive,
-	      struct san_boot_config *san_config, unsigned int flags ) {
+	      const char *san_filename, unsigned int flags ) {
 	struct image *image;
-	const char *san_filename;
 	int rc;
 
 	/* Hook SAN device, if applicable */
@@ -183,12 +182,11 @@ int uriboot ( struct uri *filename, struct uri **root_paths,
 
 	/* Attempt SAN boot if applicable */
 	if ( ! ( flags & URIBOOT_NO_SAN_BOOT ) ) {
-		san_filename = san_config->filename;
 		if ( fetch_intz_setting ( NULL, &skip_san_boot_setting) == 0 ) {
 			printf ( "Booting%s%s from SAN device %#02x\n",
 				 ( san_filename ? " " : "" ),
 				 ( san_filename ? san_filename : "" ), drive );
-			rc = san_boot ( drive, san_config );
+			rc = san_boot ( drive, san_filename );
 			printf ( "Boot from SAN device %#02x failed: %s\n",
 				 drive, strerror ( rc ) );
 		} else {
@@ -389,7 +387,6 @@ static int have_pxe_menu ( void ) {
  * @ret rc		Return status code
  */
 int netboot ( struct net_device *netdev ) {
-	struct san_boot_config san_config;
 	struct uri *filename;
 	struct uri *root_path;
 	char *san_filename;
@@ -424,10 +421,6 @@ int netboot ( struct net_device *netdev ) {
 	/* Fetch SAN filename (if any) */
 	san_filename = fetch_san_filename ( NULL );
 
-	/* Construct SAN boot configuration parameters */
-	memset ( &san_config, 0, sizeof ( san_config ) );
-	san_config.filename = san_filename;
-
 	/* If we have both a filename and a root path, ignore an
 	 * unsupported or missing URI scheme in the root path, since
 	 * it may represent an NFS root.
@@ -449,7 +442,7 @@ int netboot ( struct net_device *netdev ) {
 
 	/* Boot using next server, filename and root path */
 	if ( ( rc = uriboot ( filename, &root_path, ( root_path ? 1 : 0 ),
-			      san_default_drive(), &san_config,
+			      san_default_drive(), san_filename,
 			      ( root_path ? 0 : URIBOOT_NO_SAN ) ) ) != 0 )
 		goto err_uriboot;
 

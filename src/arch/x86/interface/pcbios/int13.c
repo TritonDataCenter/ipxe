@@ -1511,7 +1511,7 @@ static int int13_load_eltorito ( unsigned int drive, struct segoff *address ) {
  * Attempt to boot from an INT 13 drive
  *
  * @v drive		Drive number
- * @v config		Boot configuration parameters
+ * @v filename		Filename (or NULL to use default)
  * @ret rc		Return status code
  *
  * This boots from the specified INT 13 drive by loading the Master
@@ -1521,8 +1521,7 @@ static int int13_load_eltorito ( unsigned int drive, struct segoff *address ) {
  *
  * Note that this function can never return success, by definition.
  */
-static int int13_boot ( unsigned int drive,
-			struct san_boot_config *config __unused ) {
+static int int13_boot ( unsigned int drive, const char *filename __unused ) {
 	struct memory_map memmap;
 	struct segoff address;
 	int rc;

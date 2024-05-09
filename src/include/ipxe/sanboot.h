@@ -105,12 +105,6 @@ enum san_device_flags {
 	SAN_NO_DESCRIBE = 0x0001,
 };
 
-/** SAN boot configuration parameters */
-struct san_boot_config {
-	/** Boot filename (or NULL to use default) */
-	const char *filename;
-};
-
 /**
  * Calculate static inline sanboot API function name
  *
@@ -171,10 +165,10 @@ void san_unhook ( unsigned int drive );
  * Attempt to boot from a SAN device
  *
  * @v drive		Drive number
- * @v config		Boot configuration parameters
+ * @v filename		Filename (or NULL to use default)
  * @ret rc		Return status code
  */
-int san_boot ( unsigned int drive, struct san_boot_config *config );
+int san_boot ( unsigned int drive, const char *filename );
 
 /**
  * Describe SAN devices for SAN-booted operating system

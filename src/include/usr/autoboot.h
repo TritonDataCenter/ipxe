@@ -14,7 +14,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 struct net_device;
 struct uri;
 struct settings;
-struct san_boot_config;
 
 /** uriboot() flags */
 enum uriboot_flags {
@@ -34,7 +33,7 @@ extern void set_autoboot_ll_addr ( const void *ll_addr, size_t len,
 
 extern int uriboot ( struct uri *filename, struct uri **root_paths,
 		     unsigned int root_path_count, int drive,
-		     struct san_boot_config *san_config, unsigned int flags );
+		     const char *san_filename, unsigned int flags );
 extern struct uri *
 fetch_next_server_and_filename ( struct settings *settings );
 extern int netboot ( struct net_device *netdev );
