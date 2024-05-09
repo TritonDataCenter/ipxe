@@ -127,7 +127,7 @@ static int ecam_access ( struct pci_device *pci ) {
 
 	/* Reuse mapping if possible */
 	if ( ( pci->busdevfn - ecam.range.start ) < ecam.range.count )
-		return ecam.rc;
+		return 0;
 
 	/* Clear any existing mapping */
 	if ( ecam.regs ) {
@@ -145,7 +145,6 @@ static int ecam_access ( struct pci_device *pci ) {
 	if ( ecam.range.start > pci->busdevfn ) {
 		DBGC ( &ecam, "ECAM found no allocation for " PCI_FMT "\n",
 		       PCI_ARGS ( pci ) );
-		rc = -ENOENT;
 		goto err_find;
 	}
 
@@ -166,13 +165,12 @@ static int ecam_access ( struct pci_device *pci ) {
 	DBGC ( &ecam, "ECAM %04x:[%02x-%02x] mapped [%08llx,%08llx) -> %p\n",
 	       le16_to_cpu ( ecam.alloc.segment ), ecam.alloc.start,
 	       ecam.alloc.end, base, ( base + len ), ecam.regs );
-	ecam.rc = 0;
 	return 0;
 
 	iounmap ( ecam.regs );
  err_ioremap:
  err_find:
-	ecam.rc = rc;
+	ecam.range.count = 0;
 	return rc;
 }
 
