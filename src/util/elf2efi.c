@@ -624,17 +624,7 @@ static struct pe_section * process_section ( struct elf_file *elf,
 
 	/* Fill in section characteristics and update RVA limits */
 	if ( ( shdr->sh_type == SHT_PROGBITS ) &&
-	     ( shdr->sh_flags & SHF_WRITE ) ) {
-		/* .data-type section */
-		new->hdr.Characteristics =
-			( EFI_IMAGE_SCN_CNT_INITIALIZED_DATA |
-			  EFI_IMAGE_SCN_MEM_NOT_PAGED |
-			  EFI_IMAGE_SCN_MEM_READ |
-			  EFI_IMAGE_SCN_MEM_WRITE );
-		applicable_start = &data_start;
-		applicable_end = &data_mid;
-	} else if ( ( shdr->sh_type == SHT_PROGBITS ) &&
-		    ( shdr->sh_flags & SHF_EXECINSTR ) ) {
+	     ( shdr->sh_flags & SHF_EXECINSTR ) ) {
 		/* .text-type section */
 		new->hdr.Characteristics =
 			( EFI_IMAGE_SCN_CNT_CODE |
@@ -643,6 +633,16 @@ static struct pe_section * process_section ( struct elf_file *elf,
 			  EFI_IMAGE_SCN_MEM_READ );
 		applicable_start = &code_start;
 		applicable_end = &code_end;
+	} else if ( ( shdr->sh_type == SHT_PROGBITS ) &&
+		    ( shdr->sh_flags & SHF_WRITE ) ) {
+		/* .data-type section */
+		new->hdr.Characteristics =
+			( EFI_IMAGE_SCN_CNT_INITIALIZED_DATA |
+			  EFI_IMAGE_SCN_MEM_NOT_PAGED |
+			  EFI_IMAGE_SCN_MEM_READ |
+			  EFI_IMAGE_SCN_MEM_WRITE );
+		applicable_start = &data_start;
+		applicable_end = &data_mid;
 	} else if ( shdr->sh_type == SHT_PROGBITS ) {
 		/* .rodata-type section */
 		new->hdr.Characteristics =
