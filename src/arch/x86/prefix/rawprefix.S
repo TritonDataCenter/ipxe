@@ -9,6 +9,7 @@
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
 
 	.section ".note.GNU-stack", "", @progbits
+	.text
 	.arch i386
 	.org 0
 	.code16
