@@ -2945,9 +2945,9 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 	} __attribute__ (( packed )) iv;
 	struct tls_auth_header authhdr;
 	struct tls_header *tlshdr;
-	void *plaintext;
-	size_t plaintext_len;
-	struct io_buffer *ciphertext;
+	void *plaintext = NULL;
+	size_t plaintext_len = len;
+	struct io_buffer *ciphertext = NULL;
 	size_t ciphertext_len;
 	size_t padding_len;
 	uint8_t mac[digest->digestsize];
@@ -2956,10 +2956,7 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 
 	/* Construct initialisation vector */
 	memcpy ( iv.fixed, cipherspec->fixed_iv, sizeof ( iv.fixed ) );
-	if ( ( rc = tls_generate_random ( tls, iv.record,
-					  sizeof ( iv.record ) ) ) != 0 ) {
-		goto err_random;
-	}
+	tls_generate_random ( tls, iv.record, sizeof ( iv.record ) );
 
 	/* Construct authentication data */
 	authhdr.seq = cpu_to_be64 ( tls->tx_seq );
@@ -2968,7 +2965,7 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 	authhdr.header.length = htons ( len );
 
 	/* Calculate padding length */
-	plaintext_len = ( len + suite->mac_len );
+	plaintext_len += suite->mac_len;
 	if ( is_block_cipher ( cipher ) ) {
 		padding_len = ( ( ( cipher->blocksize - 1 ) &
 				  -( plaintext_len + 1 ) ) + 1 );
@@ -2983,7 +2980,7 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 		DBGC ( tls, "TLS %p could not allocate %zd bytes for "
 		       "plaintext\n", tls, plaintext_len );
 		rc = -ENOMEM_TX_PLAINTEXT;
-		goto err_plaintext;
+		goto done;
 	}
 
 	/* Assemble plaintext */
@@ -3017,7 +3014,7 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 		DBGC ( tls, "TLS %p could not allocate %zd bytes for "
 		       "ciphertext\n", tls, ciphertext_len );
 		rc = -ENOMEM_TX_CIPHERTEXT;
-		goto err_ciphertext;
+		goto done;
 	}
 
 	/* Assemble ciphertext */
@@ -3042,22 +3039,15 @@ static int tls_send_plaintext ( struct tls_connection *tls, unsigned int type,
 				       iob_disown ( ciphertext ) ) ) != 0 ) {
 		DBGC ( tls, "TLS %p could not deliver ciphertext: %s\n",
 		       tls, strerror ( rc ) );
-		goto err_deliver;
+		goto done;
 	}
 
 	/* Update TX state machine to next record */
 	tls->tx_seq += 1;
 
-	assert ( plaintext == NULL );
-	assert ( ciphertext == NULL );
-	return 0;
-
- err_deliver:
-	free_iob ( ciphertext );
- err_ciphertext:
+ done:
 	free ( plaintext );
- err_plaintext:
- err_random:
+	free_iob ( ciphertext );
 	return rc;
 }
 
