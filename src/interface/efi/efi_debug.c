@@ -479,7 +479,7 @@ efi_devpath_text ( EFI_DEVICE_PATH_PROTOCOL *path ) {
 	}
 
 	/* Convert path to a textual representation */
-	wtext = efidpt->ConvertDevicePathToText ( path, FALSE, FALSE );
+	wtext = efidpt->ConvertDevicePathToText ( path, TRUE, FALSE );
 	if ( ! wtext )
 		return NULL;
 
