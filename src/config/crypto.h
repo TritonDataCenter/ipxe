@@ -18,9 +18,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /** DHE key exchange algorithm */
 #define CRYPTO_EXCHANGE_DHE
 
-/** ECDHE key exchange algorithm */
-#define CRYPTO_EXCHANGE_ECDHE
-
 /** RSA public-key algorithm */
 #define CRYPTO_PUBKEY_RSA
 
