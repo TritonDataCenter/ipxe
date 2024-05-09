@@ -6,9 +6,8 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#include <stddef.h>
 #include <stdlib.h>
-#include <time.h>
+#include <ipxe/timer.h>
 
 static int32_t rnd_seed = 0;
 
@@ -31,9 +30,8 @@ void srandom ( unsigned int seed ) {
 long int random ( void ) {
 	int32_t q;
 
-	/* Initialize linear congruential generator */
-	if ( ! rnd_seed )
-		srandom ( time ( NULL ) );
+	if ( ! rnd_seed ) /* Initialize linear congruential generator */
+		srandom ( currticks() );
 
 	/* simplified version of the LCG given in Bruce Schneier's
 	   "Applied Cryptography" */
