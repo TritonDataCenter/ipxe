@@ -125,9 +125,6 @@
 #ifndef R_AARCH64_LDST64_ABS_LO12_NC
 #define R_AARCH64_LDST64_ABS_LO12_NC 286
 #endif
-#ifndef R_AARCH64_LDST128_ABS_LO12_NC
-#define R_AARCH64_LDST128_ABS_LO12_NC 299
-#endif
 #ifndef R_ARM_CALL
 #define R_ARM_CALL 28
 #endif
@@ -157,12 +154,6 @@
 #endif
 #ifndef R_LARCH_GOT_PC_LO12
 #define R_LARCH_GOT_PC_LO12 76
-#endif
-#ifndef R_X86_64_GOTPCRELX
-#define R_X86_64_GOTPCRELX 41
-#endif
-#ifndef R_X86_64_REX_GOTPCRELX
-#define R_X86_64_REX_GOTPCRELX 42
 #endif
 
 /*
