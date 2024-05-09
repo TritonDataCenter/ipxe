@@ -49,14 +49,12 @@ struct sanboot_options {
 	int keep;
 	/** Filename */
 	char *filename;
-	/** UUID */
-	struct uuid_option uuid;
 };
 
 /** "sanboot" option list */
 static union {
-	/* "sanboot" takes all options */
-	struct option_descriptor sanboot[5];
+	/* "sanboot" takes all four options */
+	struct option_descriptor sanboot[4];
 	/* "sanhook" takes only --drive and --no-describe */
 	struct option_descriptor sanhook[2];
 	/* "sanunhook" takes only --drive */
@@ -71,10 +69,9 @@ static union {
 			      struct sanboot_options, keep, parse_flag ),
 		OPTION_DESC ( "filename", 'f', required_argument,
 			      struct sanboot_options, filename, parse_string ),
-		OPTION_DESC ( "uuid", 'u', required_argument,
-			      struct sanboot_options, uuid, parse_uuid ),
 	},
 };
+
 
 /** "sanhook" command descriptor */
 static struct command_descriptor sanhook_cmd =
@@ -130,7 +127,6 @@ static int sanboot_core_exec ( int argc, char **argv,
 
 	/* Construct configuration parameters */
 	config.filename = opts.filename;
-	config.uuid = opts.uuid.value;
 
 	/* Construct flags */
 	flags = default_flags;

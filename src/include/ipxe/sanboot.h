@@ -19,7 +19,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/process.h>
 #include <ipxe/blockdev.h>
 #include <ipxe/acpi.h>
-#include <ipxe/uuid.h>
 #include <config/sanboot.h>
 
 /**
@@ -110,8 +109,6 @@ enum san_device_flags {
 struct san_boot_config {
 	/** Boot filename (or NULL to use default) */
 	const char *filename;
-	/** UUID (or NULL to ignore UUID) */
-	union uuid *uuid;
 };
 
 /**
