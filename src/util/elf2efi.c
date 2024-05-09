@@ -143,12 +143,6 @@
 #ifndef R_LARCH_64
 #define R_LARCH_64 2
 #endif
-#ifndef R_LARCH_B16
-#define R_LARCH_B16 64
-#endif
-#ifndef R_LARCH_B21
-#define R_LARCH_B21 65
-#endif
 #ifndef R_LARCH_B26
 #define R_LARCH_B26 66
 #endif
@@ -163,12 +157,6 @@
 #endif
 #ifndef R_LARCH_GOT_PC_LO12
 #define R_LARCH_GOT_PC_LO12 76
-#endif
-#ifndef R_LARCH_RELAX
-#define R_LARCH_RELAX 100
-#endif
-#ifndef R_LARCH_PCREL20_S2
-#define R_LARCH_PCREL20_S2 103
 #endif
 #ifndef R_X86_64_GOTPCRELX
 #define R_X86_64_GOTPCRELX 41
@@ -908,22 +896,14 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_LDST32_ABS_LO12_NC ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_LDST64_ABS_LO12_NC ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_LDST128_ABS_LO12_NC ) :
-		case ELF_MREL ( EM_LOONGARCH, R_LARCH_B16):
-		case ELF_MREL ( EM_LOONGARCH, R_LARCH_B21):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_B26):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_PCALA_HI20 ):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_PCALA_LO12 ):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_GOT_PC_HI20 ):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_GOT_PC_LO12 ):
-		case ELF_MREL ( EM_LOONGARCH, R_LARCH_PCREL20_S2 ):
 			/* Skip PC-relative relocations; all relative
 			 * offsets remain unaltered when the object is
 			 * loaded.
-			 */
-			break;
-		case ELF_MREL ( EM_LOONGARCH, R_LARCH_RELAX ):
-			/* Relocation can be relaxed (optimized out).
-			 * Ignore it for now.
 			 */
 			break;
 #if 0	/* XXX TRITON - We handle this case for ourselves, see above. */
