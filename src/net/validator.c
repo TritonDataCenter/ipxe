@@ -595,7 +595,7 @@ static void validator_step ( struct validator *validator ) {
 	 * nothing more to do.
 	 */
 	last = x509_last ( validator->chain );
-	if ( x509_is_self_signed ( last ) ) {
+	if ( asn1_compare ( &last->issuer.raw, &last->subject.raw ) == 0 ) {
 		validator_finished ( validator, rc );
 		return;
 	}
