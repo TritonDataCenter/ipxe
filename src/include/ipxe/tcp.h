@@ -359,7 +359,9 @@ struct tcp_options {
  *
  * We therefore choose a (rounded up) maximum window size of 2048kB.
  */
-#define TCP_MAX_WINDOW_SIZE	( 2048 * 1024 )
+/* #define TCP_MAX_WINDOW_SIZE	( 2048 * 1024 ) */
+/* XXX SmartOS... PSYCH! UNDIONLY doesn't like the big window size! */
+#define TCP_MAX_WINDOW_SIZE	( 256 * 1024 )
 
 /**
  * Path MTU
