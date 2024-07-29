@@ -1,6 +1,7 @@
 /*
  * Copyright (C) 2016 Star Lab Corp.
  * Copyright 2020 Joyent, Inc.
+ * Copyright 2024 MNX Cloud, Inc.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
@@ -58,6 +59,7 @@ FEATURE ( FEATURE_IMAGE, "MBOOT2", DHCP_EB_FEATURE_MULTIBOOT2, 1 );
 #ifdef EFIAPI
 
 #include <ipxe/efi/efi.h>
+#include <ipxe/efi/Protocol/GraphicsOutput.h>
 
 #define P2ROUNDUP(x, align) (-(-(x) & -(align)))
 
@@ -177,7 +179,7 @@ static int multiboot2_inforeq ( struct mb2 *mb2, size_t offset,
 		       mb2->image, inforeq );
 
 		/*
-		 * Note that we don't actually supply framebuffer or bootdev
+		 * Note that we don't actually supply bootdev
 		 * information, but we acknowledge the request.
 		 */
 
@@ -458,6 +460,176 @@ static int multiboot2_add_bootloader ( struct mb2 *mb2 ) {
 
 	mb2->bib_offset += len;
 	bib_close_tag ( mb2, tag );
+	return 0;
+}
+
+static EFI_STATUS multiboot2_fb_colour_mask ( uint32_t mask, uint8_t *scale,
+					uint8_t *lsb ) {
+	uint32_t check;
+
+	/* Fill in LSB and scale */
+	*lsb = ( mask ? ( ffs ( mask ) - 1 ) : 0 );
+	*scale = fls ( mask >> *lsb );
+
+	/* Check that original mask was contiguous */
+	check = ( ( 0xff >> ( 8 - *scale ) ) << *lsb );
+	if ( check != mask )
+		return EFI_UNSUPPORTED;
+
+	return EFI_SUCCESS;
+}
+
+/*
+ * See https://bsdio.com/edk2/docs/master/_console_out_device_8h.html
+ */
+#if !defined(EFI_CONSOLE_OUT_DEVICE_GUID)
+#define	EFI_CONSOLE_OUT_DEVICE_GUID	\
+{ 0xd3b36f2c, 0xd551, 0x11d4, {0x9a, 0x46, 0x0, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
+#endif
+
+static int multiboot2_build_framebuffer (
+		struct multiboot_tag_framebuffer *tag ) {
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_HANDLE *handles, gop_handle;
+	UINTN count, i;
+	EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
+	EFI_STATUS status;
+	EFI_GUID gEfiConsoleOutDeviceGuid = EFI_CONSOLE_OUT_DEVICE_GUID;
+
+	/* Get all GOP handles */
+	status = bs->LocateHandleBuffer ( ByProtocol,
+		&efi_graphics_output_protocol_guid, NULL, &count, &handles );
+	if (status != EFI_SUCCESS)
+		return -ENOTSUP;
+
+	/*
+	 * Search for ConOut protocol, if not found, use first handle.
+	 * See illumos issue "13453 loader.efi: handle multiple gop instances"
+	 */
+	gop_handle = NULL;
+	gop = NULL;
+	for (i = 0; i < count; i++) {
+		EFI_GRAPHICS_OUTPUT_PROTOCOL *tgop;
+		void *dummy;
+
+		status = bs->OpenProtocol ( handles[i],
+			&efi_graphics_output_protocol_guid,
+			(void **)&tgop, efi_image_handle, handles[i],
+			EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+		if (status != EFI_SUCCESS)
+			continue;
+
+		if (tgop->Mode->Info->PixelFormat == PixelBltOnly ||
+		    tgop->Mode->Info->PixelFormat >= PixelFormatMax)
+			continue;
+
+		status = bs->OpenProtocol ( handles[i],
+			&gEfiConsoleOutDeviceGuid,
+			&dummy, efi_image_handle, handles[i],
+			EFI_OPEN_PROTOCOL_BY_HANDLE_PROTOCOL);
+		if (status == EFI_SUCCESS) {
+			gop_handle = handles[i];
+			gop = tgop;
+			break;
+		} else if (gop_handle == NULL) {
+			gop_handle = handles[i];
+			gop = tgop;
+		}
+	}
+
+	bs->FreePool ( handles );
+	if (gop == NULL || gop->Mode->FrameBufferBase == 0)
+		return -ENOTSUP;
+
+	tag->common.type = MULTIBOOT_TAG_TYPE_FRAMEBUFFER;
+	tag->common.size = sizeof (*tag);
+	tag->common.framebuffer_addr = gop->Mode->FrameBufferBase;
+	tag->common.framebuffer_width = gop->Mode->Info->HorizontalResolution;
+	tag->common.framebuffer_height = gop->Mode->Info->VerticalResolution;
+	/*
+	 * UEFI pixels are using 32-bits, so we do use literal constants
+	 * 32 and 4.
+	 */
+	tag->common.framebuffer_bpp = 32;
+	tag->common.framebuffer_pitch = gop->Mode->Info->PixelsPerScanLine * 4;
+	tag->common.framebuffer_type = MULTIBOOT_FRAMEBUFFER_TYPE_RGB;
+	tag->common.reserved = 0;
+
+	switch (gop->Mode->Info->PixelFormat) {
+	case PixelRedGreenBlueReserved8BitPerColor:
+	case PixelBltOnly:
+		status = multiboot2_fb_colour_mask(0x000000ff,
+			&tag->framebuffer_red_mask_size,
+			&tag->framebuffer_red_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		status = multiboot2_fb_colour_mask(0x0000ff00,
+			&tag->framebuffer_green_mask_size,
+			&tag->framebuffer_green_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		status = multiboot2_fb_colour_mask(0x00ff0000,
+			&tag->framebuffer_blue_mask_size,
+			&tag->framebuffer_blue_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		break;
+	case PixelBlueGreenRedReserved8BitPerColor:
+		status = multiboot2_fb_colour_mask(0x00ff0000,
+			&tag->framebuffer_red_mask_size,
+			&tag->framebuffer_red_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		status = multiboot2_fb_colour_mask(0x0000ff00,
+			&tag->framebuffer_green_mask_size,
+			&tag->framebuffer_green_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		status = multiboot2_fb_colour_mask(0x000000ff,
+			&tag->framebuffer_blue_mask_size,
+			&tag->framebuffer_blue_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		break;
+	case PixelBitMask:
+		status = multiboot2_fb_colour_mask(
+			gop->Mode->Info->PixelInformation.RedMask,
+			&tag->framebuffer_red_mask_size,
+			&tag->framebuffer_red_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		status = multiboot2_fb_colour_mask(
+			gop->Mode->Info->PixelInformation.GreenMask,
+			&tag->framebuffer_green_mask_size,
+			&tag->framebuffer_green_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		status = multiboot2_fb_colour_mask(
+			gop->Mode->Info->PixelInformation.BlueMask,
+			&tag->framebuffer_blue_mask_size,
+			&tag->framebuffer_blue_field_position);
+		if (status != EFI_SUCCESS)
+			return -ENOTSUP;
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	return 0;
+}
+
+static int multiboot2_add_framebuffer ( struct mb2 *mb2 ) {
+	struct multiboot_tag_framebuffer *tag;
+
+	if ( ( tag = bib_open_tag ( mb2, MULTIBOOT_TAG_TYPE_FRAMEBUFFER,
+	       sizeof ( *tag ) ) ) == NULL )
+		return -ENOSPC;
+
+	/* Do not error out from failure to detect FB config */
+	if (multiboot2_build_framebuffer( tag ) == 0)
+		bib_close_tag ( mb2, tag );
+	else
+		mb2->bib_offset -= sizeof ( *tag );
 	return 0;
 }
 
@@ -943,6 +1115,9 @@ static int multiboot2_exec ( struct image *image ) {
 		return rc;
 
 	if ( ( rc = multiboot2_add_bootloader ( mb2 ) ) != 0 )
+		return rc;
+
+	if ( ( rc = multiboot2_add_framebuffer ( mb2 ) ) != 0 )
 		return rc;
 
 	if ( ( rc = multiboot2_add_modules ( mb2 ) ) != 0 )
