@@ -69,6 +69,7 @@ $(BOOT_ROOT)/undionly.kpxe :	FILEMODE = 644
 
 # our base image is triton-origin-x86_64-21.4.0
 BASE_IMAGE_UUID = 502eeef2-8267-489f-b19c-a206906f57ef
+BUILDIMAGE_PKGSRC = binutils-2.37
 
 ENGBLD_USE_BUILDIMAGE = false
 ENGBLD_REQUIRE := $(shell git submodule update --init deps/eng)
