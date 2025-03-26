@@ -6,6 +6,7 @@
 
 /*
  * Copyright 2021 Joyent, Inc.
+ * Copyright 2025 MNX Cloud, Inc.
  */
 
 @Library('jenkins-joylib@v1.0.8') _
@@ -41,7 +42,7 @@ make print-BRANCH print-STAMP all release publish bits-upload''')
 
     post {
         always {
-            joySlackNotifications(channel: 'jenkins')
+            joySlackNotifications()
         }
     }
 
