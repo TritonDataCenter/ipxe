@@ -2,6 +2,7 @@
 #define _IPXE_COMMAND_H
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/tables.h>
 
@@ -21,7 +22,12 @@ struct command {
 
 #define COMMANDS __table ( struct command, "commands" )
 
-#define __command __table_entry ( COMMANDS, 01 )
+#define __command( name ) __table_entry ( COMMANDS, _C2 ( 01., name ) )
+
+#define COMMAND( name, exec )						\
+	struct command name ## _command __command ( name ) = {		\
+		#name, exec						\
+	}
 
 extern char * concat_args ( char **args );
 

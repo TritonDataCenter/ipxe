@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdlib.h>
 #include <ipxe/crypto.h>
@@ -42,10 +43,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define FINGERPRINT_LEN SHA256_DIGEST_SIZE
 
 /* Allow trusted certificates to be overridden if not explicitly specified */
-#ifdef TRUSTED
-#define ALLOW_TRUST_OVERRIDE 0
-#else
-#define ALLOW_TRUST_OVERRIDE 1
+#ifndef ALLOW_TRUST_OVERRIDE
+ #ifdef TRUSTED
+  #define ALLOW_TRUST_OVERRIDE 0
+ #else
+  #define ALLOW_TRUST_OVERRIDE 1
+ #endif
 #endif
 
 /* Use iPXE root CA if no trusted certificates are explicitly specified */
@@ -57,6 +60,9 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	0xff, 0x3b, 0xee, 0x63, 0x97, 0xa7, 0x0d, 0x29, 0xc6, 0x5e,	\
 	0xed, 0x1a,
 #endif
+
+/** Flag indicating if root of trust may be overridden at runtime */
+const int allow_trust_override = ALLOW_TRUST_OVERRIDE;
 
 /** Root certificate fingerprints */
 static const uint8_t fingerprints[] = { TRUSTED };

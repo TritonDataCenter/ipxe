@@ -11,6 +11,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #ifndef ASSERTING
 #ifdef NDEBUG
@@ -49,9 +50,9 @@ assert_printf ( const char *fmt, ... ) asm ( "printf" );
 #define assert( condition ) 						     \
 	do { 								     \
 		if ( ASSERTING && ! (condition) ) { 			     \
-			assertion_failures++;				     \
 			assert_printf ( "assert(%s) failed at %s line %d\n", \
 					#condition, __FILE__, __LINE__ );    \
+			assertion_failures++;				     \
 		} 							     \
 	} while ( 0 )
 

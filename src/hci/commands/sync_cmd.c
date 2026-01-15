@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <stdio.h>
@@ -77,7 +78,4 @@ static int sync_exec ( int argc, char **argv ) {
 }
 
 /** Sync commands */
-struct command sync_command __command = {
-	.name = "sync",
-	.exec = sync_exec,
-};
+COMMAND ( sync, sync_exec );

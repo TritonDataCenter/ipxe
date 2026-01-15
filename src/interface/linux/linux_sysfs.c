@@ -42,8 +42,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * @v data		Data to fill in
  * @ret len		Length read, or negative error
  */
-int linux_sysfs_read ( const char *filename, userptr_t *data ) {
-	userptr_t tmp;
+int linux_sysfs_read ( const char *filename, void **data ) {
+	void *tmp;
 	ssize_t read;
 	size_t len;
 	int fd;
@@ -59,7 +59,7 @@ int linux_sysfs_read ( const char *filename, userptr_t *data ) {
 	}
 
 	/* Read file */
-	for ( *data = UNULL, len = 0 ; ; len += read ) {
+	for ( *data = NULL, len = 0 ; ; len += read ) {
 
 		/* (Re)allocate space */
 		tmp = urealloc ( *data, ( len + LINUX_SYSFS_BLKSIZE ) );
@@ -70,8 +70,7 @@ int linux_sysfs_read ( const char *filename, userptr_t *data ) {
 		*data = tmp;
 
 		/* Read from file */
-		read = linux_read ( fd, user_to_virt ( *data, len ),
-				    LINUX_SYSFS_BLKSIZE );
+		read = linux_read ( fd, ( *data + len ), LINUX_SYSFS_BLKSIZE );
 		if ( read == 0 )
 			break;
 		if ( read < 0 ) {

@@ -19,8 +19,9 @@
  * 02110-1301, USA.
  */
 
-#define FILE_LICENCE(...) extern void __file_licence ( void )
 #define	ELF_TARGET_ALL
+#define FILE_LICENCE(...) extern void __file_licence ( void )
+#define FILE_SECBOOT(...) extern void __file_secboot ( void )
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -40,6 +41,9 @@
 #define EFI_HOSTONLY
 #include <ipxe/efi/Uefi.h>
 #include <ipxe/efi/IndustryStandard/PeImage.h>
+
+/* Provide constants spuriously deleted from EDK2 headers */
+#define EFI_IMAGE_MACHINE_ARMTHUMB_MIXED 0x01c2
 
 #define eprintf(...) fprintf ( stderr, __VA_ARGS__ )
 
@@ -85,6 +89,9 @@
 /* Provide constants missing on some platforms */
 #ifndef EM_AARCH64
 #define EM_AARCH64 183
+#endif
+#ifndef EM_RISCV
+#define EM_RISCV 243
 #endif
 #ifndef EM_LOONGARCH
 #define EM_LOONGARCH 258
@@ -169,6 +176,45 @@
 #endif
 #ifndef R_LARCH_PCREL20_S2
 #define R_LARCH_PCREL20_S2 103
+#endif
+#ifndef R_RISCV_NONE
+#define R_RISCV_NONE 0
+#endif
+#ifndef R_RISCV_32
+#define R_RISCV_32 1
+#endif
+#ifndef R_RISCV_64
+#define R_RISCV_64 2
+#endif
+#ifndef R_RISCV_BRANCH
+#define R_RISCV_BRANCH 16
+#endif
+#ifndef R_RISCV_JAL
+#define R_RISCV_JAL 17
+#endif
+#ifndef R_RISCV_PCREL_HI20
+#define R_RISCV_PCREL_HI20 23
+#endif
+#ifndef R_RISCV_PCREL_LO12_I
+#define R_RISCV_PCREL_LO12_I 24
+#endif
+#ifndef R_RISCV_PCREL_LO12_S
+#define R_RISCV_PCREL_LO12_S 25
+#endif
+#ifndef R_RISCV_ADD32
+#define R_RISCV_ADD32 35
+#endif
+#ifndef R_RISCV_SUB32
+#define R_RISCV_SUB32 39
+#endif
+#ifndef R_RISCV_RVC_BRANCH
+#define R_RISCV_RVC_BRANCH 44
+#endif
+#ifndef R_RISCV_RVC_JUMP
+#define R_RISCV_RVC_JUMP 45
+#endif
+#ifndef R_RISCV_RELAX
+#define R_RISCV_RELAX 51
 #endif
 #ifndef R_X86_64_GOTPCRELX
 #define R_X86_64_GOTPCRELX 41
@@ -629,6 +675,11 @@ static void set_machine ( struct elf_file *elf, struct pe_header *pe_header ) {
 	case EM_LOONGARCH:
 		machine = EFI_IMAGE_MACHINE_LOONGARCH64;
 		break;
+	case EM_RISCV:
+		machine = ( ( ELFCLASS == ELFCLASS64 ) ?
+			    EFI_IMAGE_MACHINE_RISCV64 :
+			    EFI_IMAGE_MACHINE_RISCV32 );
+		break;
 	default:
 		eprintf ( "Unknown ELF architecture %d\n", ehdr->e_machine );
 		exit ( 1 );
@@ -861,12 +912,14 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_NONE ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_NULL ) :
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_NONE ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_NONE ) :
 			/* Ignore dummy relocations used by REQUIRE_SYMBOL() */
 			break;
 		case ELF_MREL ( EM_386, R_386_32 ) :
 		case ELF_MREL ( EM_ARM, R_ARM_ABS32 ) :
 		case ELF_MREL ( EM_X86_64, R_X86_64_32 ) :
 		case ELF_MREL ( EM_X86_64, R_X86_64_32S ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_32 ) :
 			/* Generate a 4-byte PE relocation */
 
 #if 1
@@ -885,6 +938,7 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 		case ELF_MREL ( EM_X86_64, R_X86_64_64 ) :
 		case ELF_MREL ( EM_AARCH64, R_AARCH64_ABS64 ) :
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_64 ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_64 ) :
 			/* Generate an 8-byte PE relocation */
 			generate_pe_reloc ( pe_reltab, offset, 8 );
 			break;
@@ -916,14 +970,29 @@ static void process_reloc ( struct elf_file *elf, const Elf_Shdr *shdr,
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_GOT_PC_HI20 ):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_GOT_PC_LO12 ):
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_PCREL20_S2 ):
+		case ELF_MREL ( EM_RISCV, R_RISCV_BRANCH ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_JAL ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_PCREL_HI20 ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_PCREL_LO12_I ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_PCREL_LO12_S ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_RVC_BRANCH ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_RVC_JUMP ) :
 			/* Skip PC-relative relocations; all relative
 			 * offsets remain unaltered when the object is
 			 * loaded.
 			 */
 			break;
 		case ELF_MREL ( EM_LOONGARCH, R_LARCH_RELAX ):
+		case ELF_MREL ( EM_RISCV, R_RISCV_RELAX ) :
 			/* Relocation can be relaxed (optimized out).
 			 * Ignore it for now.
+			 */
+			break;
+		case ELF_MREL ( EM_RISCV, R_RISCV_ADD32 ) :
+		case ELF_MREL ( EM_RISCV, R_RISCV_SUB32 ) :
+			/* Ignore label difference relocations since
+			 * we do not perform any relocations that can
+			 * result in altered label differences.
 			 */
 			break;
 #if 0	/* XXX TRITON - We handle this case for ourselves, see above. */

@@ -1,3 +1,7 @@
+# Specify compressor
+#
+ZBIN		= $(ZBIN64)
+
 # Assembler section type character
 #
 ASM_TCHAR	:= @
@@ -17,6 +21,9 @@ endif
 
 # EFI requires -fshort-wchar, and nothing else currently uses wchar_t
 CFLAGS		+= -fshort-wchar
+
+# Include LoongArch64-specific headers
+INCDIRS		:= arch/$(ARCH)/include $(INCDIRS)
 
 # LoongArch64-specific directories containing source files
 SRCDIRS		+= arch/loong64/core

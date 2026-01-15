@@ -43,7 +43,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 int image_extract ( struct image *image, const char *name,
 		    struct image **extracted ) {
-	char *dot;
 	int rc;
 
 	/* Check that this image can be used to extract an archive image */
@@ -66,10 +65,8 @@ int image_extract ( struct image *image, const char *name,
 	}
 
 	/* Strip any archive or compression suffix from implicit name */
-	if ( ( ! name ) && ( (*extracted)->name ) &&
-	     ( ( dot = strrchr ( (*extracted)->name, '.' ) ) != NULL ) ) {
-		*dot = '\0';
-	}
+	if ( ! name )
+		image_strip_suffix ( *extracted );
 
 	/* Try extracting archive image */
 	if ( ( rc = image->type->extract ( image, *extracted ) ) != 0 ) {
@@ -122,9 +119,14 @@ int image_extract_exec ( struct image *image ) {
 	/* Set auto-unregister flag */
 	extracted->flags |= IMAGE_AUTO_UNREGISTER;
 
-	/* Tail-recurse into extracted image */
-	return image_exec ( extracted );
+	/* Replace current image */
+	if ( ( rc = image_replace ( extracted ) ) != 0 )
+		goto err_replace;
 
+	/* Return to allow replacement image to be executed */
+	return 0;
+
+ err_replace:
  err_set_cmdline:
 	unregister_image ( extracted );
  err_extract:

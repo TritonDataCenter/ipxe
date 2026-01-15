@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <string.h>
@@ -75,7 +76,4 @@ static int ntp_exec ( int argc, char **argv ) {
 }
 
 /** NTP command */
-struct command ntp_command __command = {
-	.name = "ntp",
-	.exec = ntp_exec,
-};
+COMMAND ( ntp, ntp_exec );

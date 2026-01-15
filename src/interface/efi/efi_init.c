@@ -18,6 +18,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <errno.h>
@@ -25,6 +26,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/init.h>
 #include <ipxe/rotate.h>
 #include <ipxe/efi/efi.h>
+#include <ipxe/efi/efi_table.h>
 #include <ipxe/efi/efi_driver.h>
 #include <ipxe/efi/efi_path.h>
 #include <ipxe/efi/efi_cmdline.h>
@@ -104,24 +106,6 @@ static EFIAPI void efi_shutdown_hook ( EFI_EVENT event __unused,
 }
 
 /**
- * Look up EFI configuration table
- *
- * @v guid		Configuration table GUID
- * @ret table		Configuration table, or NULL
- */
-static void * efi_find_table ( EFI_GUID *guid ) {
-	unsigned int i;
-
-	for ( i = 0 ; i < efi_systab->NumberOfTableEntries ; i++ ) {
-		if ( memcmp ( &efi_systab->ConfigurationTable[i].VendorGuid,
-			      guid, sizeof ( *guid ) ) == 0 )
-			return efi_systab->ConfigurationTable[i].VendorTable;
-	}
-
-	return NULL;
-}
-
-/**
  * Construct a stack cookie value
  *
  * @v handle		Image handle
@@ -173,8 +157,7 @@ EFI_STATUS efi_init ( EFI_HANDLE image_handle,
 	EFI_BOOT_SERVICES *bs;
 	struct efi_protocol *prot;
 	struct efi_config_table *tab;
-	void *loaded_image;
-	void *device_path;
+	EFI_DEVICE_PATH_PROTOCOL *device_path;
 	void *device_path_copy;
 	size_t device_path_len;
 	EFI_STATUS efirc;
@@ -241,17 +224,19 @@ EFI_STATUS efi_init ( EFI_HANDLE image_handle,
 		}
 	}
 
-	/* Get loaded image protocol */
-	if ( ( efirc = bs->OpenProtocol ( image_handle,
-				&efi_loaded_image_protocol_guid,
-				&loaded_image, image_handle, NULL,
-				EFI_OPEN_PROTOCOL_GET_PROTOCOL ) ) != 0 ) {
-		rc = -EEFI ( efirc );
+	/* Get loaded image protocol
+	 *
+	 * We assume that our loaded image protocol will not be
+	 * uninstalled while our image code is still running.
+	 */
+	if ( ( rc = efi_open_unsafe ( image_handle,
+				      &efi_loaded_image_protocol_guid,
+				      &efi_loaded_image ) ) != 0 ) {
 		DBGC ( systab, "EFI could not get loaded image protocol: %s",
 		       strerror ( rc ) );
+		efirc = EFIRC ( rc );
 		goto err_no_loaded_image;
 	}
-	efi_loaded_image = loaded_image;
 	DBGC ( systab, "EFI image base address %p\n",
 	       efi_loaded_image->ImageBase );
 
@@ -260,13 +245,12 @@ EFI_STATUS efi_init ( EFI_HANDLE image_handle,
 	efi_cmdline_len = efi_loaded_image->LoadOptionsSize;
 
 	/* Get loaded image's device handle's device path */
-	if ( ( efirc = bs->OpenProtocol ( efi_loaded_image->DeviceHandle,
-				&efi_device_path_protocol_guid,
-				&device_path, image_handle, NULL,
-				EFI_OPEN_PROTOCOL_GET_PROTOCOL ) ) != 0 ) {
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open ( efi_loaded_image->DeviceHandle,
+			       &efi_device_path_protocol_guid,
+			       &device_path ) ) != 0 ) {
 		DBGC ( systab, "EFI could not get loaded image's device path: "
 		       "%s", strerror ( rc ) );
+		efirc = EFIRC ( rc );
 		goto err_no_device_path;
 	}
 

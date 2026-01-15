@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -57,8 +58,7 @@ int dhe_key ( const void *modulus, size_t len, const void *generator,
 	unsigned int size = bigint_required_size ( len );
 	unsigned int private_size = bigint_required_size ( private_len );
 	bigint_t ( size ) *mod;
-	bigint_t ( private_size ) *exp;
-	size_t tmp_len = bigint_mod_exp_tmp_len ( mod, exp );
+	size_t tmp_len = bigint_mod_exp_tmp_len ( mod );
 	struct {
 		bigint_t ( size ) modulus;
 		bigint_t ( size ) generator;

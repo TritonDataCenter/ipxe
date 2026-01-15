@@ -14,6 +14,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #define __EFI_DEVICE_PATH_PROTOCOL_H__
 
 FILE_LICENCE ( BSD2_PATENT );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/efi/Guid/PcAnsi.h>
 #include <ipxe/efi/IndustryStandard/Bluetooth.h>
@@ -840,6 +841,26 @@ typedef struct {
 } NVME_NAMESPACE_DEVICE_PATH;
 
 ///
+/// NVMe over Fabric (NVMe-oF) Namespace Device Path SubType.
+///
+#define MSG_NVME_OF_NAMESPACE_DP  0x22
+typedef struct {
+  EFI_DEVICE_PATH_PROTOCOL    Header;
+  ///
+  /// Namespace Identifier Type (NIDT)
+  ///
+  UINT8                       NamespaceIdType;
+  ///
+  /// Namespace Identifier (NID)
+  ///
+  UINT8                       NamespaceId[16];
+  ///
+  /// Unique identifier of an NVM subsystem
+  ///
+  CHAR8                       SubsystemNqn[];
+} NVME_OF_NAMESPACE_DEVICE_PATH;
+
+///
 /// DNS Device Path SubType
 ///
 #define MSG_DNS_DP  0x1F
@@ -1289,6 +1310,7 @@ typedef union {
   SAS_DEVICE_PATH                            Sas;
   SASEX_DEVICE_PATH                          SasEx;
   NVME_NAMESPACE_DEVICE_PATH                 NvmeNamespace;
+  NVME_OF_NAMESPACE_DEVICE_PATH              NvmeOfNamespace;
   DNS_DEVICE_PATH                            Dns;
   URI_DEVICE_PATH                            Uri;
   BLUETOOTH_DEVICE_PATH                      Bluetooth;
@@ -1345,6 +1367,7 @@ typedef union {
   SAS_DEVICE_PATH                            *Sas;
   SASEX_DEVICE_PATH                          *SasEx;
   NVME_NAMESPACE_DEVICE_PATH                 *NvmeNamespace;
+  NVME_OF_NAMESPACE_DEVICE_PATH              *NvmeOfNamespace;
   DNS_DEVICE_PATH                            *Dns;
   URI_DEVICE_PATH                            *Uri;
   BLUETOOTH_DEVICE_PATH                      *Bluetooth;

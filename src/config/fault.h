@@ -8,11 +8,15 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <config/defaults.h>
 
 /* Drop every N transmitted or received network packets */
 #define	NETDEV_DISCARD_RATE 0
+
+/* Delay transmissions to neighbour-resolved destinations (in ms) */
+#define NEIGHBOUR_DELAY_MS 0
 
 /* Drop every N transmitted or received PeerDist discovery packets */
 #define PEERDISC_DISCARD_RATE 0
@@ -28,6 +32,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /* Corrupt every N received PeerDist packets */
 #define PEERBLK_CORRUPT_RATE 0
+
+/* Experience virtual machine migration on every N watchdog checks */
+#define VM_MIGRATED_RATE 0
+
+/* Poison .bss section before early execution */
+#define POISON_BSS 0
 
 #include <config/local/fault.h>
 

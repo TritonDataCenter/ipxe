@@ -14,6 +14,7 @@
 #define __SIMPLE_TEXT_IN_EX_H__
 
 FILE_LICENCE ( BSD2_PATENT );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/efi/Protocol/SimpleTextIn.h>
 
@@ -188,6 +189,7 @@ typedef struct {
   @retval EFI_NOT_READY    There was no keystroke data available.
   @retval EFI_DEVICE_ERROR The keystroke information was not returned due to
                            hardware errors.
+  @retval EFI_UNSUPPORTED  The device does not support the ability to read keystroke data.
 
 
 **/

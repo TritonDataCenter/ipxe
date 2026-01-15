@@ -134,12 +134,13 @@ static unsigned long ioaddr;
 /* transmit descriptor and buffer */
 #define NTXD 2
 #define NRXD 4
-struct {
+struct davicom_bss {
 	struct txdesc txd[NTXD] __attribute__ ((aligned(4)));
 	unsigned char txb[BUFLEN] __attribute__ ((aligned(4)));
 	struct rxdesc rxd[NRXD] __attribute__ ((aligned(4)));
 	unsigned char rxb[NRXD * BUFLEN] __attribute__ ((aligned(4)));
-} davicom_bufs __shared;
+};
+#define davicom_bufs NIC_FAKE_BSS ( struct davicom_bss )
 #define txd davicom_bufs.txd
 #define txb davicom_bufs.txb
 #define rxd davicom_bufs.rxd
@@ -159,7 +160,7 @@ static void davicom_reset(struct nic *nic);
 static void davicom_transmit(struct nic *nic, const char *d, unsigned int t,
 			   unsigned int s, const char *p);
 static int davicom_poll(struct nic *nic, int retrieve);
-static void davicom_disable(struct nic *nic);
+static void davicom_disable(struct nic *nic, void *hwdev);
 static void davicom_wait(unsigned int nticks);
 static int phy_read(int);
 static void phy_write(int, u16);
@@ -601,7 +602,7 @@ static int davicom_poll(struct nic *nic, int retrieve)
 /*********************************************************************/
 /* eth_disable - Disable the interface                               */
 /*********************************************************************/
-static void davicom_disable ( struct nic *nic ) {
+static void davicom_disable ( struct nic *nic, void *hwdev __unused ) {
 
   whereami("davicom_disable\n");
 
@@ -698,7 +699,7 @@ PCI_ROM(0x1282, 0x9132, "davicom9132", "Davicom 9132", 0),	/* Needs probably som
 PCI_DRIVER ( davicom_driver, davicom_nics, PCI_NO_CLASS );
 
 DRIVER ( "DAVICOM", nic_driver, pci_driver, davicom_driver,
-	 davicom_probe, davicom_disable );
+	 davicom_probe, davicom_disable, davicom_bufs );
 
 /*
  * Local variables:

@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/api.h>
 #include <config/reboot.h>
@@ -51,9 +52,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /**
  * Reboot system
  *
- * @v warm		Perform a warm reboot
+ * @v flags		Reboot flags
  */
-void reboot ( int warm );
+void reboot ( int flags );
+
+#define REBOOT_WARM	0x00000001 /**< Perform a warm reboot */
+#define REBOOT_SETUP	0x00000002 /**< Reboot to firmware setup */
 
 /**
  * Power off system

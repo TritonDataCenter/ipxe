@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @file
@@ -232,5 +233,6 @@ static void efivars_init ( void ) {
 
 /** EFI variable settings initialiser */
 struct init_fn efivars_init_fn __init_fn ( INIT_NORMAL ) = {
+	.name = "efivars",
 	.initialise = efivars_init,
 };

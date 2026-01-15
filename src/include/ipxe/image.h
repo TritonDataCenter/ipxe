@@ -9,10 +9,10 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/tables.h>
 #include <ipxe/list.h>
-#include <ipxe/uaccess.h>
 #include <ipxe/refcnt.h>
 
 struct uri;
@@ -30,15 +30,28 @@ struct image {
 
 	/** URI of image */
 	struct uri *uri;
-	/** Name */
+	/** Name
+	 *
+	 * If the @c IMAGE_STATIC_NAME flag is set, then this is a
+	 * statically allocated string.
+	 */
 	char *name;
 	/** Flags */
 	unsigned int flags;
 
 	/** Command line to pass to image */
 	char *cmdline;
-	/** Raw file image */
-	userptr_t data;
+	/** Raw file image
+	 *
+	 * If the @c IMAGE_STATIC flag is set, then this is a
+	 * statically allocated image.
+	 */
+	union {
+		/** Read-only data */
+		const void *data;
+		/** Writable data */
+		void *rwdata;
+	};
 	/** Length of raw file image */
 	size_t len;
 
@@ -71,6 +84,12 @@ struct image {
 
 /** Image will be hidden from enumeration */
 #define IMAGE_HIDDEN 0x0008
+
+/** Image is statically allocated */
+#define IMAGE_STATIC 0x0010
+
+/** Image name is statically allocated */
+#define IMAGE_STATIC_NAME 0x0020
 
 /** An executable image type */
 struct image_type {
@@ -194,12 +213,15 @@ static inline struct image * first_image ( void ) {
 	return list_first_entry ( &images, struct image, list );
 }
 
+extern void free_image ( struct refcnt *refcnt );
 extern struct image * alloc_image ( struct uri *uri );
 extern int image_set_uri ( struct image *image, struct uri *uri );
 extern int image_set_name ( struct image *image, const char *name );
+extern char * image_strip_suffix ( struct image *image );
 extern int image_set_cmdline ( struct image *image, const char *cmdline );
 extern int image_set_len ( struct image *image, size_t len );
-extern int image_set_data ( struct image *image, userptr_t data, size_t len );
+extern int image_set_data ( struct image *image, const void *data,
+			    size_t len );
 extern int register_image ( struct image *image );
 extern void unregister_image ( struct image *image );
 extern struct image * find_image ( const char *name );
@@ -208,7 +230,7 @@ extern int image_exec ( struct image *image );
 extern int image_replace ( struct image *replacement );
 extern int image_select ( struct image *image );
 extern int image_set_trust ( int require_trusted, int permanent );
-extern struct image * image_memory ( const char *name, userptr_t data,
+extern struct image * image_memory ( const char *name, const void *data,
 				     size_t len );
 extern const char * image_argument ( struct image *image, const char *key );
 extern int image_pixbuf ( struct image *image, struct pixel_buffer **pixbuf );

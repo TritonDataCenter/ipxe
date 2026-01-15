@@ -18,6 +18,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <string.h>
@@ -45,10 +46,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 int efi_locate_device ( EFI_HANDLE device, EFI_GUID *protocol,
 			EFI_HANDLE *parent, unsigned int skip ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	union {
-		EFI_DEVICE_PATH_PROTOCOL *path;
-		void *interface;
-	} u;
+	EFI_DEVICE_PATH_PROTOCOL *devpath;
 	EFI_DEVICE_PATH_PROTOCOL *path;
 	EFI_DEVICE_PATH_PROTOCOL *end;
 	size_t len;
@@ -56,25 +54,21 @@ int efi_locate_device ( EFI_HANDLE device, EFI_GUID *protocol,
 	int rc;
 
 	/* Get device path */
-	if ( ( efirc = bs->OpenProtocol ( device,
-					  &efi_device_path_protocol_guid,
-					  &u.interface,
-					  efi_image_handle, device,
-					  EFI_OPEN_PROTOCOL_GET_PROTOCOL ))!=0){
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open ( device, &efi_device_path_protocol_guid,
+			       &devpath ) ) != 0 ) {
 		DBGC ( device, "EFIDEV %s cannot open device path: %s\n",
 		       efi_handle_name ( device ), strerror ( rc ) );
 		goto err_open_device_path;
 	}
 
 	/* Create modifiable copy of device path */
-	len = ( efi_path_len ( u.path ) + sizeof ( EFI_DEVICE_PATH_PROTOCOL ));
+	len = ( efi_path_len ( devpath ) + sizeof ( *end ) );
 	path = malloc ( len );
 	if ( ! path ) {
 		rc = -ENOMEM;
 		goto err_alloc_path;
 	}
-	memcpy ( path, u.path, len );
+	memcpy ( path, devpath, len );
 
 	/* Locate parent device(s) */
 	while ( 1 ) {
@@ -100,14 +94,9 @@ int efi_locate_device ( EFI_HANDLE device, EFI_GUID *protocol,
 		efi_path_terminate ( end );
 	}
 
-	/* Success */
-	rc = 0;
-
  err_locate_protocol:
 	free ( path );
  err_alloc_path:
-	bs->CloseProtocol ( device, &efi_device_path_protocol_guid,
-			    efi_image_handle, device );
  err_open_device_path:
 	return rc;
 }
@@ -120,19 +109,12 @@ int efi_locate_device ( EFI_HANDLE device, EFI_GUID *protocol,
  * @ret rc		Return status code
  */
 int efi_child_add ( EFI_HANDLE parent, EFI_HANDLE child ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	void *devpath;
-	EFI_STATUS efirc;
+	EFI_DEVICE_PATH_PROTOCOL *devpath;
 	int rc;
 
 	/* Re-open the device path protocol */
-	if ( ( efirc = bs->OpenProtocol ( parent,
-					  &efi_device_path_protocol_guid,
-					  &devpath,
-					  efi_image_handle, child,
-					  EFI_OPEN_PROTOCOL_BY_CHILD_CONTROLLER
-					  ) ) != 0 ) {
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open_by_child ( parent, &efi_device_path_protocol_guid,
+					child, &devpath ) ) != 0 ) {
 		DBGC ( parent, "EFIDEV %s could not add child",
 		       efi_handle_name ( parent ) );
 		DBGC ( parent, " %s: %s\n",
@@ -154,10 +136,8 @@ int efi_child_add ( EFI_HANDLE parent, EFI_HANDLE child ) {
  * @v child		EFI child device handle
  */
 void efi_child_del ( EFI_HANDLE parent, EFI_HANDLE child ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 
-	bs->CloseProtocol ( parent, &efi_device_path_protocol_guid,
-			    efi_image_handle, child );
+	efi_close_by_child ( parent, &efi_device_path_protocol_guid, child );
 	DBGC2 ( parent, "EFIDEV %s removed child", efi_handle_name ( parent ) );
 	DBGC2 ( parent, " %s\n", efi_handle_name ( child ) );
 }
@@ -170,8 +150,8 @@ void efi_child_del ( EFI_HANDLE parent, EFI_HANDLE child ) {
  * @v dev		Generic device to fill in
  * @ret rc		Return status code
  */
-static int efi_pci_info ( EFI_HANDLE device, const char *prefix,
-			  struct device *dev ) {
+static int efi_device_info_pci ( EFI_HANDLE device, const char *prefix,
+				 struct device *dev ) {
 	EFI_HANDLE pci_device;
 	struct efi_pci_device efipci;
 	int rc;
@@ -211,7 +191,7 @@ void efi_device_info ( EFI_HANDLE device, const char *prefix,
 	int rc;
 
 	/* Try getting underlying PCI device information */
-	if ( ( rc = efi_pci_info ( device, prefix, dev ) ) == 0 )
+	if ( ( rc = efi_device_info_pci ( device, prefix, dev ) ) == 0 )
 		return;
 
 	/* If we cannot get any underlying device information, fall

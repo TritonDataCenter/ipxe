@@ -197,7 +197,7 @@ void dbg_fw_ver(struct hwrm_ver_get_output *resp, u32 tmo)
 		(u32)(resp->chip_metal << 16) |
 		(u32)(resp->chip_bond_id << 8) |
 		(u32)resp->chip_platform_type);
-	test_if((resp->dev_caps_cfg & SHORT_CMD_SUPPORTED) &&
+	if((resp->dev_caps_cfg & SHORT_CMD_SUPPORTED) &&
 		(resp->dev_caps_cfg & SHORT_CMD_REQUIRED))
 		dbg_prn("  SHORT_CMD_SUPPORTED\n");
 }
@@ -418,13 +418,6 @@ void dump_rx_bd(struct rx_pkt_cmpl *rx_cmp,
 #endif
 }
 
-void dbg_rx_vlan(struct bnxt *bp, u32 meta, u16 f2, u16 rx_vid)
-{
-	dbg_prn("  Rx VLAN metadata %x flags2 %x\n", meta, f2);
-	dbg_prn("  Rx VLAN MBA %d TX %d RX %d\n",
-		bp->vlan_id, bp->vlan_tx, rx_vid);
-}
-
 void dbg_alloc_rx_iob(struct io_buffer *iob, u16 id, u16 cid)
 {
 	dbg_prn("  Rx alloc_iob (%d) %p bd_virt (%d)\n",
@@ -460,13 +453,12 @@ void dbg_rxp(u8 *iob, u16 rx_len, u8 drop)
 
 void dbg_rx_stat(struct bnxt *bp)
 {
-	dbg_prn("- RX Stat Total %d Good %d Drop err %d LB %d VLAN %d\n",
+	dbg_prn("- RX Stat Total %d Good %d Drop err %d LB %d\n",
 		bp->rx.cnt, bp->rx.good,
-		bp->rx.drop_err, bp->rx.drop_lb, bp->rx.drop_vlan);
+		bp->rx.drop_err, bp->rx.drop_lb);
 }
 #else
 #define dump_rx_bd(rx_cmp, rx_cmp_hi, desc_idx)
-#define dbg_rx_vlan(bp, metadata, flags2, rx_vid)
 #define dbg_alloc_rx_iob(iob, id, cid)
 #define dbg_rx_cid(idx, cid)
 #define dbg_alloc_rx_iob_fail(iob_idx, cons_id)
@@ -535,12 +527,6 @@ void dbg_tx_vlan(struct bnxt *bp, char *src, u16 plen, u16 len)
 	dbg_prn(" Pro %x",
 		BYTE_SWAP_S(*(u16 *)(&src[MAC_HDR_SIZE])));
 	dbg_prn(" old len %d new len %d\n", plen, len);
-}
-
-void dbg_tx_pad(u16 plen, u16 len)
-{
-	if (len != plen)
-		dbg_prn("- Tx padded(0) old len %d new len %d\n", plen, len);
 }
 
 void dump_tx_stat(struct bnxt *bp)
@@ -673,5 +659,6 @@ void dbg_link_state(struct bnxt *bp, u32 tmo)
 #else
 #define dump_evt(cq, ty, id, ring)
 #define dbg_link_status(bp)
+#define dbg_link_info(bp)
 #define dbg_link_state(bp, tmo)
 #endif

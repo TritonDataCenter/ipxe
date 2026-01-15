@@ -2,6 +2,7 @@
 #define	_IPXE_IN_H
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <byteswap.h>
@@ -32,6 +33,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	( ( (addr) & htonl ( 0xe0000000 ) ) == htonl ( 0xc0000000 ) )
 #define IN_IS_MULTICAST( addr ) \
 	( ( (addr) & htonl ( 0xf0000000 ) ) == htonl ( 0xe0000000 ) )
+
+#define IN_IS_SMALL( mask ) ( (mask) & htonl ( 0x00000003 ) )
 
 /**
  * IP address structure

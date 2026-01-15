@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #ifdef PCIAPI_EFI
 #define PCIAPI_PREFIX_efi
@@ -33,17 +34,14 @@ extern int efipci_write ( struct pci_device *pci, unsigned long location,
 			  unsigned long value );
 
 /**
- * Find next PCI bus:dev.fn address range in system
+ * Check if PCI bus probing is allowed
  *
- * @v busdevfn		Starting PCI bus:dev.fn address
- * @v range		PCI bus:dev.fn address range to fill in
+ * @v pci		PCI device
+ * @ret ok		Bus probing is allowed
  */
-static inline __always_inline void
-PCIAPI_INLINE ( efi, pci_discover ) ( uint32_t busdevfn __unused,
-				      struct pci_range *range ) {
-
-	/* EFI does not want us to scan the PCI bus ourselves */
-	range->count = 0;
+static inline __always_inline int
+PCIAPI_INLINE ( efi, pci_can_probe ) ( struct pci_device *pci __unused ) {
+	return 0;
 }
 
 /**

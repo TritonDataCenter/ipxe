@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -131,13 +132,5 @@ static int vdestroy_exec ( int argc, char **argv ) {
 }
 
 /** VLAN commands */
-struct command vlan_commands[] __command = {
-	{
-		.name = "vcreate",
-		.exec = vcreate_exec,
-	},
-	{
-		.name = "vdestroy",
-		.exec = vdestroy_exec,
-	},
-};
+COMMAND ( vcreate, vcreate_exec );
+COMMAND ( vdestroy, vdestroy_exec );

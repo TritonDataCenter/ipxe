@@ -22,8 +22,10 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <getopt.h>
 #include <ipxe/x509.h>
@@ -288,17 +290,6 @@ static int certfree_exec ( int argc, char **argv ) {
 }
 
 /** Certificate management commands */
-struct command certmgmt_commands[] __command = {
-	{
-		.name = "certstat",
-		.exec = certstat_exec,
-	},
-	{
-		.name = "certstore",
-		.exec = certstore_exec,
-	},
-	{
-		.name = "certfree",
-		.exec = certfree_exec,
-	},
-};
+COMMAND ( certstat, certstat_exec );
+COMMAND ( certstore, certstore_exec );
+COMMAND ( certfree, certfree_exec );

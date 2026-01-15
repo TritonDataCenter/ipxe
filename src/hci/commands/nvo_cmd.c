@@ -34,6 +34,7 @@
 #include <readline/readline.h>
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -356,25 +357,8 @@ static int inc_exec ( int argc, char **argv ) {
 }
 
 /** Non-volatile option commands */
-struct command nvo_commands[] __command = {
-	{
-		.name = "show",
-		.exec = show_exec,
-	},
-	{
-		.name = "set",
-		.exec = set_exec,
-	},	
-	{
-		.name = "clear",
-		.exec = clear_exec,
-	},
-	{
-		.name = "read",
-		.exec = read_exec,
-	},
-	{
-		.name = "inc",
-		.exec = inc_exec,
-	},
-};
+COMMAND ( show, show_exec );
+COMMAND ( set, set_exec );
+COMMAND ( clear, clear_exec );
+COMMAND ( read, read_exec );
+COMMAND ( inc, inc_exec );

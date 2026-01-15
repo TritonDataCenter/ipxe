@@ -5,6 +5,22 @@
 
 ###############################################################################
 #
+# Make syntax does not allow use of comma or space in certain places.
+# This ugly workaround is suggested in the manual.
+#
+COMMA	:= ,
+EMPTY	:=
+SPACE	:= $(EMPTY) $(EMPTY)
+HASH	:= \#
+LPAREN	:= (
+RPAREN	:= )
+define NEWLINE
+
+
+endef
+
+###############################################################################
+#
 # Find a usable "echo -e" substitute.
 #
 TAB 			:= $(shell $(PRINTF) '\t')
@@ -70,56 +86,6 @@ hostos :
 
 ###############################################################################
 #
-# Determine compiler
-
-CCDEFS		:= $(shell $(CC) -E -x c -c /dev/null -dM | cut -d" " -f2)
-ccdefs:
-	@$(ECHO) $(CCDEFS)
-
-ifeq ($(filter __GNUC__,$(CCDEFS)),__GNUC__)
-CCTYPE		:= gcc
-endif
-cctype:
-	@$(ECHO) $(CCTYPE)
-
-###############################################################################
-#
-# Check for tools that can cause failed builds
-#
-
-ifeq ($(CCTYPE),gcc)
-GCC_2_96_BANNER := $(shell $(CC) -v 2>&1 | $(GREP) -is 'gcc version 2\.96')
-ifneq ($(GCC_2_96_BANNER),)
-$(warning gcc 2.96 is unsuitable for compiling iPXE)
-$(warning Use gcc 2.95 or a newer version instead)
-$(error Unsuitable build environment found)
-endif
-endif
-
-PERL_UNICODE_CHECK := $(shell $(PERL) -e 'use bytes; print chr(255)' | wc -c)
-ifeq ($(PERL_UNICODE_CHECK),2)
-$(warning Your Perl version has a Unicode handling bug)
-$(warning Execute this command before building iPXE:)
-$(warning export LANG=$${LANG%.UTF-8})
-$(error Unsuitable build environment found)
-endif
-
-LD_GOLD_BANNER := $(shell $(LD) -v 2>&1 | $(GREP) 'GNU gold')
-ifneq ($(LD_GOLD_BANNER),)
-$(warning GNU gold is unsuitable for building iPXE)
-$(warning Use GNU ld instead)
-$(error Unsuitable build environment found)
-endif
-
-OBJCOPY_ETC_BANNER := $(shell $(OBJCOPY) --version | grep 'elftoolchain')
-ifneq ($(OBJCOPY_ETC_BANNER),)
-$(warning The elftoolchain objcopy is unsuitable for building iPXE)
-$(warning Use binutils objcopy instead)
-$(error Unsuitable build environment found)
-endif
-
-###############################################################################
-#
 # Check if $(eval ...) is available to use
 #
 
@@ -129,74 +95,6 @@ $(eval HAVE_EVAL := yes)
 endif
 eval :
 	@$(ECHO) $(HAVE_EVAL)
-
-###############################################################################
-#
-# Check for various tool workarounds
-#
-
-WORKAROUND_CFLAGS :=
-WORKAROUND_ASFLAGS :=
-WORKAROUND_LDFLAGS :=
-
-# Make syntax does not allow use of comma or space in certain places.
-# This ugly workaround is suggested in the manual.
-#
-COMMA	:= ,
-EMPTY	:=
-SPACE	:= $(EMPTY) $(EMPTY)
-HASH	:= \#
-define NEWLINE
-
-
-endef
-
-# gcc 4.4 generates .eh_frame sections by default, which distort the
-# output of "size".  Inhibit this.
-#
-ifeq ($(CCTYPE),gcc)
-CFI_TEST = $(CC) -fno-dwarf2-cfi-asm -fno-exceptions -fno-unwind-tables \
-		 -fno-asynchronous-unwind-tables -x c -c /dev/null \
-		 -o /dev/null >/dev/null 2>&1
-CFI_FLAGS := $(shell $(CFI_TEST) && \
-	       $(ECHO) '-fno-dwarf2-cfi-asm -fno-exceptions ' \
-		       '-fno-unwind-tables -fno-asynchronous-unwind-tables')
-WORKAROUND_CFLAGS += $(CFI_FLAGS)
-endif
-
-# gcc 4.6 generates spurious warnings if -Waddress is in force.
-# Inhibit this.
-#
-ifeq ($(CCTYPE),gcc)
-WNA_TEST = $(CC) -Waddress -x c -c /dev/null -o /dev/null >/dev/null 2>&1
-WNA_FLAGS := $(shell $(WNA_TEST) && $(ECHO) '-Wno-address')
-WORKAROUND_CFLAGS += $(WNA_FLAGS)
-
-# gcc 8.0 generates warnings for certain suspect string operations. Our
-# sources have been vetted for correct usage.  Turn off these warnings.
-#
-WNST_TEST = $(CC) -Wstringop-truncation -x c -c /dev/null -o /dev/null \
-		  >/dev/null 2>&1
-WNST_FLAGS := $(shell $(WNST_TEST) && $(ECHO) '-Wno-stringop-truncation')
-WORKAROUND_CFLAGS += $(WNST_FLAGS)
-
-# gcc 9.1 generates warnings for taking address of packed member which
-# may result in an unaligned pointer value.  Inhibit the warnings.
-#
-WNAPM_TEST = $(CC) -Wno-address-of-packed-member -x c -c /dev/null \
-		   -o /dev/null >/dev/null 2>&1
-WNAPM_FLAGS := $(shell $(WNAPM_TEST) && \
-		 $(ECHO) '-Wno-address-of-packed-member')
-WORKAROUND_CFLAGS += $(WNAPM_FLAGS)
-endif
-
-# Some versions of gas choke on division operators, treating them as
-# comment markers.  Specifying --divide will work around this problem,
-# but isn't available on older gas versions.
-#
-DIVIDE_TEST = $(AS) --divide /dev/null -o /dev/null 2>/dev/null
-DIVIDE_FLAGS := $(shell $(DIVIDE_TEST) && $(ECHO) '--divide')
-WORKAROUND_ASFLAGS += $(DIVIDE_FLAGS)
 
 ###############################################################################
 #
@@ -284,7 +182,7 @@ ifeq ($(wildcard $(BIN)),)
 $(shell $(MKDIR) -p $(BIN))
 endif
 
-# Target to allow e.g. "make bin-efi arch"
+# Target to allow e.g. "make bin-x86_64-efi arch"
 #
 $(BIN) :
 	@# Do nothing, silently
@@ -328,13 +226,18 @@ BIN_ELEMENTS	:= $(subst -,$(SPACE),$(BIN))
 BIN_APS		:= $(wordlist 2,4,$(BIN_ELEMENTS))
 ifeq ($(lastword $(BIN_APS)),sb)
 BIN_AP		:= $(wordlist 2,$(words $(BIN_APS)),discard $(BIN_APS))
-BIN_SECUREBOOT	:= 1
+BIN_SECUREBOOT	:= sb
 else
 BIN_AP		:= $(BIN_APS)
-BIN_SECUREBOOT	:= 0
+BIN_SECUREBOOT	:=
 endif
-BIN_PLATFORM	:= $(lastword $(BIN_AP))
-BIN_ARCH	:= $(wordlist 2,$(words $(BIN_AP)),discard $(BIN_AP))
+ifeq ($(BIN_AP),efi)
+BIN_ARCH	:= i386
+BIN_PLATFORM	:= efi
+else
+BIN_ARCH	:= $(word 1,$(BIN_AP))
+BIN_PLATFORM	:= $(word 2,$(BIN_AP))
+endif
 
 # Determine build architecture
 DEFAULT_ARCH	:= i386
@@ -345,30 +248,151 @@ arch :
 .PHONY : arch
 
 # Determine build platform
-DEFAULT_PLATFORM := pcbios
-PLATFORM	:= $(firstword $(BIN_PLATFORM) $(DEFAULT_PLATFORM))
+DEFAULT_PLATFORM_i386 := pcbios
+DEFAULT_PLATFORM_x86_64 := pcbios
+DEFAULT_PLATFORM_riscv32 := sbi
+DEFAULT_PLATFORM_riscv64 := sbi
+DEFAULT_PLATFORM := $(DEFAULT_PLATFORM_$(ARCH))
+PLATFORM	:= $(firstword $(BIN_PLATFORM) $(DEFAULT_PLATFORM) none)
 CFLAGS		+= -DPLATFORM=$(PLATFORM) -DPLATFORM_$(PLATFORM)
 platform :
 	@$(ECHO) $(PLATFORM)
 
 # Determine security flag
-DEFAULT_SECUREBOOT := 0
-SECUREBOOT	:= $(firstword $(BIN_SECUREBOOT) $(DEFAULT_SECUREBOOT))
-CFLAGS		+= -DSECUREBOOT=$(SECUREBOOT)
+SECUREBOOT	:= $(BIN_SECUREBOOT)
 secureboot :
 	@$(ECHO) $(SECUREBOOT)
 
+# Set cross-compilation prefix automatically if not specified
+ifeq ($(CROSS_COMPILE),)
+CROSS_COMPILE	:= $(CROSS_COMPILE_$(ARCH))
+endif
+
 endif # defined(BIN)
 
+###############################################################################
+#
+# Determine compiler
+
+CCDEFS		:= $(shell $(CC) -E -x c -c /dev/null -dM | cut -d" " -f2)
+ccdefs:
+	@$(ECHO) $(CCDEFS)
+
+ifeq ($(filter __GNUC__,$(CCDEFS)),__GNUC__)
+CCTYPE		:= gcc
+endif
+cctype:
+	@$(ECHO) $(CCTYPE)
+
+###############################################################################
+#
+# Check for tools that can cause failed builds
+#
+
+ifeq ($(CCTYPE),gcc)
+GCC_2_96_BANNER := $(shell $(CC) -v 2>&1 | grep -is 'gcc version 2\.96')
+ifneq ($(GCC_2_96_BANNER),)
+$(warning gcc 2.96 is unsuitable for compiling iPXE)
+$(warning Use gcc 2.95 or a newer version instead)
+$(error Unsuitable build environment found)
+endif
+endif
+
+PERL_UNICODE_CHECK := $(shell $(PERL) -e 'use bytes; print chr(255)' | wc -c)
+ifeq ($(PERL_UNICODE_CHECK),2)
+$(warning Your Perl version has a Unicode handling bug)
+$(warning Execute this command before building iPXE:)
+$(warning export LANG=$${LANG%.UTF-8})
+$(error Unsuitable build environment found)
+endif
+
+LD_GOLD_BANNER := $(shell $(LD) -v 2>&1 | grep 'GNU gold')
+ifneq ($(LD_GOLD_BANNER),)
+$(warning GNU gold is unsuitable for building iPXE)
+$(warning Use GNU ld instead)
+$(error Unsuitable build environment found)
+endif
+
+OBJCOPY_ETC_BANNER := $(shell $(OBJCOPY) --version | grep 'elftoolchain')
+ifneq ($(OBJCOPY_ETC_BANNER),)
+$(warning The elftoolchain objcopy is unsuitable for building iPXE)
+$(warning Use binutils objcopy instead)
+$(error Unsuitable build environment found)
+endif
+
+###############################################################################
+#
+# Check for various tool workarounds
+#
+
+WORKAROUND_CFLAGS :=
+WORKAROUND_ASFLAGS :=
+WORKAROUND_LDFLAGS :=
+
+# gcc 4.4 generates .eh_frame sections by default, which distort the
+# output of "size".  Inhibit this.
+#
+ifeq ($(CCTYPE),gcc)
+CFI_TEST = $(CC) -fno-dwarf2-cfi-asm -fno-exceptions -fno-unwind-tables \
+		 -fno-asynchronous-unwind-tables -x c -c /dev/null \
+		 -o /dev/null >/dev/null 2>&1
+CFI_FLAGS := $(shell $(CFI_TEST) && \
+	       $(ECHO) '-fno-dwarf2-cfi-asm -fno-exceptions ' \
+		       '-fno-unwind-tables -fno-asynchronous-unwind-tables')
+WORKAROUND_CFLAGS += $(CFI_FLAGS)
+endif
+
+# gcc 4.6 generates spurious warnings if -Waddress is in force.
+# Inhibit this.
+#
+ifeq ($(CCTYPE),gcc)
+WNA_TEST = $(CC) -Waddress -x c -c /dev/null -o /dev/null >/dev/null 2>&1
+WNA_FLAGS := $(shell $(WNA_TEST) && $(ECHO) '-Wno-address')
+WORKAROUND_CFLAGS += $(WNA_FLAGS)
+
+# gcc 8.0 generates warnings for certain suspect string operations. Our
+# sources have been vetted for correct usage.  Turn off these warnings.
+#
+WNST_TEST = $(CC) -Wstringop-truncation -x c -c /dev/null -o /dev/null \
+		  >/dev/null 2>&1
+WNST_FLAGS := $(shell $(WNST_TEST) && $(ECHO) '-Wno-stringop-truncation')
+WORKAROUND_CFLAGS += $(WNST_FLAGS)
+
+# gcc 9.1 generates warnings for taking address of packed member which
+# may result in an unaligned pointer value.  Inhibit the warnings.
+#
+WNAPM_TEST = $(CC) -Wno-address-of-packed-member -x c -c /dev/null \
+		   -o /dev/null >/dev/null 2>&1
+WNAPM_FLAGS := $(shell $(WNAPM_TEST) && \
+		 $(ECHO) '-Wno-address-of-packed-member')
+WORKAROUND_CFLAGS += $(WNAPM_FLAGS)
+endif
+
+# gcc 15 generates warnings for fixed-length character array
+# initializers that lack a terminating NUL.  Inhibit the warnings.
+#
+WNUSI_TEST = $(CC) -Wunterminated-string-initialization -x c -c /dev/null \
+		   -o /dev/null >/dev/null 2>&1
+WNUSI_FLAGS := $(shell $(WNUSI_TEST) && \
+		 $(ECHO) '-Wno-unterminated-string-initialization')
+WORKAROUND_CFLAGS += $(WNUSI_FLAGS)
+
+# Some versions of gas choke on division operators, treating them as
+# comment markers.  Specifying --divide will work around this problem,
+# but isn't available on older gas versions.
+#
+DIVIDE_TEST = $(AS) --divide /dev/null -o /dev/null 2>/dev/null
+DIVIDE_FLAGS := $(shell $(DIVIDE_TEST) && $(ECHO) '--divide')
+WORKAROUND_ASFLAGS += $(DIVIDE_FLAGS)
+
+###############################################################################
+#
 # Include architecture-specific Makefile
+#
+
 ifdef ARCH
 MAKEDEPS	+= arch/$(ARCH)/Makefile
 include arch/$(ARCH)/Makefile
-endif
-
-# Include architecture-specific include path
-ifdef ARCH
-INCDIRS		+= arch/$(ARCH)/include
 endif
 
 ###############################################################################
@@ -412,11 +436,6 @@ endif
 #
 # Source file handling
 
-# Exclude known-insecure files from Secure Boot builds
-ifeq ($(SECUREBOOT),0)
-SRCDIRS		+= $(SRCDIRS_INSEC)
-endif
-
 # SRCDIRS lists all directories containing source files.
 srcdirs :
 	@$(ECHO) $(SRCDIRS)
@@ -459,7 +478,7 @@ CFLAGS		+= -Os
 CFLAGS		+= -g
 ifeq ($(CCTYPE),gcc)
 CFLAGS		+= -ffreestanding
-CFLAGS		+= -fcommon
+CFLAGS		+= -fno-common
 CFLAGS		+= -Wall -W -Wformat-nonliteral
 CFLAGS		+= -Wno-array-bounds -Wno-dangling-pointer
 HOST_CFLAGS	+= -Wall -W -Wformat-nonliteral
@@ -469,6 +488,7 @@ CFLAGS		+= $(WORKAROUND_CFLAGS) $(EXTRA_CFLAGS)
 ASFLAGS		+= $(WORKAROUND_ASFLAGS) $(EXTRA_ASFLAGS)
 LDFLAGS		+= $(WORKAROUND_LDFLAGS) $(EXTRA_LDFLAGS)
 HOST_CFLAGS	+= -O2 -g
+HOST_EFI_CFLAGS	+= -fshort-wchar
 
 # Inhibit -Werror if NO_WERROR is specified on make command line
 #
@@ -478,17 +498,14 @@ ASFLAGS		+= --fatal-warnings
 HOST_CFLAGS	+= -Werror
 endif
 
-# Enable per-item sections and section garbage collection.  Note that
-# some older versions of gcc support -fdata-sections but treat it as
-# implying -fno-common, which would break our build.  Some other older
-# versions issue a spurious and uninhibitable warning if
-# -ffunction-sections is used with -g, which would also break our
-# build since we use -Werror.
+# Enable per-item sections and section garbage collection.  Some older
+# versions of gcc issue a spurious and uninhibitable warning if
+# -ffunction-sections is used with -g, which would break our build
+# since we use -Werror.
 #
 ifeq ($(CCTYPE),gcc)
-DS_TEST		= $(ECHO) 'char x;' | \
-		  $(CC) -fdata-sections -S -x c - -o - 2>/dev/null | \
-		  $(GREP) -E '\.comm' > /dev/null
+DS_TEST		= $(CC) -fdata-sections -c -x c /dev/null \
+		  -o /dev/null 2>/dev/null
 DS_FLAGS	:= $(shell $(DS_TEST) && $(ECHO) '-fdata-sections')
 FS_TEST		= $(CC) -ffunction-sections -g -c -x c /dev/null \
 		  -o /dev/null 2>/dev/null
@@ -590,7 +607,7 @@ embedded_DEPS += $(EMBEDDED_FILES) $(EMBEDDED_LIST)
 
 CFLAGS_embedded = -DEMBED_ALL="$(EMBED_ALL)"
 
-# List of trusted root certificates
+# List of trusted root certificate configuration
 #
 TRUSTED_LIST	:= $(BIN)/.trusted.list
 ifeq ($(wildcard $(TRUSTED_LIST)),)
@@ -598,8 +615,9 @@ TRUST_OLD := <invalid>
 else
 TRUST_OLD := $(shell cat $(TRUSTED_LIST))
 endif
-ifneq ($(TRUST_OLD),$(TRUST))
-$(shell $(ECHO) "$(TRUST)" > $(TRUSTED_LIST))
+TRUST_CFG := $(TRUST) $(TRUST_EXT)
+ifneq ($(TRUST_OLD),$(TRUST_CFG))
+$(shell $(ECHO) "$(TRUST_CFG)" > $(TRUSTED_LIST))
 endif
 
 $(TRUSTED_LIST) : $(MAKEDEPS)
@@ -616,7 +634,8 @@ TRUSTED_FPS	:= $(foreach CERT,$(TRUSTED_CERTS),\
 
 rootcert_DEPS += $(TRUSTED_FILES) $(TRUSTED_LIST)
 
-CFLAGS_rootcert = $(if $(TRUSTED_FPS),-DTRUSTED="$(TRUSTED_FPS)")
+CFLAGS_rootcert += $(if $(TRUST_EXT),-DALLOW_TRUST_OVERRIDE=$(TRUST_EXT))
+CFLAGS_rootcert += $(if $(TRUSTED_FPS),-DTRUSTED="$(TRUSTED_FPS)")
 
 # List of embedded certificates
 #
@@ -1275,15 +1294,25 @@ endef
 $(BIN)/%.nodeps : $(BIN)/%.tmp
 	$(Q)$(ECHO) $(call nodeps_list,$<)
 
-# Get licensing verdict for the specified target
+# Get annotated dependency list for the specified target
 #
-define licensable_deps_list
+define annotated_deps_list
 	$(filter-out config/local/%.h,\
 	  $(filter-out $(BIN)/.%.list,\
 	    $(call deps_list,$(1))))
 endef
+
+# Get dependency list missing specified declaration for the specified target
+#
+define undeclared_deps_list
+	$(shell grep -L '^[[:space:]]*$(2)[[:space:]]*$(LPAREN)' \
+		$(call annotated_deps_list,$(1)))
+endef
+
+# Get licensing verdict for the specified target
+#
 define unlicensed_deps_list
-	$(shell $(GREP) -L FILE_LICENCE $(call licensable_deps_list,$(1)))
+	$(call undeclared_deps_list,$(1),FILE_LICENCE)
 endef
 define licence_list
 	$(sort $(foreach LICENCE,\
@@ -1295,11 +1324,33 @@ $(BIN)/%.licence_list : $(BIN)/%.tmp
 $(BIN)/%.licence : $(BIN)/%.tmp
 	$(QM)$(ECHO) "  [LICENCE] $@"
 	$(Q)$(if $(strip $(call unlicensed_deps_list,$<)),\
-		echo -n "Unable to determine licence because the following " ;\
-		echo "files are missing a licence declaration:" ;\
+		echo -n "The following files are missing a FILE_LICENCE() " ;\
+		echo "declaration:" ;\
 		echo $(call unlicensed_deps_list,$<);\
-		exit 1,\
-		$(PERL) $(LICENCE) $(call licence_list,$<))
+		exit 1)
+	$(PERL) $(LICENCE) $(call licence_list,$<)
+
+# Get Secure Boot permissibility verdict for the specified target
+#
+define nosecboot_deps_list
+	$(call undeclared_deps_list,$(1),FILE_SECBOOT)
+endef
+define secboot_list
+	$(sort $(foreach SECBOOT,\
+		 $(filter __secboot__%,$(shell $(NM) $(1) | cut -d" " -f3)),\
+		 $(word 2,$(subst __, ,$(SECBOOT)))))
+endef
+$(BIN)/%.secboot : $(BIN)/%.tmp
+	$(QM)$(ECHO) "  [SECBOOT] $@"
+	$(Q)$(if $(strip $(call nosecboot_deps_list,$<)),\
+		echo -n "The following files are missing a FILE_SECBOOT() " ;\
+		echo "declaration:" ;\
+		echo $(call nosecboot_deps_list,$<);\
+		exit 1)
+	$(Q)$(if $(strip $(filter-out permitted,$(call secboot_list,$<))),\
+		echo -n "This build includes files that are not permitted " ;\
+		echo "to be signed for UEFI Secure Boot" ;\
+		exit 1)
 
 # Extract compression information from intermediate object file
 #
@@ -1422,10 +1473,15 @@ endif # defined(BIN)
 
 ZBIN_LDFLAGS := -llzma
 
-$(ZBIN) : util/zbin.c $(MAKEDEPS)
+$(ZBIN32) : util/zbin.c $(MAKEDEPS)
 	$(QM)$(ECHO) "  [HOSTCC] $@"
-	$(Q)$(HOST_CC) $(HOST_CFLAGS) $< $(ZBIN_LDFLAGS) -o $@
-CLEANUP += $(ZBIN)
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) $< $(ZBIN_LDFLAGS) -DELF32 -o $@
+CLEANUP += $(ZBIN32)
+
+$(ZBIN64) : util/zbin.c $(MAKEDEPS)
+	$(QM)$(ECHO) "  [HOSTCC] $@"
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) $< $(ZBIN_LDFLAGS) -DELF64 -o $@
+CLEANUP += $(ZBIN64)
 
 ###############################################################################
 #
@@ -1434,22 +1490,22 @@ CLEANUP += $(ZBIN)
 
 $(ELF2EFI32) : util/elf2efi.c $(MAKEDEPS)
 	$(QM)$(ECHO) "  [HOSTCC] $@"
-	$(Q)$(HOST_CC) $(HOST_CFLAGS) -idirafter include -DEFI_TARGET32 $< -o $@
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) $(HOST_EFI_CFLAGS) -idirafter include -DEFI_TARGET32 $< -o $@
 CLEANUP += $(ELF2EFI32)
 
 $(ELF2EFI64) : util/elf2efi.c $(MAKEDEPS)
 	$(QM)$(ECHO) "  [HOSTCC] $@"
-	$(Q)$(HOST_CC) $(HOST_CFLAGS) -idirafter include -DEFI_TARGET64 $< -o $@
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) $(HOST_EFI_CFLAGS) -idirafter include -DEFI_TARGET64 $< -o $@
 CLEANUP += $(ELF2EFI64)
 
 $(EFIROM) : util/efirom.c util/eficompress.c $(MAKEDEPS)
 	$(QM)$(ECHO) "  [HOSTCC] $@"
-	$(Q)$(HOST_CC) $(HOST_CFLAGS) -idirafter include -o $@ $<
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) $(HOST_EFI_CFLAGS) -idirafter include -o $@ $<
 CLEANUP += $(EFIROM)
 
 $(EFIFATBIN) : util/efifatbin.c $(MAKEDEPS)
 	$(QM)$(ECHO) "  [HOSTCC] $@"
-	$(Q)$(HOST_CC) $(HOST_CFLAGS) -idirafter include -o $@ $<
+	$(Q)$(HOST_CC) $(HOST_CFLAGS) $(HOST_EFI_CFLAGS) -idirafter include -o $@ $<
 CLEANUP += $(EFIFATBIN)
 
 ###############################################################################

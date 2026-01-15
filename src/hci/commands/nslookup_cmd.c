@@ -18,6 +18,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <getopt.h>
@@ -73,7 +74,4 @@ static int nslookup_exec ( int argc, char **argv ) {
 }
 
 /** The "nslookup" command */
-struct command nslookup_command __command = {
-	.name = "nslookup",
-	.exec = nslookup_exec,
-};
+COMMAND ( nslookup, nslookup_exec );

@@ -644,7 +644,7 @@ static void depca_transmit(
 /**************************************************************************
 DISABLE - Turn off ethernet interface
 ***************************************************************************/
-static void depca_disable ( struct nic *nic ) {
+static void depca_disable ( struct nic *nic, void *hwdev __unused ) {
 	depca_reset(nic);
 
 	STOP_DEPCA(nic->ioaddr);
@@ -789,7 +789,7 @@ ISA_DRIVER ( depca_driver, depca_probe_addrs, depca_probe1,
 		     GENERIC_ISAPNP_VENDOR, 0x80f7 );
 
 DRIVER ( "depce", nic_driver, isa_driver, depca_driver,
-	 depca_probe, depca_disable );
+	 depca_probe, depca_disable, no_fake_bss );
 
 ISA_ROM ( "depca", "Digital DE100 and DE200" );
 

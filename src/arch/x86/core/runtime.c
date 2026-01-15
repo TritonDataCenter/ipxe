@@ -32,6 +32,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include <errno.h>
 #include <assert.h>
@@ -69,6 +70,7 @@ static void cmdline_image_free ( struct refcnt *refcnt ) {
 	struct image *image = container_of ( refcnt, struct image, refcnt );
 
 	DBGC ( image, "RUNTIME freeing command line\n" );
+	free_image ( refcnt );
 	free ( cmdline_copy );
 }
 
@@ -76,6 +78,7 @@ static void cmdline_image_free ( struct refcnt *refcnt ) {
 static struct image cmdline_image = {
 	.refcnt = REF_INIT ( cmdline_image_free ),
 	.name = "<CMDLINE>",
+	.flags = ( IMAGE_STATIC | IMAGE_STATIC_NAME ),
 	.type = &script_image_type,
 };
 
@@ -114,9 +117,7 @@ static void cmdline_strip ( char *cmdline, const char *cruft ) {
  * @ret rc		Return status code
  */
 static int cmdline_init ( void ) {
-	userptr_t cmdline_user;
 	char *cmdline;
-	size_t len;
 	int rc;
 
 	/* Do nothing if no command line was specified */
@@ -124,19 +125,15 @@ static int cmdline_init ( void ) {
 		DBGC ( colour, "RUNTIME found no command line\n" );
 		return 0;
 	}
-	cmdline_user = phys_to_user ( cmdline_phys );
-	len = ( strlen_user ( cmdline_user, 0 ) + 1 /* NUL */ );
 
 	/* Allocate and copy command line */
-	cmdline_copy = malloc ( len );
+	cmdline_copy = strdup ( phys_to_virt ( cmdline_phys ) );
 	if ( ! cmdline_copy ) {
-		DBGC ( colour, "RUNTIME could not allocate %zd bytes for "
-		       "command line\n", len );
+		DBGC ( colour, "RUNTIME could not allocate command line\n" );
 		rc = -ENOMEM;
 		goto err_alloc_cmdline_copy;
 	}
 	cmdline = cmdline_copy;
-	copy_from_user ( cmdline, cmdline_user, 0, len );
 	DBGC ( colour, "RUNTIME found command line \"%s\" at %08x\n",
 	       cmdline, cmdline_phys );
 
@@ -151,7 +148,7 @@ static int cmdline_init ( void ) {
 	DBGC ( colour, "RUNTIME using command line \"%s\"\n", cmdline );
 
 	/* Prepare and register image */
-	cmdline_image.data = virt_to_user ( cmdline );
+	cmdline_image.data = cmdline;
 	cmdline_image.len = strlen ( cmdline );
 	if ( cmdline_image.len ) {
 		if ( ( rc = register_image ( &cmdline_image ) ) != 0 ) {
@@ -193,7 +190,7 @@ static int initrd_init ( void ) {
 	       initrd_phys, ( initrd_phys + initrd_len ) );
 
 	/* Create initrd image */
-	image = image_memory ( "<INITRD>", phys_to_user ( initrd_phys ),
+	image = image_memory ( "<INITRD>", phys_to_virt ( initrd_phys ),
 			       initrd_len );
 	if ( ! image ) {
 		DBGC ( colour, "RUNTIME could not create initrd image\n" );

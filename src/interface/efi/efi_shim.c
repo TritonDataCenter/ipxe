@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <stdlib.h>
@@ -40,6 +41,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * Require use of a third party loader binary
@@ -272,42 +274,28 @@ static EFIAPI EFI_STATUS efi_shim_get_memory_map ( UINTN *len,
  * @ret rc		Return status code
  */
 static int efi_shim_inhibit_pxe ( EFI_HANDLE handle ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	union {
-		EFI_PXE_BASE_CODE_PROTOCOL *pxe;
-		void *interface;
-	} u;
+	EFI_PXE_BASE_CODE_PROTOCOL *pxe;
 	EFI_STATUS efirc;
 	int rc;
 
 	/* Locate PXE base code */
-	if ( ( efirc = bs->OpenProtocol ( handle,
-					  &efi_pxe_base_code_protocol_guid,
-					  &u.interface, efi_image_handle, NULL,
-					  EFI_OPEN_PROTOCOL_GET_PROTOCOL ))!=0){
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open ( handle, &efi_pxe_base_code_protocol_guid,
+			       &pxe ) ) != 0 ) {
 		DBGC ( &efi_shim, "SHIM could not open PXE base code: %s\n",
 		       strerror ( rc ) );
-		goto err_no_base;
+		return rc;
 	}
 
 	/* Stop PXE base code */
-	if ( ( efirc = u.pxe->Stop ( u.pxe ) ) != 0 ) {
+	if ( ( efirc = pxe->Stop ( pxe ) ) != 0 ) {
 		rc = -EEFI ( efirc );
 		DBGC ( &efi_shim, "SHIM could not stop PXE base code: %s\n",
 		       strerror ( rc ) );
-		goto err_stop;
+		return rc;
 	}
 
-	/* Success */
-	rc = 0;
 	DBGC ( &efi_shim, "SHIM stopped PXE base code\n" );
-
- err_stop:
-	bs->CloseProtocol ( handle, &efi_pxe_base_code_protocol_guid,
-			    efi_image_handle, NULL );
- err_no_base:
-	return rc;
+	return 0;
 }
 
 /**

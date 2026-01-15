@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -65,9 +66,4 @@ static int nstat_exec ( int argc, char **argv ) {
 }
 
 /** Neighbour management commands */
-struct command neighbour_commands[] __command = {
-	{
-		.name = "nstat",
-		.exec = nstat_exec,
-	},
-};
+COMMAND ( nstat, nstat_exec );

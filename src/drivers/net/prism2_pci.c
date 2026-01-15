@@ -44,7 +44,7 @@ static int prism2_pci_probe ( struct nic *nic, struct pci_device *pci ) {
   return prism2_probe ( nic, hw );
 }
 
-static void prism2_pci_disable ( struct nic *nic ) {
+static void prism2_pci_disable ( struct nic *nic, void *hwdev __unused ) {
   prism2_disable ( nic );
 }
 
@@ -55,7 +55,7 @@ PCI_ROM(0x1260, 0x3873, "prism2_pci",	"Harris Semiconductor Prism2.5 clone", 0),
 PCI_DRIVER ( prism2_pci_driver, prism2_pci_nics, PCI_NO_CLASS );
 
 DRIVER ( "Prism2/PCI", nic_driver, pci_driver, prism2_pci_driver,
-	 prism2_pci_probe, prism2_pci_disable );
+	 prism2_pci_probe, prism2_pci_disable, no_fake_bss );
 
 /*
  * Local variables:

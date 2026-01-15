@@ -27,7 +27,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <errno.h>
 #include <assert.h>
 #include <ipxe/deflate.h>
-#include <ipxe/uaccess.h>
 #include <ipxe/image.h>
 #include <ipxe/zlib.h>
 
@@ -41,11 +40,12 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * Extract compressed data to image
  *
  * @v format		Compression format code
- * @v in		Compressed input chunk
+ * @v data		Compressed input data
+ * @v len		Length of compressed input data
  * @v extracted		Extracted image
  * @ret rc		Return status code
  */
-int zlib_deflate ( enum deflate_format format, struct deflate_chunk *in,
+int zlib_deflate ( enum deflate_format format, const void *data, size_t len,
 		   struct image *extracted ) {
 	struct deflate *deflate;
 	struct deflate_chunk out;
@@ -64,23 +64,22 @@ int zlib_deflate ( enum deflate_format format, struct deflate_chunk *in,
 		/* (Re)initialise decompressor */
 		deflate_init ( deflate, format );
 
-		/* (Re)initialise input chunk */
-		in->offset = 0;
-
 		/* Initialise output chunk */
-		deflate_chunk_init ( &out, extracted->data, 0, extracted->len );
+		deflate_chunk_init ( &out, extracted->rwdata, 0,
+				     extracted->len );
 
 		/* Decompress data */
-		if ( ( rc = deflate_inflate ( deflate, in, &out ) ) != 0 ) {
-			DBGC ( extracted, "ZLIB %p could not decompress: %s\n",
-			       extracted, strerror ( rc ) );
+		if ( ( rc = deflate_inflate ( deflate, data, len,
+					      &out ) ) != 0 ) {
+			DBGC ( extracted, "ZLIB %s could not decompress: %s\n",
+			       extracted->name, strerror ( rc ) );
 			goto err_inflate;
 		}
 
 		/* Check that decompression is valid */
 		if ( ! deflate_finished ( deflate ) ) {
-			DBGC ( extracted, "ZLIB %p decompression incomplete\n",
-			       extracted );
+			DBGC ( extracted, "ZLIB %s decompression incomplete\n",
+			       extracted->name );
 			rc = -EINVAL;
 			goto err_unfinished;
 		}
@@ -91,8 +90,8 @@ int zlib_deflate ( enum deflate_format format, struct deflate_chunk *in,
 
 		/* Otherwise, resize output image and retry */
 		if ( ( rc = image_set_len ( extracted, out.offset ) ) != 0 ) {
-			DBGC ( extracted, "ZLIB %p could not resize: %s\n",
-			       extracted, strerror ( rc ) );
+			DBGC ( extracted, "ZLIB %s could not resize: %s\n",
+			       extracted->name, strerror ( rc ) );
 			goto err_set_size;
 		}
 	}
@@ -116,14 +115,11 @@ int zlib_deflate ( enum deflate_format format, struct deflate_chunk *in,
  * @ret rc		Return status code
  */
 static int zlib_extract ( struct image *image, struct image *extracted ) {
-	struct deflate_chunk in;
 	int rc;
 
-	/* Initialise input chunk */
-	deflate_chunk_init ( &in, image->data, 0, image->len );
-
 	/* Decompress image */
-	if ( ( rc = zlib_deflate ( DEFLATE_ZLIB, &in, extracted ) ) != 0 )
+	if ( ( rc = zlib_deflate ( DEFLATE_ZLIB, image->data, image->len,
+				   extracted ) ) != 0 )
 		return rc;
 
 	return 0;
@@ -136,18 +132,18 @@ static int zlib_extract ( struct image *image, struct image *extracted ) {
  * @ret rc		Return status code
  */
 static int zlib_probe ( struct image *image ) {
-	union zlib_magic magic;
+	const union zlib_magic *magic;
 
 	/* Sanity check */
-	if ( image->len < sizeof ( magic ) ) {
-		DBGC ( image, "ZLIB %p image too short\n", image );
+	if ( image->len < sizeof ( *magic ) ) {
+		DBGC ( image, "ZLIB %s image too short\n", image->name );
 		return -ENOEXEC;
 	}
+	magic = image->data;
 
 	/* Check magic header */
-	copy_from_user ( &magic, image->data, 0, sizeof ( magic ) );
-	if ( ! zlib_magic_is_valid ( &magic ) ) {
-		DBGC ( image, "ZLIB %p invalid magic data\n", image );
+	if ( ! zlib_magic_is_valid ( magic ) ) {
+		DBGC ( image, "ZLIB %s invalid magic data\n", image->name );
 		return -ENOEXEC;
 	}
 

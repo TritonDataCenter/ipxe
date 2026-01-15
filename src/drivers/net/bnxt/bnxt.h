@@ -25,13 +25,6 @@
 #define __be32  u32
 #define __be64  u64
 
-#define dma_addr_t unsigned long
-
-union dma_addr64_t {
-	dma_addr_t addr;
-	u64 as_u64;
-};
-
 #include "bnxt_hsi.h"
 
 #define DRV_MODULE_NAME              "bnxt"
@@ -152,8 +145,8 @@ union dma_addr64_t {
 #define DEFAULT_NUMBER_OF_STAT_CTXS             0x01
 #define NUM_RX_BUFFERS                          8
 #define MAX_RX_DESC_CNT                         16
-#define MAX_TX_DESC_CNT                         16
-#define MAX_CQ_DESC_CNT                         64
+#define MAX_TX_DESC_CNT                         64
+#define MAX_CQ_DESC_CNT                         128
 #define TX_RING_BUFFER_SIZE (MAX_TX_DESC_CNT * sizeof(struct tx_bd_short))
 #define RX_RING_BUFFER_SIZE \
 	(MAX_RX_DESC_CNT * sizeof(struct rx_prod_pkt_bd))
@@ -178,11 +171,17 @@ union dma_addr64_t {
 	RX_MASK_ACCEPT_MULTICAST)
 #define MAX_NQ_DESC_CNT                         64
 #define NQ_RING_BUFFER_SIZE (MAX_NQ_DESC_CNT * sizeof(struct cmpl_base))
-#define TX_RING_QID (FLAG_TEST(bp->flags, BNXT_FLAG_IS_CHIP_P5_PLUS) ? (u16)bp->queue_id : ((u16)bp->port_idx * 10))
 #define RX_RING_QID (FLAG_TEST(bp->flags, BNXT_FLAG_IS_CHIP_P5_PLUS) ? bp->queue_id : 0)
 #define STAT_CTX_ID ((bp->vf || FLAG_TEST(bp->flags, BNXT_FLAG_IS_CHIP_P5_PLUS)) ? bp->stat_ctx_id : 0)
 #define TX_AVAIL(r)                      (r - 1)
 #define TX_IN_USE(a, b, c) ((a - b) & (c - 1))
+#define NQ_DMA_ADDR(bp)		( dma ( &bp->nq_mapping, bp->nq.bd_virt ) )
+#define CQ_DMA_ADDR(bp)		( dma ( &bp->cq_mapping, bp->cq.bd_virt ) )
+#define TX_DMA_ADDR(bp)		( dma ( &bp->tx_mapping, bp->tx.bd_virt ) )
+#define RX_DMA_ADDR(bp)		( dma ( &bp->rx_mapping, bp->rx.bd_virt ) )
+#define REQ_DMA_ADDR(bp)	( dma ( &bp->req_mapping, bp->hwrm_addr_req ) )
+#define RESP_DMA_ADDR(bp)	( dma ( &bp->resp_mapping, bp->hwrm_addr_resp ) )
+#define DMA_DMA_ADDR(bp)	( dma ( &bp->dma_mapped, bp->hwrm_addr_dma ) )
 #define NO_MORE_NQ_BD_TO_SERVICE         1
 #define SERVICE_NEXT_NQ_BD               0
 #define NO_MORE_CQ_BD_TO_SERVICE         1
@@ -473,7 +472,7 @@ struct tx_bd_short {
 #define TX_BD_SHORT_FLAGS_COAL_NOW          0x8000UL
 	u16 len;
 	u32 opaque;
-	union dma_addr64_t dma;
+	physaddr_t dma;
 };
 
 struct tx_cmpl {
@@ -880,7 +879,7 @@ struct rx_prod_pkt_bd {
 #define RX_PROD_PKT_BD_FLAGS_BUFFERS_SFT  8
 	u16  len;
 	u32  opaque;
-	union dma_addr64_t dma;
+	physaddr_t dma;
 };
 
 struct rx_info {
@@ -895,7 +894,6 @@ struct rx_info {
 	u32               good;
 	u32               drop_err;
 	u32               drop_lb;
-	u32               drop_vlan;
 	u8                epoch;
 	u8                res[3];
 };
@@ -910,6 +908,45 @@ struct rx_info {
 #define VALID_RX_IOB              0x0080
 #define VALID_L2_FILTER           0x0100
 #define VALID_RING_NQ             0x0200
+
+struct lm_error_recovery
+{
+  __le32  flags;
+  __le32  drv_poll_freq;
+  __le32  master_wait_period;
+  __le32  normal_wait_period;
+  __le32  master_wait_post_rst;
+  __le32  max_bailout_post_rst;
+  __le32  fw_status_reg;
+  __le32  fw_hb_reg;
+  __le32  fw_rst_cnt_reg;
+  __le32  rst_inprg_reg;
+  __le32  rst_inprg_reg_mask;
+  __le32  rst_reg[16];
+  __le32  rst_reg_val[16];
+  u8   delay_after_rst[16];
+  __le32  recvry_cnt_reg;
+
+  __le32 last_fw_hb;
+  __le32 last_fw_rst_cnt;
+  __le32 fw_health_status;
+  __le32 err_recovery_cnt;
+  __le32 rst_in_progress;
+  __le16 rst_max_dsecs;
+
+  u8  master_pf;
+  u8  error_recvry_supported;
+  u8  driver_initiated_recovery;
+  u8  er_rst_on;
+
+#define ER_DFLT_FW_RST_MIN_DSECS    20
+#define ER_DFLT_FW_RST_MAX_DSECS    60
+#define FW_STATUS_REG_CODE_READY    0x8000UL
+  u8  rst_min_dsecs;
+  u8  reg_array_cnt;
+  u8  er_initiate;
+  u8  rsvd[3];
+};
 
 struct bnxt {
 /* begin "general, frequently-used members" cacheline section */
@@ -934,13 +971,22 @@ struct bnxt {
 	void                      *hwrm_addr_req;
 	void                      *hwrm_addr_resp;
 	void                      *hwrm_addr_dma;
-	dma_addr_t                req_addr_mapping;
-	dma_addr_t                resp_addr_mapping;
-	dma_addr_t                dma_addr_mapping;
+	struct dma_device         *dma;
+	struct dma_mapping        req_mapping;
+	struct dma_mapping        resp_mapping;
+	struct dma_mapping        dma_mapped;
+	struct dma_mapping        tx_mapping;
+	struct dma_mapping        rx_mapping;
+	struct dma_mapping        cq_mapping;
+	struct dma_mapping        nq_mapping;
+
 	struct tx_info            tx; /* Tx info. */
 	struct rx_info            rx; /* Rx info. */
 	struct cmp_info           cq; /* completion info. */
 	struct nq_info            nq; /* completion info. */
+	struct lm_error_recovery  er; /* error recovery. */
+	struct retry_timer        task_timer;
+	struct retry_timer        wait_timer;
 	u16                       nq_ring_id;
 	u8                        queue_id;
 	u16                       last_resp_code;
@@ -987,7 +1033,7 @@ struct bnxt {
 	u16                       auto_link_speeds2_mask;
 	u32                       link_set;
 	u8                        media_detect;
-	u8                        rsvd;
+	u8                        err_rcvry_supported;
 	u16                       max_vfs;
 	u16                       vf_res_strategy;
 	u16                       min_vnics;
@@ -1015,12 +1061,6 @@ struct bnxt {
 };
 
 /* defines required to rsolve checkpatch errors / warnings */
-#define test_if               if
-#define write32               writel
-#define write64               writeq
-#define pci_read_byte         pci_read_config_byte
-#define pci_read_word16       pci_read_config_word
-#define pci_write_word        pci_write_config_word
 #define SHORT_CMD_SUPPORTED   VER_GET_RESP_DEV_CAPS_CFG_SHORT_CMD_SUPPORTED
 #define SHORT_CMD_REQUIRED    VER_GET_RESP_DEV_CAPS_CFG_SHORT_CMD_REQUIRED
 #define CQ_DOORBELL_KEY_MASK(a) (\
@@ -1066,3 +1106,5 @@ struct bnxt {
 #define CHIP_NUM_57502       0x1752
 
 #define CHIP_NUM_57608       0x1760
+#define BNXT_ER_TIMER_INTERVAL(x) ( TICKS_PER_SEC * ( (x)->er.drv_poll_freq ) )
+#define BNXT_ER_WAIT_TIMER_INTERVAL(x) ( TICKS_PER_SEC * ( ( (x)->er.normal_wait_period / 10 ) ) )

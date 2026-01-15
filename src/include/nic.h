@@ -57,7 +57,13 @@ struct nic {
 	unsigned int		mbps;
 	duplex_t		duplex;
 	void			*priv_data;	/* driver private data */
+	void			*fake_bss;
+	size_t			fake_bss_len;
 };
+
+#define NIC_FAKE_BSS_PTR( type ) ( ( type * ) legacy_nic.fake_bss )
+#define NIC_FAKE_BSS( type ) ( * NIC_FAKE_BSS_PTR ( type ) )
+extern struct {} no_fake_bss;
 
 struct nic_operations {
 	int ( *connect ) ( struct nic * );
@@ -67,15 +73,17 @@ struct nic_operations {
 	void ( *irq ) ( struct nic *, irq_action_t );
 };
 
-extern struct nic nic;
+extern struct nic legacy_nic;
 
 static inline int eth_poll ( int retrieve ) {
-	return nic.nic_op->poll ( &nic, retrieve );
+	struct nic *nic = &legacy_nic;
+	return nic->nic_op->poll ( nic, retrieve );
 }
 
 static inline void eth_transmit ( const char *dest, unsigned int type,
 				  unsigned int size, const void *packet ) {
-	nic.nic_op->transmit ( &nic, dest, type, size, packet );
+	struct nic *nic = &legacy_nic;
+	nic->nic_op->transmit ( nic, dest, type, size, packet );
 }
 
 /*
@@ -88,7 +96,8 @@ extern int legacy_probe ( void *hwdev,
 			  void ( * set_drvdata ) ( void *hwdev, void *priv ),
 			  struct device *dev,
 			  int ( * probe ) ( struct nic *nic, void *hwdev ),
-			  void ( * disable ) ( struct nic *nic, void *hwdev ));
+			  void ( * disable ) ( struct nic *nic, void *hwdev ),
+			  size_t fake_bss_len );
 void legacy_remove ( void *hwdev,
 		     void * ( * get_drvdata ) ( void *hwdev ),
 		     void ( * disable ) ( struct nic *nic, void *hwdev ) );
@@ -208,7 +217,8 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 }
 
 #undef DRIVER
-#define DRIVER(_name_text,_unused2,_unused3,_name,_probe,_disable)	  \
+#define DRIVER( _name_text, _unused2, _unused3, _name, _probe, _disable,  \
+		_fake_bss )						  \
 	static __attribute__ (( unused )) const char			  \
 	_name ## _text[] = _name_text;					  \
 	static inline int						  \
@@ -217,14 +227,14 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 	}								  \
 	static inline void						  \
 	_name ## _disable ( struct nic *nic, void *hwdev ) {		  \
-		void ( * _unsafe_disable ) () = _disable;		  \
-		_unsafe_disable ( nic, hwdev );				  \
+		_disable ( nic, hwdev );				  \
 	}								  \
 	static inline int						  \
 	_name ## _pci_legacy_probe ( struct pci_device *pci ) {		  \
 		return legacy_probe ( pci, legacy_pci_set_drvdata,	  \
 				      &pci->dev, _name ## _probe,	  \
-				      _name ## _disable );		  \
+				      _name ## _disable,		  \
+				      sizeof ( _fake_bss ) );		  \
 	}								  \
 	static inline void						  \
 	_name ## _pci_legacy_remove ( struct pci_device *pci ) {	  \
@@ -236,7 +246,8 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 			 const struct isapnp_device_id *id __unused ) {	  \
 		return legacy_probe ( isapnp, legacy_isapnp_set_drvdata,  \
 				      &isapnp->dev, _name ## _probe,	  \
-				      _name ## _disable );		  \
+				      _name ## _disable,		  \
+				      sizeof ( _fake_bss ) );		  \
 	}								  \
 	static inline void						  \
 	_name ## _isapnp_legacy_remove ( struct isapnp_device *isapnp ) { \
@@ -248,7 +259,8 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 			     const struct eisa_device_id *id __unused ) { \
 		return legacy_probe ( eisa, legacy_eisa_set_drvdata,	  \
 				      &eisa->dev, _name ## _probe,	  \
-				      _name ## _disable );		  \
+				      _name ## _disable,		  \
+				      sizeof ( _fake_bss ) );		  \
 	}								  \
 	static inline void						  \
 	_name ## _eisa_legacy_remove ( struct eisa_device *eisa ) {	  \
@@ -260,7 +272,8 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 			      const struct mca_device_id *id __unused ) { \
 		return legacy_probe ( mca, legacy_mca_set_drvdata,	  \
 				      &mca->dev, _name ## _probe,	  \
-				      _name ## _disable );		  \
+				      _name ## _disable,		  \
+				      sizeof ( _fake_bss ) );		  \
 	}								  \
 	static inline void						  \
 	_name ## _mca_legacy_remove ( struct mca_device *mca ) {	  \
@@ -271,7 +284,8 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 	_name ## _isa_legacy_probe ( struct isa_device *isa ) {		  \
 		return legacy_probe ( isa, legacy_isa_set_drvdata,	  \
 				      &isa->dev, _name ## _probe,	  \
-				      _name ## _disable );		  \
+				      _name ## _disable,		  \
+				      sizeof ( _fake_bss ) );		  \
 	}								  \
 	static inline void						  \
 	_name ## _isa_legacy_remove ( struct isa_device *isa ) {	  \

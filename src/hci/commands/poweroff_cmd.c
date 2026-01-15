@@ -29,6 +29,7 @@
 #include <ipxe/reboot.h>
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -70,7 +71,4 @@ static int poweroff_exec ( int argc, char **argv ) {
 }
 
 /** "poweroff" command */
-struct command poweroff_command __command = {
-	.name = "poweroff",
-	.exec = poweroff_exec,
-};
+COMMAND ( poweroff, poweroff_exec );

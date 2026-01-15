@@ -254,10 +254,11 @@ static struct winbond_private
 
 static int ioaddr;
 static unsigned short eeprom [0x40];
-struct {
+struct w89c840_bss {
 	char        rx_packet[PKT_BUF_SZ * RX_RING_SIZE];
 	char        tx_packet[PKT_BUF_SZ * TX_RING_SIZE];
-} w89c840_buf __shared;
+};
+#define w89c840_buf NIC_FAKE_BSS ( struct w89c840_bss )
 
 static int  eeprom_read(long ioaddr, int location);
 static int  mdio_read(int base_address, int phy_id, int location);
@@ -579,7 +580,7 @@ static void w89c840_transmit(
 /**************************************************************************
 w89c840_disable - Turn off ethernet interface
 ***************************************************************************/
-static void w89c840_disable ( struct nic *nic ) {
+static void w89c840_disable ( struct nic *nic, void *hwdev __unused ) {
 
     w89c840_reset(nic);
 
@@ -956,7 +957,7 @@ static void init_ring(void)
 
 
 DRIVER ( "W89C840F", nic_driver, pci_driver, w89c840_driver,
-	 w89c840_probe, w89c840_disable );
+	 w89c840_probe, w89c840_disable, w89c840_buf );
 
 /*
  * Local variables:

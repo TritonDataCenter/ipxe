@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -31,11 +32,13 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <ctype.h>
 #include <errno.h>
 #include <ipxe/init.h>
 #include <ipxe/image.h>
 #include <ipxe/script.h>
+#include <ipxe/uaccess.h>
 #include <ipxe/efi/efi.h>
 #include <ipxe/efi/efi_cmdline.h>
 
@@ -57,6 +60,7 @@ static void efi_cmdline_free ( struct refcnt *refcnt ) {
 	struct image *image = container_of ( refcnt, struct image, refcnt );
 
 	DBGC ( image, "CMDLINE freeing command line\n" );
+	free_image ( refcnt );
 	free ( efi_cmdline_copy );
 }
 
@@ -64,6 +68,7 @@ static void efi_cmdline_free ( struct refcnt *refcnt ) {
 static struct image efi_cmdline_image = {
 	.refcnt = REF_INIT ( efi_cmdline_free ),
 	.name = "<CMDLINE>",
+	.flags = ( IMAGE_STATIC | IMAGE_STATIC_NAME ),
 	.type = &script_image_type,
 };
 
@@ -110,7 +115,7 @@ static int efi_cmdline_init ( void ) {
 	DBGC ( colour, "CMDLINE using command line \"%s\"\n", cmdline );
 
 	/* Prepare and register image */
-	efi_cmdline_image.data = virt_to_user ( cmdline );
+	efi_cmdline_image.data = cmdline;
 	efi_cmdline_image.len = strlen ( cmdline );
 	if ( efi_cmdline_image.len &&
 	     ( ( rc = register_image ( &efi_cmdline_image ) ) != 0 ) ) {

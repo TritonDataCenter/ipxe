@@ -22,10 +22,12 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <ipxe/image.h>
 #include <ipxe/downloader.h>
@@ -184,7 +186,7 @@ void imgstat ( struct image *image ) {
  * @v len		Length
  * @ret rc		Return status code
  */
-int imgmem ( const char *name, userptr_t data, size_t len ) {
+int imgmem ( const char *name, const void *data, size_t len ) {
 	struct image *image;
 
 	/* Create image */

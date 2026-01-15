@@ -28,6 +28,7 @@
 #include <ipxe/login_ui.h>
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -71,7 +72,4 @@ static int login_exec ( int argc, char **argv ) {
 }
 
 /** Login commands */
-struct command login_command __command = {
-	.name = "login",
-	.exec = login_exec,
-};
+COMMAND ( login, login_exec );

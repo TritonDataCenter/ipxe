@@ -18,6 +18,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdlib.h>
 #include <stdarg.h>
@@ -34,8 +35,11 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/fcp.h>
 #include <ipxe/ib_srp.h>
 #include <ipxe/usb.h>
+#include <ipxe/settings.h>
+#include <ipxe/dhcp.h>
 #include <ipxe/efi/efi.h>
 #include <ipxe/efi/efi_driver.h>
+#include <ipxe/efi/efi_strings.h>
 #include <ipxe/efi/efi_path.h>
 
 /** @file
@@ -43,6 +47,68 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * EFI device paths
  *
  */
+
+/** Dummy parent device path
+ *
+ * This is used as the parent device path when we need to construct a
+ * path for a device that has no EFI parent device.
+ */
+static struct {
+	BBS_BBS_DEVICE_PATH bbs;
+	CHAR8 tring[4];
+	EFI_DEVICE_PATH_PROTOCOL end;
+} __attribute__ (( packed )) efi_dummy_parent_path = {
+	.bbs = {
+		.Header = {
+			.Type = BBS_DEVICE_PATH,
+			.SubType = BBS_BBS_DP,
+			.Length[0] = ( sizeof ( efi_dummy_parent_path.bbs ) +
+				       sizeof ( efi_dummy_parent_path.tring )),
+		},
+		.DeviceType = BBS_TYPE_UNKNOWN,
+		.String[0] = 'i',
+	},
+	.tring = "PXE",
+	.end = {
+		.Type = END_DEVICE_PATH_TYPE,
+		.SubType = END_ENTIRE_DEVICE_PATH_SUBTYPE,
+		.Length[0] = sizeof ( efi_dummy_parent_path.end ),
+	},
+};
+
+/** An EFI device path settings block */
+struct efi_path_settings {
+	/** Settings interface */
+	struct settings settings;
+	/** Device path */
+	EFI_DEVICE_PATH_PROTOCOL *path;
+};
+
+/** An EFI device path setting */
+struct efi_path_setting {
+	/** Setting */
+	const struct setting *setting;
+	/**
+	 * Fetch setting
+	 *
+	 * @v pathset		Path setting
+	 * @v path		Device path
+	 * @v data		Buffer to fill with setting data
+	 * @v len		Length of buffer
+	 * @ret len		Length of setting data, or negative error
+	 */
+	int ( * fetch ) ( struct efi_path_setting *pathset,
+			  EFI_DEVICE_PATH_PROTOCOL *path,
+			  void *data, size_t len );
+	/** Path type */
+	uint8_t type;
+	/** Path subtype */
+	uint8_t subtype;
+	/** Offset within device path */
+	uint8_t offset;
+	/** Length (if fixed) */
+	uint8_t len;
+};
 
 /**
  * Find next element in device path
@@ -112,6 +178,57 @@ size_t efi_path_len ( EFI_DEVICE_PATH_PROTOCOL *path ) {
 }
 
 /**
+ * Check that device path is well-formed
+ *
+ * @v path		Device path, or NULL
+ * @v max		Maximum device path length
+ * @ret rc		Return status code
+ */
+int efi_path_check ( EFI_DEVICE_PATH_PROTOCOL *path, size_t max ) {
+	EFI_DEVICE_PATH_PROTOCOL *next;
+	size_t remaining = max;
+	size_t len;
+
+	/* Check that path terminates within maximum length */
+	for ( ; ; path = next ) {
+		if ( remaining < sizeof ( *path ) )
+			return -EINVAL;
+		next = efi_path_next ( path );
+		if ( ! next )
+			break;
+		len = ( ( ( void * ) next ) - ( ( void * ) path ) );
+		if ( remaining < len )
+			return -EINVAL;
+	}
+
+	return 0;
+}
+
+/**
+ * Get MAC address from device path
+ *
+ * @v path		Device path
+ * @ret mac		MAC address, or NULL if not found
+ */
+void * efi_path_mac ( EFI_DEVICE_PATH_PROTOCOL *path ) {
+	EFI_DEVICE_PATH_PROTOCOL *next;
+	MAC_ADDR_DEVICE_PATH *mac;
+
+	/* Search for MAC address path */
+	for ( ; ( next = efi_path_next ( path ) ) ; path = next ) {
+		if ( ( path->Type == MESSAGING_DEVICE_PATH ) &&
+		     ( path->SubType == MSG_MAC_ADDR_DP ) ) {
+			mac = container_of ( path, MAC_ADDR_DEVICE_PATH,
+					     Header );
+			return &mac->MacAddress;
+		}
+	}
+
+	/* No MAC address found */
+	return NULL;
+}
+
+/**
  * Get VLAN tag from device path
  *
  * @v path		Device path
@@ -176,6 +293,46 @@ int efi_path_guid ( EFI_DEVICE_PATH_PROTOCOL *path, union uuid *guid ) {
 }
 
 /**
+ * Parse URI from device path
+ *
+ * @v path		Device path
+ * @ret uri		URI, or NULL if not a URI
+ */
+struct uri * efi_path_uri ( EFI_DEVICE_PATH_PROTOCOL *path ) {
+	EFI_DEVICE_PATH_PROTOCOL *next;
+	URI_DEVICE_PATH *uripath;
+	char *uristring;
+	struct uri *uri;
+	size_t len;
+
+	/* Search for URI device path */
+	for ( ; ( next = efi_path_next ( path ) ) ; path = next ) {
+		if ( ( path->Type == MESSAGING_DEVICE_PATH ) &&
+		     ( path->SubType == MSG_URI_DP ) ) {
+
+			/* Calculate path length */
+			uripath = container_of ( path, URI_DEVICE_PATH,
+						 Header );
+			len = ( ( ( path->Length[1] << 8 ) | path->Length[0] )
+				- offsetof ( typeof ( *uripath ), Uri ) );
+
+			/* Parse URI */
+			uristring = zalloc ( len + 1 /* NUL */ );
+			if ( ! uristring )
+				return NULL;
+			memcpy ( uristring, uripath->Uri, len );
+			uri = parse_uri ( uristring );
+			free ( uristring );
+
+			return uri;
+		}
+	}
+
+	/* No URI path found */
+	return NULL;
+}
+
+/**
  * Concatenate EFI device paths
  *
  * @v ...		List of device paths (NULL terminated)
@@ -225,6 +382,24 @@ EFI_DEVICE_PATH_PROTOCOL * efi_paths ( EFI_DEVICE_PATH_PROTOCOL *first, ... ) {
 }
 
 /**
+ * Construct EFI parent device path
+ *
+ * @v dev		Generic device
+ * @ret path		Parent (or dummy) device path
+ */
+static EFI_DEVICE_PATH_PROTOCOL * efi_parent_path ( struct device *dev ) {
+	struct efi_device *efidev;
+
+	/* Use EFI parent device's path, if possible */
+	efidev = efidev_parent ( dev );
+	if ( efidev )
+		return efidev->path;
+
+	/* Otherwise, use a dummy parent device path */
+	return &efi_dummy_parent_path.bbs.Header;
+}
+
+/**
  * Construct EFI device path for network device
  *
  * @v netdev		Network device
@@ -234,7 +409,7 @@ EFI_DEVICE_PATH_PROTOCOL * efi_paths ( EFI_DEVICE_PATH_PROTOCOL *first, ... ) {
  * allocated device path.
  */
 EFI_DEVICE_PATH_PROTOCOL * efi_netdev_path ( struct net_device *netdev ) {
-	struct efi_device *efidev;
+	EFI_DEVICE_PATH_PROTOCOL *parent;
 	EFI_DEVICE_PATH_PROTOCOL *path;
 	MAC_ADDR_DEVICE_PATH *macpath;
 	VLAN_DEVICE_PATH *vlanpath;
@@ -243,13 +418,11 @@ EFI_DEVICE_PATH_PROTOCOL * efi_netdev_path ( struct net_device *netdev ) {
 	size_t prefix_len;
 	size_t len;
 
-	/* Find parent EFI device */
-	efidev = efidev_parent ( netdev->dev );
-	if ( ! efidev )
-		return NULL;
+	/* Get parent EFI device path */
+	parent = efi_parent_path ( netdev->dev );
 
 	/* Calculate device path length */
-	prefix_len = efi_path_len ( efidev->path );
+	prefix_len = efi_path_len ( parent );
 	len = ( prefix_len + sizeof ( *macpath ) + sizeof ( *vlanpath ) +
 		sizeof ( *end ) );
 
@@ -259,7 +432,7 @@ EFI_DEVICE_PATH_PROTOCOL * efi_netdev_path ( struct net_device *netdev ) {
 		return NULL;
 
 	/* Construct device path */
-	memcpy ( path, efidev->path, prefix_len );
+	memcpy ( path, parent, prefix_len );
 	macpath = ( ( ( void * ) path ) + prefix_len );
 	macpath->Header.Type = MESSAGING_DEVICE_PATH;
 	macpath->Header.SubType = MSG_MAC_ADDR_DP;
@@ -473,20 +646,18 @@ EFI_DEVICE_PATH_PROTOCOL * efi_ib_srp_path ( struct ib_srp_device *ib_srp ) {
 	union ib_srp_target_port_id *id =
 		container_of ( &sbft->srp.target, union ib_srp_target_port_id,
 			       srp );
-	struct efi_device *efidev;
+	EFI_DEVICE_PATH_PROTOCOL *parent;
 	EFI_DEVICE_PATH_PROTOCOL *path;
 	INFINIBAND_DEVICE_PATH *ibpath;
 	EFI_DEVICE_PATH_PROTOCOL *end;
 	size_t prefix_len;
 	size_t len;
 
-	/* Find parent EFI device */
-	efidev = efidev_parent ( ib_srp->ibdev->dev );
-	if ( ! efidev )
-		return NULL;
+	/* Get parent EFI device path */
+	parent = efi_parent_path ( ib_srp->ibdev->dev );
 
 	/* Calculate device path length */
-	prefix_len = efi_path_len ( efidev->path );
+	prefix_len = efi_path_len ( parent );
 	len = ( prefix_len + sizeof ( *ibpath ) + sizeof ( *end ) );
 
 	/* Allocate device path */
@@ -495,7 +666,7 @@ EFI_DEVICE_PATH_PROTOCOL * efi_ib_srp_path ( struct ib_srp_device *ib_srp ) {
 		return NULL;
 
 	/* Construct device path */
-	memcpy ( path, efidev->path, prefix_len );
+	memcpy ( path, parent, prefix_len );
 	ibpath = ( ( ( void * ) path ) + prefix_len );
 	ibpath->Header.Type = MESSAGING_DEVICE_PATH;
 	ibpath->Header.SubType = MSG_INFINIBAND_DP;
@@ -525,7 +696,7 @@ EFI_DEVICE_PATH_PROTOCOL * efi_ib_srp_path ( struct ib_srp_device *ib_srp ) {
  */
 EFI_DEVICE_PATH_PROTOCOL * efi_usb_path ( struct usb_function *func ) {
 	struct usb_device *usb = func->usb;
-	struct efi_device *efidev;
+	EFI_DEVICE_PATH_PROTOCOL *parent;
 	EFI_DEVICE_PATH_PROTOCOL *path;
 	EFI_DEVICE_PATH_PROTOCOL *end;
 	USB_DEVICE_PATH *usbpath;
@@ -536,14 +707,12 @@ EFI_DEVICE_PATH_PROTOCOL * efi_usb_path ( struct usb_function *func ) {
 	/* Sanity check */
 	assert ( func->desc.count >= 1 );
 
-	/* Find parent EFI device */
-	efidev = efidev_parent ( &func->dev );
-	if ( ! efidev )
-		return NULL;
+	/* Get parent EFI device path */
+	parent = efi_parent_path ( &func->dev );
 
 	/* Calculate device path length */
 	count = ( usb_depth ( usb ) + 1 );
-	prefix_len = efi_path_len ( efidev->path );
+	prefix_len = efi_path_len ( parent );
 	len = ( prefix_len + ( count * sizeof ( *usbpath ) ) +
 		sizeof ( *end ) );
 
@@ -553,7 +722,7 @@ EFI_DEVICE_PATH_PROTOCOL * efi_usb_path ( struct usb_function *func ) {
 		return NULL;
 
 	/* Construct device path */
-	memcpy ( path, efidev->path, prefix_len );
+	memcpy ( path, parent, prefix_len );
 	end = ( ( ( void * ) path ) + len - sizeof ( *end ) );
 	efi_path_terminate ( end );
 	usbpath = ( ( ( void * ) end ) - sizeof ( *usbpath ) );
@@ -566,6 +735,177 @@ EFI_DEVICE_PATH_PROTOCOL * efi_usb_path ( struct usb_function *func ) {
 	}
 
 	return path;
+}
+
+/**
+ * Get EFI device path from load option
+ *
+ * @v load		EFI load option
+ * @v len		Length of EFI load option
+ * @ret path		EFI device path, or NULL on error
+ *
+ * The caller is responsible for eventually calling free() on the
+ * allocated device path.
+ */
+EFI_DEVICE_PATH_PROTOCOL * efi_load_path ( EFI_LOAD_OPTION *load,
+					   size_t len ) {
+	EFI_DEVICE_PATH_PROTOCOL *path;
+	EFI_DEVICE_PATH_PROTOCOL *copy;
+	CHAR16 *wdesc;
+	size_t path_max;
+	size_t wmax;
+	size_t wlen;
+
+	/* Check basic structure size */
+	if ( len < sizeof ( *load ) ) {
+		DBGC ( load, "EFI load option too short for header:\n" );
+		DBGC_HDA ( load, 0, load, len );
+		return NULL;
+	}
+
+	/* Get length of description */
+	wdesc = ( ( ( void * ) load ) + sizeof ( *load ) );
+	wmax = ( ( len - sizeof ( *load ) ) / sizeof ( wdesc[0] ) );
+	wlen = wcsnlen ( wdesc, wmax );
+	if ( wlen == wmax ) {
+		DBGC ( load, "EFI load option has unterminated "
+		       "description:\n" );
+		DBGC_HDA ( load, 0, load, len );
+		return NULL;
+	}
+
+	/* Get inline device path */
+	path = ( ( ( void * ) load ) + sizeof ( *load ) +
+		 ( wlen * sizeof ( wdesc[0] ) ) + 2 /* wNUL */ );
+	path_max = ( len - sizeof ( *load ) - ( wlen * sizeof ( wdesc[0] ) )
+		     - 2 /* wNUL */ );
+	if ( load->FilePathListLength > path_max ) {
+		DBGC ( load, "EFI load option too short for path(s):\n" );
+		DBGC_HDA ( load, 0, load, len );
+		return NULL;
+	}
+
+	/* Check path length */
+	if ( efi_path_check ( path, path_max ) != 0 ) {
+		DBGC ( load, "EFI load option has unterminated device "
+		       "path:\n" );
+		DBGC_HDA ( load, 0, load, len );
+		return NULL;
+	}
+
+	/* Allocate copy of path */
+	copy = malloc ( path_max );
+	if ( ! copy )
+		return NULL;
+	memcpy ( copy, path, path_max );
+
+	return copy;
+}
+
+/**
+ * Get EFI device path for numbered boot option
+ *
+ * @v number		Boot option number
+ * @ret path		EFI device path, or NULL on error
+ *
+ * The caller is responsible for eventually calling free() on the
+ * allocated device path.
+ */
+EFI_DEVICE_PATH_PROTOCOL * efi_boot_path ( unsigned int number ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	EFI_GUID *guid = &efi_global_variable;
+	CHAR16 wname[ 9 /* "BootXXXX" + wNUL */ ];
+	EFI_LOAD_OPTION *load;
+	EFI_DEVICE_PATH *path;
+	UINT32 attrs;
+	UINTN size;
+	EFI_STATUS efirc;
+	int rc;
+
+	/* Construct variable name */
+	efi_snprintf ( wname, ( sizeof ( wname ) / sizeof ( wname[0] ) ),
+		       "Boot%04X", number );
+
+	/* Get variable length */
+	size = 0;
+	if ( ( efirc = rs->GetVariable ( wname, guid, &attrs, &size,
+					 NULL ) != EFI_BUFFER_TOO_SMALL ) ) {
+		rc = -EEFI ( efirc );
+		DBGC ( rs, "EFI could not get size of %ls: %s\n",
+		       wname, strerror ( rc ) );
+		goto err_size;
+	}
+
+	/* Allocate temporary buffer for EFI_LOAD_OPTION */
+	load = malloc ( size );
+	if ( ! load ) {
+		rc = -ENOMEM;
+		goto err_alloc;
+	}
+
+	/* Read variable */
+	if ( ( efirc = rs->GetVariable ( wname, guid, &attrs, &size,
+					 load ) != 0 ) ) {
+		rc = -EEFI ( efirc );
+		DBGC ( rs, "EFI could not read %ls: %s\n",
+		       wname, strerror ( rc ) );
+		goto err_read;
+	}
+	DBGC2 ( rs, "EFI boot option %ls is:\n", wname );
+	DBGC2_HDA ( rs, 0, load, size );
+
+	/* Get device path from load option */
+	path = efi_load_path ( load, size );
+	if ( ! path ) {
+		rc = -EINVAL;
+		DBGC ( rs, "EFI could not parse %ls: %s\n",
+		       wname, strerror ( rc ) );
+		goto err_path;
+	}
+
+	/* Free temporary buffer */
+	free ( load );
+
+	return path;
+
+ err_path:
+ err_read:
+	free ( load );
+ err_alloc:
+ err_size:
+	return NULL;
+}
+
+/**
+ * Get EFI device path for current boot option
+ *
+ * @ret path		EFI device path, or NULL on error
+ *
+ * The caller is responsible for eventually calling free() on the
+ * allocated device path.
+ */
+EFI_DEVICE_PATH_PROTOCOL * efi_current_boot_path ( void ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	EFI_GUID *guid = &efi_global_variable;
+	CHAR16 wname[] = L"BootCurrent";
+	UINT16 current;
+	UINT32 attrs;
+	UINTN size;
+	EFI_STATUS efirc;
+	int rc;
+
+	/* Read current boot option index */
+	size = sizeof ( current );
+	if ( ( efirc = rs->GetVariable ( wname, guid, &attrs, &size,
+					 &current ) != 0 ) ) {
+		rc = -EEFI ( efirc );
+		DBGC ( rs, "EFI could not read %ls: %s\n",
+		       wname, strerror ( rc ) );
+		return NULL;
+	}
+
+	/* Get device path from this boot option */
+	return efi_boot_path ( current );
 }
 
 /**
@@ -593,3 +933,208 @@ EFI_DEVICE_PATH_PROTOCOL * efi_describe ( struct interface *intf ) {
 	intf_put ( dest );
 	return path;
 }
+
+/**
+ * Fetch an EFI device path fixed-size setting
+ *
+ * @v pathset		Path setting
+ * @v path		Device path
+ * @v data		Buffer to fill with setting data
+ * @v len		Length of buffer
+ * @ret len		Length of setting data, or negative error
+ */
+static int efi_path_fetch_fixed ( struct efi_path_setting *pathset,
+				  EFI_DEVICE_PATH_PROTOCOL *path,
+				  void *data, size_t len ) {
+
+	/* Copy data */
+	if ( len > pathset->len )
+		len = pathset->len;
+	memcpy ( data, ( ( ( void * ) path ) + pathset->offset ), len );
+
+	return pathset->len;
+}
+
+/**
+ * Fetch an EFI device path DNS setting
+ *
+ * @v pathset		Path setting
+ * @v path		Device path
+ * @v data		Buffer to fill with setting data
+ * @v len		Length of buffer
+ * @ret len		Length of setting data, or negative error
+ */
+static int efi_path_fetch_dns ( struct efi_path_setting *pathset,
+				EFI_DEVICE_PATH_PROTOCOL *path,
+				void *data, size_t len ) {
+	DNS_DEVICE_PATH *dns = container_of ( path, DNS_DEVICE_PATH, Header );
+	unsigned int count;
+	unsigned int i;
+	size_t frag_len;
+
+	/* Check applicability */
+	if ( ( !! dns->IsIPv6 ) !=
+	     ( pathset->setting->type == &setting_type_ipv6 ) )
+		return -ENOENT;
+
+	/* Calculate number of addresses */
+	count = ( ( ( ( path->Length[1] << 8 ) | path->Length[0] ) -
+		    pathset->offset ) / sizeof ( dns->DnsServerIp[0] ) );
+
+	/* Copy data */
+	for ( i = 0 ; i < count ; i++ ) {
+		frag_len = len;
+		if ( frag_len > pathset->len )
+			frag_len = pathset->len;
+		memcpy ( data, &dns->DnsServerIp[i], frag_len );
+		data += frag_len;
+		len -= frag_len;
+	}
+
+	return ( count * pathset->len );
+}
+
+/** EFI device path settings */
+static struct efi_path_setting efi_path_settings[] = {
+	{ &ip_setting, efi_path_fetch_fixed, MESSAGING_DEVICE_PATH,
+	  MSG_IPv4_DP, offsetof ( IPv4_DEVICE_PATH, LocalIpAddress ),
+	  sizeof ( struct in_addr ) },
+	{ &netmask_setting, efi_path_fetch_fixed, MESSAGING_DEVICE_PATH,
+	  MSG_IPv4_DP, offsetof ( IPv4_DEVICE_PATH, SubnetMask ),
+	  sizeof ( struct in_addr ) },
+	{ &gateway_setting, efi_path_fetch_fixed, MESSAGING_DEVICE_PATH,
+	  MSG_IPv4_DP, offsetof ( IPv4_DEVICE_PATH, GatewayIpAddress ),
+	  sizeof ( struct in_addr ) },
+	{ &ip6_setting, efi_path_fetch_fixed, MESSAGING_DEVICE_PATH,
+	  MSG_IPv6_DP, offsetof ( IPv6_DEVICE_PATH, LocalIpAddress ),
+	  sizeof ( struct in6_addr ) },
+	{ &len6_setting, efi_path_fetch_fixed, MESSAGING_DEVICE_PATH,
+	  MSG_IPv6_DP, offsetof ( IPv6_DEVICE_PATH, PrefixLength ),
+	  sizeof ( uint8_t ) },
+	{ &gateway6_setting, efi_path_fetch_fixed, MESSAGING_DEVICE_PATH,
+	  MSG_IPv6_DP, offsetof ( IPv6_DEVICE_PATH, GatewayIpAddress ),
+	  sizeof ( struct in6_addr ) },
+	{ &dns_setting, efi_path_fetch_dns, MESSAGING_DEVICE_PATH,
+	  MSG_DNS_DP, offsetof ( DNS_DEVICE_PATH, DnsServerIp ),
+	  sizeof ( struct in_addr ) },
+	{ &dns6_setting, efi_path_fetch_dns, MESSAGING_DEVICE_PATH,
+	  MSG_DNS_DP, offsetof ( DNS_DEVICE_PATH, DnsServerIp ),
+	  sizeof ( struct in6_addr ) },
+};
+
+/**
+ * Fetch value of EFI device path setting
+ *
+ * @v settings		Settings block
+ * @v setting		Setting to fetch
+ * @v data		Buffer to fill with setting data
+ * @v len		Length of buffer
+ * @ret len		Length of setting data, or negative error
+ */
+static int efi_path_fetch ( struct settings *settings, struct setting *setting,
+			    void *data, size_t len ) {
+	struct efi_path_settings *pathsets =
+		container_of ( settings, struct efi_path_settings, settings );
+	EFI_DEVICE_PATH_PROTOCOL *path = pathsets->path;
+	EFI_DEVICE_PATH_PROTOCOL *next;
+	struct efi_path_setting *pathset;
+	unsigned int i;
+	int ret;
+
+	/* Find matching path setting, if any */
+	for ( i = 0 ; i < ( sizeof ( efi_path_settings ) /
+			    sizeof ( efi_path_settings[0] ) ) ; i++ ) {
+
+		/* Check for a matching setting */
+		pathset = &efi_path_settings[i];
+		if ( setting_cmp ( setting, pathset->setting ) != 0 )
+			continue;
+
+		/* Find matching device path element, if any */
+		for ( ; ( next = efi_path_next ( path ) ) ; path = next ) {
+
+			/* Check for a matching path type */
+			if ( ( path->Type != pathset->type ) ||
+			     ( path->SubType != pathset->subtype ) )
+				continue;
+
+			/* Fetch value */
+			if ( ( ret = pathset->fetch ( pathset, path,
+						      data, len ) ) < 0 )
+				return ret;
+
+			/* Apply default type, if not already set */
+			if ( ! setting->type )
+				setting->type = pathset->setting->type;
+
+			return ret;
+		}
+		break;
+	}
+
+	return -ENOENT;
+}
+
+/** EFI device path settings operations */
+static struct settings_operations efi_path_settings_operations = {
+	.fetch = efi_path_fetch,
+};
+
+/**
+ * Create per-netdevice EFI path settings
+ *
+ * @v netdev		Network device
+ * @v priv		Private data
+ * @ret rc		Return status code
+ */
+static int efi_path_net_probe ( struct net_device *netdev, void *priv ) {
+	struct efi_path_settings *pathsets = priv;
+	struct settings *settings = &pathsets->settings;
+	EFI_DEVICE_PATH_PROTOCOL *path = efi_loaded_image_path;
+	unsigned int vlan;
+	void *mac;
+	int rc;
+
+	/* Check applicability */
+	pathsets->path = path;
+	mac = efi_path_mac ( path );
+	vlan = efi_path_vlan ( path );
+	if ( ( mac == NULL ) ||
+	     ( memcmp ( mac, netdev->ll_addr,
+			netdev->ll_protocol->ll_addr_len ) != 0 ) ||
+	     ( vlan != vlan_tag ( netdev ) ) ) {
+		DBGC ( settings, "EFI path %s does not apply to %s\n",
+		       efi_devpath_text ( path ), netdev->name );
+		return 0;
+	}
+
+	/* Never override a real DHCP settings block */
+	if ( find_child_settings ( netdev_settings ( netdev ),
+				   DHCP_SETTINGS_NAME ) ) {
+		DBGC ( settings, "EFI path %s not overriding %s DHCP "
+		       "settings\n", efi_devpath_text ( path ), netdev->name );
+		return 0;
+	}
+
+	/* Initialise and register settings */
+	settings_init ( settings, &efi_path_settings_operations,
+			&netdev->refcnt, NULL );
+	if ( ( rc = register_settings ( settings, netdev_settings ( netdev ),
+					DHCP_SETTINGS_NAME ) ) != 0 ) {
+		DBGC ( settings, "EFI path %s could not register for %s: %s\n",
+		       efi_devpath_text ( path ), netdev->name,
+		       strerror ( rc ) );
+		return rc;
+	}
+	DBGC ( settings, "EFI path %s registered for %s\n",
+	       efi_devpath_text ( path ), netdev->name );
+
+	return 0;
+}
+
+/** EFI path settings per-netdevice driver */
+struct net_driver efi_path_net_driver __net_driver = {
+	.name = "EFI path",
+	.priv_len = sizeof ( struct efi_path_settings ),
+	.probe = efi_path_net_probe,
+};

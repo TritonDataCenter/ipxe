@@ -5,7 +5,7 @@ Copyright (c) 2006 - 2018, Intel Corporation. All rights reserved.<BR>
 SPDX-License-Identifier: BSD-2-Clause-Patent
 
   @par Revision Reference:
-  These elements are defined in UEFI Platform Initialization Specification 1.2.
+  These elements are defined in UEFI Platform Initialization Specification 1.8.A
 
 **/
 
@@ -13,6 +13,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #define __PI_MULTIPHASE_H__
 
 FILE_LICENCE ( BSD2_PATENT );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/efi/Pi/PiFirmwareVolume.h>
 #include <ipxe/efi/Pi/PiFirmwareFile.h>
@@ -21,6 +22,13 @@ FILE_LICENCE ( BSD2_PATENT );
 #include <ipxe/efi/Pi/PiDependency.h>
 #include <ipxe/efi/Pi/PiStatusCode.h>
 #include <ipxe/efi/Pi/PiS3BootScript.h>
+
+//
+// PI Specification Version Information
+//
+#define PI_SPECIFICATION_MAJOR_REVISION  1
+#define PI_SPECIFICATION_MINOR_REVISION  80
+#define PI_SPECIFICATION_VERSION         ((PI_SPECIFICATION_MAJOR_REVISION << 16) | (PI_SPECIFICATION_MINOR_REVISION))
 
 /**
   Produces an error code in the range reserved for use by the Platform Initialization
@@ -106,6 +114,14 @@ FILE_LICENCE ( BSD2_PATENT );
 #define EFI_SMRAM_LOCKED  EFI_MMRAM_LOCKED
 
 ///
+/// MM Communicate header constants
+///
+#define COMMUNICATE_HEADER_V3_GUID \
+  { \
+    0x68e8c853, 0x2ba9, 0x4dd7, { 0x9a, 0xc0, 0x91, 0xe1, 0x61, 0x55, 0xc9, 0x35 } \
+  }
+
+///
 /// Structure describing a MMRAM region and its accessibility attributes.
 ///
 typedef struct {
@@ -150,6 +166,47 @@ typedef struct _EFI_MM_RESERVED_MMRAM_REGION {
   ///
   UINT64                  MmramReservedSize;
 } EFI_MM_RESERVED_MMRAM_REGION;
+
+#pragma pack(1)
+
+///
+/// To avoid confusion in interpreting frames, the buffer communicating to MM core through
+/// EFI_MM_COMMUNICATE3 or later should always start with EFI_MM_COMMUNICATE_HEADER_V3.
+///
+typedef struct {
+  ///
+  /// Indicator GUID for MM core that the communication buffer is compliant with this v3 header.
+  /// Must be gEfiMmCommunicateHeaderV3Guid.
+  ///
+  EFI_GUID    HeaderGuid;
+  ///
+  /// Describes the size of the entire buffer (in bytes) available for communication, including this communication header.
+  ///
+  UINT64      BufferSize;
+  ///
+  /// Reserved for future use.
+  ///
+  UINT64      Reserved;
+  ///
+  /// Allows for disambiguation of the message format.
+  ///
+  EFI_GUID    MessageGuid;
+  ///
+  /// Describes the size of MessageData (in bytes) and does not include the size of the header.
+  ///
+  UINT64      MessageSize;
+  ///
+  /// Designates an array of bytes that is MessageSize in size.
+  ///
+  UINT8       MessageData[];
+} EFI_MM_COMMUNICATE_HEADER_V3;
+
+#pragma pack()
+
+STATIC_ASSERT (
+  (sizeof (EFI_MM_COMMUNICATE_HEADER_V3) == OFFSET_OF (EFI_MM_COMMUNICATE_HEADER_V3, MessageData)), \
+  "sizeof (EFI_MM_COMMUNICATE_HEADER_V3) does not align with the beginning of flexible array MessageData"
+  );
 
 typedef enum {
   EFI_PCD_TYPE_8,
@@ -209,5 +266,7 @@ EFI_STATUS
 (EFIAPI *EFI_AP_PROCEDURE2)(
   IN VOID  *ProcedureArgument
   );
+
+extern EFI_GUID  gEfiMmCommunicateHeaderV3Guid;
 
 #endif

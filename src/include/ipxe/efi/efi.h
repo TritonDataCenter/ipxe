@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
+FILE_SECBOOT ( PERMITTED );
 
 /* EFI headers rudely redefine NULL */
 #undef NULL
@@ -39,10 +40,10 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define EFIAPI __attribute__((cdecl,regparm(0)))
 #endif
 
-/* EFI headers define EFI_HANDLE as a void pointer, which renders type
- * checking somewhat useless.  Work around this bizarre sabotage
- * attempt by redefining EFI_HANDLE as a pointer to an anonymous
- * structure.
+/* EFI headers define EFI_HANDLE and EFI_EVENT as void pointers, which
+ * renders type checking somewhat useless.  Work around this bizarre
+ * sabotage attempt by redefining both as pointers to anonymous
+ * structures.
  *
  * EFI headers perform some ABI validation checks via _Static_assert()
  * that may fail when EFI headers are included on a non-EFI platform.
@@ -50,13 +51,16 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * included.
  */
 #define EFI_HANDLE STUPID_EFI_HANDLE
+#define EFI_EVENT STUPID_EFI_EVENT
 #ifndef PLATFORM_efi
 #define _Static_assert(expr, msg)
 #endif
 #include <ipxe/efi/Uefi/UefiBaseType.h>
 #undef EFI_HANDLE
+#undef EFI_EVENT
 #undef _Static_assert
 typedef struct {} *EFI_HANDLE;
+typedef struct {} *EFI_EVENT;
 
 /* Include the top-level EFI header files */
 #include <ipxe/efi/Uefi.h>
@@ -172,6 +176,7 @@ struct efi_config_table {
 
 extern EFI_GUID efi_absolute_pointer_protocol_guid;
 extern EFI_GUID efi_acpi_table_protocol_guid;
+extern EFI_GUID efi_adapter_information_protocol_guid;
 extern EFI_GUID efi_apple_net_boot_protocol_guid;
 extern EFI_GUID efi_arp_protocol_guid;
 extern EFI_GUID efi_arp_service_binding_protocol_guid;
@@ -192,6 +197,7 @@ extern EFI_GUID efi_dns4_service_binding_protocol_guid;
 extern EFI_GUID efi_dns6_protocol_guid;
 extern EFI_GUID efi_dns6_service_binding_protocol_guid;
 extern EFI_GUID efi_driver_binding_protocol_guid;
+extern EFI_GUID efi_eap_configuration_protocol_guid;
 extern EFI_GUID efi_graphics_output_protocol_guid;
 extern EFI_GUID efi_hii_config_access_protocol_guid;
 extern EFI_GUID efi_hii_font_protocol_guid;
@@ -219,6 +225,7 @@ extern EFI_GUID efi_nii31_protocol_guid;
 extern EFI_GUID efi_pci_io_protocol_guid;
 extern EFI_GUID efi_pci_root_bridge_io_protocol_guid;
 extern EFI_GUID efi_pxe_base_code_protocol_guid;
+extern EFI_GUID efi_rng_protocol_guid;
 extern EFI_GUID efi_serial_io_protocol_guid;
 extern EFI_GUID efi_shim_lock_protocol_guid;
 extern EFI_GUID efi_simple_file_system_protocol_guid;
@@ -227,7 +234,10 @@ extern EFI_GUID efi_simple_pointer_protocol_guid;
 extern EFI_GUID efi_simple_text_input_protocol_guid;
 extern EFI_GUID efi_simple_text_input_ex_protocol_guid;
 extern EFI_GUID efi_simple_text_output_protocol_guid;
+extern EFI_GUID efi_storage_security_command_protocol_guid;
+extern EFI_GUID efi_supplicant_protocol_guid;
 extern EFI_GUID efi_tcg_protocol_guid;
+extern EFI_GUID efi_tcg2_protocol_guid;
 extern EFI_GUID efi_tcp4_protocol_guid;
 extern EFI_GUID efi_tcp4_service_binding_protocol_guid;
 extern EFI_GUID efi_tcp6_protocol_guid;
@@ -243,9 +253,21 @@ extern EFI_GUID efi_usb_hc_protocol_guid;
 extern EFI_GUID efi_usb2_hc_protocol_guid;
 extern EFI_GUID efi_usb_io_protocol_guid;
 extern EFI_GUID efi_vlan_config_protocol_guid;
+extern EFI_GUID efi_wifi2_protocol_guid;
 
+extern EFI_GUID efi_acpi_10_table_guid;
+extern EFI_GUID efi_acpi_20_table_guid;
+extern EFI_GUID efi_fdt_table_guid;
+extern EFI_GUID efi_smbios_table_guid;
+extern EFI_GUID efi_smbios2_table_guid;
+
+extern EFI_GUID efi_cert_x509_guid;
 extern EFI_GUID efi_file_info_id;
 extern EFI_GUID efi_file_system_info_id;
+extern EFI_GUID efi_global_variable;
+extern EFI_GUID efi_image_security_database_guid;
+extern EFI_GUID efi_microsoft_vendor_guid;
+extern EFI_GUID efi_tls_ca_certificate_guid;
 
 extern EFI_HANDLE efi_image_handle;
 extern EFI_LOADED_IMAGE_PROTOCOL *efi_loaded_image;
@@ -257,6 +279,8 @@ extern int efi_shutdown_in_progress;
 
 extern const __attribute__ (( pure )) char *
 efi_guid_ntoa ( CONST EFI_GUID *guid );
+extern const __attribute__ (( pure )) char *
+efi_tpl_name ( EFI_TPL tpl );
 extern const __attribute__ (( pure )) char *
 efi_locate_search_type_name ( EFI_LOCATE_SEARCH_TYPE search_type );
 extern const __attribute__ (( pure )) char *
@@ -384,5 +408,90 @@ extern EFI_STATUS efi_init ( EFI_HANDLE image_handle,
 			     EFI_SYSTEM_TABLE *systab );
 extern void efi_raise_tpl ( struct efi_saved_tpl *tpl );
 extern void efi_restore_tpl ( struct efi_saved_tpl *tpl );
+extern int efi_open_untyped ( EFI_HANDLE handle, EFI_GUID *protocol,
+			      void **interface );
+extern int efi_open_unsafe_untyped ( EFI_HANDLE handle, EFI_GUID *protocol,
+				     void **interface );
+extern void efi_close_unsafe ( EFI_HANDLE handle, EFI_GUID *protocol );
+extern int efi_open_by_driver_untyped ( EFI_HANDLE handle, EFI_GUID *protocol,
+					void **interface );
+extern void efi_close_by_driver ( EFI_HANDLE handle, EFI_GUID *protocol );
+extern int efi_open_by_child_untyped ( EFI_HANDLE handle, EFI_GUID *protocol,
+				       EFI_HANDLE child, void **interface );
+extern void efi_close_by_child ( EFI_HANDLE handle, EFI_GUID *protocol,
+				 EFI_HANDLE child );
+extern int efi_connect ( EFI_HANDLE device, EFI_HANDLE driver );
+extern int efi_disconnect ( EFI_HANDLE device, EFI_HANDLE driver );
+
+/**
+ * Test protocol existence
+ *
+ * @v handle		EFI handle
+ * @v protocol		Protocol GUID
+ * @ret rc		Return status code
+ */
+#define efi_test( handle, protocol )					\
+	efi_open_untyped ( (handle), (protocol), NULL )
+
+/**
+ * Open protocol for ephemeral use
+ *
+ * @v handle		EFI handle
+ * @v protocol		Protocol GUID
+ * @v interface		Protocol interface pointer to fill in
+ * @ret rc		Return status code
+ */
+#define efi_open( handle, protocol, interface ) ( {			\
+	typeof ( *(interface) ) check_ptr_ptr = NULL;			\
+	efi_open_untyped ( (handle), (protocol),			\
+			   ( ( void ) check_ptr_ptr,			\
+			     ( void ** ) (interface) ) );		\
+	} )
+
+/**
+ * Open protocol for unsafe persistent use
+ *
+ * @v handle		EFI handle
+ * @v protocol		Protocol GUID
+ * @v interface		Protocol interface pointer to fill in
+ * @ret rc		Return status code
+ */
+#define efi_open_unsafe( handle, protocol, interface ) ( {		\
+	typeof ( *(interface) ) check_ptr_ptr = NULL;			\
+	efi_open_unsafe_untyped ( (handle), (protocol),			\
+				  ( ( void ) check_ptr_ptr,		\
+				    ( void ** ) (interface) ) );	\
+	} )
+
+/**
+ * Open protocol for persistent use by a driver
+ *
+ * @v handle		EFI handle
+ * @v protocol		Protocol GUID
+ * @v interface		Protocol interface pointer to fill in
+ * @ret rc		Return status code
+ */
+#define efi_open_by_driver( handle, protocol, interface ) ( {		\
+	typeof ( *(interface) ) check_ptr_ptr = NULL;			\
+	efi_open_by_driver_untyped ( (handle), (protocol),		\
+				     ( ( void ) check_ptr_ptr,		\
+				       ( void ** ) (interface) ) );	\
+	} )
+
+/**
+ * Open protocol for persistent use by a child controller
+ *
+ * @v handle		EFI handle
+ * @v protocol		Protocol GUID
+ * @v child		Child controller handle
+ * @v interface		Protocol interface pointer to fill in
+ * @ret rc		Return status code
+ */
+#define efi_open_by_child( handle, protocol, child, interface ) ( {	\
+	typeof ( *(interface) ) check_ptr_ptr = NULL;			\
+	efi_open_by_child_untyped ( (handle), (protocol), (child),	\
+				    ( ( void ) check_ptr_ptr,		\
+				      ( void ** ) (interface) ) );	\
+	} )
 
 #endif /* _IPXE_EFI_H */

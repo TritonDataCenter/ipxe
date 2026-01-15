@@ -16,6 +16,7 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #define __UEFI_INTERNAL_FORMREPRESENTATION_H__
 
 FILE_LICENCE ( BSD2_PATENT );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/efi/Guid/HiiFormMapMethodGuid.h>
 
@@ -1698,7 +1699,17 @@ typedef enum {
   EfiKeyF12,
   EfiKeyPrint,
   EfiKeySLck,
-  EfiKeyPause
+  EfiKeyPause,
+  EfiKeyIntl0,
+  EfiKeyIntl1,
+  EfiKeyIntl2,
+  EfiKeyIntl3,
+  EfiKeyIntl4,
+  EfiKeyIntl5,
+  EfiKeyIntl6,
+  EfiKeyIntl7,
+  EfiKeyIntl8,
+  EfiKeyIntl9
 } EFI_KEY;
 
 typedef struct {

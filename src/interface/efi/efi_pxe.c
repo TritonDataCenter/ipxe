@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <errno.h>
@@ -302,48 +303,6 @@ static int efi_pxe_ip_filter ( struct efi_pxe *pxe, EFI_IP_ADDRESS *ip ) {
 
 	return 0;
 }
-
-/******************************************************************************
- *
- * Data transfer buffer
- *
- ******************************************************************************
- */
-
-/**
- * Reallocate PXE data transfer buffer
- *
- * @v xferbuf		Data transfer buffer
- * @v len		New length (or zero to free buffer)
- * @ret rc		Return status code
- */
-static int efi_pxe_buf_realloc ( struct xfer_buffer *xferbuf __unused,
-				 size_t len __unused ) {
-
-	/* Can never reallocate: return EFI_BUFFER_TOO_SMALL */
-	return -ERANGE;
-}
-
-/**
- * Write data to PXE data transfer buffer
- *
- * @v xferbuf		Data transfer buffer
- * @v offset		Starting offset
- * @v data		Data to copy
- * @v len		Length of data
- */
-static void efi_pxe_buf_write ( struct xfer_buffer *xferbuf, size_t offset,
-				const void *data, size_t len ) {
-
-	/* Copy data to buffer */
-	memcpy ( ( xferbuf->data + offset ), data, len );
-}
-
-/** PXE data transfer buffer operations */
-static struct xfer_buffer_operations efi_pxe_buf_operations = {
-	.realloc = efi_pxe_buf_realloc,
-	.write = efi_pxe_buf_write,
-};
 
 /******************************************************************************
  *
@@ -966,8 +925,7 @@ efi_pxe_mtftp ( EFI_PXE_BASE_CODE_PROTOCOL *base,
 	pxe->blksize = ( ( callback && blksize ) ? *blksize : -1UL );
 
 	/* Initialise data transfer buffer */
-	pxe->buf.data = data;
-	pxe->buf.len = *len;
+	xferbuf_fixed_init ( &pxe->buf, data, *len );
 
 	/* Open download */
 	if ( ( rc = efi_pxe_tftp_open ( pxe, ip,
@@ -987,6 +945,7 @@ efi_pxe_mtftp ( EFI_PXE_BASE_CODE_PROTOCOL *base,
  err_download:
 	efi_pxe_tftp_close ( pxe, rc );
  err_open:
+	xferbuf_fixed_init ( &pxe->buf, NULL, 0 );
 	efi_snp_release();
  err_opcode:
 	return EFIRC ( rc );
@@ -1611,7 +1570,6 @@ int efi_pxe_install ( EFI_HANDLE handle, struct net_device *netdev ) {
 	pxe->base.Mode = &pxe->mode;
 	memcpy ( &pxe->apple, &efi_apple_net_boot_protocol,
 		 sizeof ( pxe->apple ) );
-	pxe->buf.op = &efi_pxe_buf_operations;
 	intf_init ( &pxe->tftp, &efi_pxe_tftp_desc, &pxe->refcnt );
 	intf_init ( &pxe->udp, &efi_pxe_udp_desc, &pxe->refcnt );
 	INIT_LIST_HEAD ( &pxe->queue );
@@ -1679,7 +1637,7 @@ void efi_pxe_uninstall ( EFI_HANDLE handle ) {
 
 	/* Locate PXE base code */
 	pxe = efi_pxe_find ( handle );
-	if ( ! handle ) {
+	if ( ! pxe ) {
 		DBG ( "PXE could not find base code for %s\n",
 		      efi_handle_name ( handle ) );
 		return;

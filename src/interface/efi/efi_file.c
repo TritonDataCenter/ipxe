@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @file
@@ -39,6 +40,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <wchar.h>
 #include <ipxe/image.h>
 #include <ipxe/cpio.h>
+#include <ipxe/initrd.h>
 #include <ipxe/efi/efi.h>
 #include <ipxe/efi/Protocol/SimpleFileSystem.h>
 #include <ipxe/efi/Protocol/BlockIo.h>
@@ -177,12 +179,12 @@ static size_t efi_file_len ( struct efi_file *file ) {
  * Read chunk of EFI file
  *
  * @v reader		EFI file reader
- * @v data		Input data, or UNULL to zero-fill
+ * @v data		Input data, or NULL to zero-fill
  * @v len		Length of input data
  * @ret len		Length of output data
  */
 static size_t efi_file_read_chunk ( struct efi_file_reader *reader,
-				    userptr_t data, size_t len ) {
+				    const void *data, size_t len ) {
 	struct efi_file *file = reader->file;
 	size_t offset;
 
@@ -203,7 +205,7 @@ static size_t efi_file_read_chunk ( struct efi_file_reader *reader,
 
 	/* Copy or zero output data */
 	if ( data ) {
-		copy_from_user ( reader->data, data, offset, len );
+		memcpy ( reader->data, ( data + offset ), len );
 	} else {
 		memset ( reader->data, 0, len );
 	}
@@ -245,6 +247,7 @@ static size_t efi_file_read_initrd ( struct efi_file_reader *reader ) {
 	size_t cpio_len;
 	size_t name_len;
 	size_t len;
+	unsigned int i;
 
 	/* Read from file */
 	len = 0;
@@ -261,24 +264,22 @@ static size_t efi_file_read_initrd ( struct efi_file_reader *reader ) {
 			       efi_file_name ( file ), reader->pos,
 			       ( reader->pos + pad_len ) );
 		}
-		len += efi_file_read_chunk ( reader, UNULL, pad_len );
+		len += efi_file_read_chunk ( reader, NULL, pad_len );
 
-		/* Read CPIO header, if applicable */
-		cpio_len = cpio_header ( image, &cpio );
-		if ( cpio_len ) {
-			name = cpio_name ( image );
-			name_len = cpio_name_len ( image );
-			pad_len = ( cpio_len - sizeof ( cpio ) - name_len );
+		/* Read CPIO header(s), if applicable */
+		name = cpio_name ( image );
+		for ( i = 0 ; ( cpio_len = cpio_header ( image, i, &cpio ) );
+		      i++ ) {
+			name_len = ( cpio_len - sizeof ( cpio ) );
+			pad_len = cpio_pad_len ( cpio_len );
 			DBGC ( file, "EFIFILE %s [%#08zx,%#08zx) %s header\n",
 			       efi_file_name ( file ), reader->pos,
-			       ( reader->pos + cpio_len ), image->name );
-			len += efi_file_read_chunk ( reader,
-						     virt_to_user ( &cpio ),
+			       ( reader->pos + cpio_len + pad_len ),
+			       image->name );
+			len += efi_file_read_chunk ( reader, &cpio,
 						     sizeof ( cpio ) );
-			len += efi_file_read_chunk ( reader,
-						     virt_to_user ( name ),
-						     name_len );
-			len += efi_file_read_chunk ( reader, UNULL, pad_len );
+			len += efi_file_read_chunk ( reader, name, name_len );
+			len += efi_file_read_chunk ( reader, NULL, pad_len );
 		}
 
 		/* Read file data */
@@ -386,8 +387,12 @@ efi_file_open ( EFI_FILE_PROTOCOL *this, EFI_FILE_PROTOCOL **new,
 		name++;
 	}
 
+	/* Strip redundant path separator characters */
+	while ( ( *name == '\\' ) || ( *name == '.' ) )
+		name++;
+
 	/* Allow root directory itself to be opened */
-	if ( ( name[0] == '\0' ) || ( name[0] == '.' ) )
+	if ( ! *name )
 		return efi_file_open_fixed ( &efi_file_root, wname, new );
 
 	/* Fail unless opening from the root */
@@ -976,9 +981,9 @@ static EFI_DISK_IO_PROTOCOL efi_disk_io_protocol = {
  */
 static int efi_file_path_claim ( struct efi_file_path *file ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_DEVICE_PATH_PROTOCOL *old;
 	EFI_DEVICE_PATH_PROTOCOL *end;
 	EFI_HANDLE handle;
-	VOID *old;
 	EFI_STATUS efirc;
 	int rc;
 
@@ -994,10 +999,8 @@ static int efi_file_path_claim ( struct efi_file_path *file ) {
 	}
 
 	/* Locate device path protocol on this handle */
-	if ( ( ( efirc = bs->HandleProtocol ( handle,
-					      &efi_device_path_protocol_guid,
-					      &old ) ) != 0 ) ) {
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open ( handle, &efi_device_path_protocol_guid,
+			       &old ) != 0 ) ) {
 		DBGC ( file, "EFIFILE %s could not locate %s: %s\n",
 		       efi_file_name ( &file->file ),
 		       efi_devpath_text ( file->path ), strerror ( rc ) );
@@ -1112,10 +1115,7 @@ static void efi_file_path_uninstall ( struct efi_file_path *file ) {
  */
 int efi_file_install ( EFI_HANDLE handle ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	union {
-		EFI_DISK_IO_PROTOCOL *diskio;
-		void *interface;
-	} diskio;
+	EFI_DISK_IO_PROTOCOL *diskio;
 	struct image *image;
 	EFI_STATUS efirc;
 	int rc;
@@ -1163,17 +1163,14 @@ int efi_file_install ( EFI_HANDLE handle ) {
 	 * of calls to our DRIVER_STOP method when starting the EFI
 	 * shell.  I have no idea why this is.
 	 */
-	if ( ( efirc = bs->OpenProtocol ( handle, &efi_disk_io_protocol_guid,
-					  &diskio.interface, efi_image_handle,
-					  handle,
-					  EFI_OPEN_PROTOCOL_BY_DRIVER ) ) != 0){
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open_by_driver ( handle, &efi_disk_io_protocol_guid,
+					 &diskio ) ) != 0 ) {
 		DBGC ( handle, "Could not open disk I/O protocol: %s\n",
 		       strerror ( rc ) );
 		DBGC_EFI_OPENERS ( handle, handle, &efi_disk_io_protocol_guid );
 		goto err_open;
 	}
-	assert ( diskio.diskio == &efi_disk_io_protocol );
+	assert ( diskio == &efi_disk_io_protocol );
 
 	/* Claim Linux initrd fixed device path */
 	if ( ( rc = efi_file_path_claim ( &efi_file_initrd ) ) != 0 )
@@ -1193,8 +1190,7 @@ int efi_file_install ( EFI_HANDLE handle ) {
 	efi_file_path_uninstall ( &efi_file_initrd );
  err_initrd_install:
  err_initrd_claim:
-	bs->CloseProtocol ( handle, &efi_disk_io_protocol_guid,
-			    efi_image_handle, handle );
+	efi_close_by_driver ( handle, &efi_disk_io_protocol_guid );
  err_open:
 	bs->UninstallMultipleProtocolInterfaces (
 			handle,
@@ -1222,8 +1218,7 @@ void efi_file_uninstall ( EFI_HANDLE handle ) {
 	efi_file_path_uninstall ( &efi_file_initrd );
 
 	/* Close our own disk I/O protocol */
-	bs->CloseProtocol ( handle, &efi_disk_io_protocol_guid,
-			    efi_image_handle, handle );
+	efi_close_by_driver ( handle, &efi_disk_io_protocol_guid );
 
 	/* We must install the file system protocol first, since
 	 * otherwise the EDK2 code will attempt to helpfully uninstall

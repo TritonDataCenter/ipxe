@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <stdio.h>
@@ -95,7 +96,4 @@ static int cpuid_exec ( int argc, char **argv ) {
 }
 
 /** x86 CPU feature detection command */
-struct command cpuid_command __command = {
-	.name = "cpuid",
-	.exec = cpuid_exec,
-};
+COMMAND ( cpuid, cpuid_exec );

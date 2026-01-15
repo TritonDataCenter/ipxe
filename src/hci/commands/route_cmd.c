@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <getopt.h>
@@ -66,9 +67,4 @@ static int route_exec ( int argc, char **argv ) {
 }
 
 /** Routing table management commands */
-struct command route_commands[] __command = {
-	{
-		.name = "route",
-		.exec = route_exec,
-	},
-};
+COMMAND ( route, route_exec );

@@ -35,6 +35,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/uart.h>
 #include <ipxe/console.h>
 #include <ipxe/serial.h>
+#include <ipxe/ns16550.h>
 #include <config/console.h>
 #include <config/serial.h>
 
@@ -44,29 +45,44 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define CONSOLE_SERIAL ( CONSOLE_USAGE_ALL & ~CONSOLE_USAGE_LOG )
 #endif
 
-/* UART port number */
-#ifdef COMCONSOLE
-#define CONSOLE_PORT COMCONSOLE
+#ifdef SERIAL_FIXED
+#define SERIAL_PREFIX_fixed
 #else
-#define CONSOLE_PORT 0
+#define SERIAL_PREFIX_fixed __fixed_
 #endif
 
-/* UART baud rate */
-#ifdef COMPRESERVE
-#define CONSOLE_BAUD 0
-#else
-#define CONSOLE_BAUD COMSPEED
+/* Serial console UART */
+#ifndef COMCONSOLE
+#define COMCONSOLE NULL
 #endif
 
-/* UART line control register value */
-#ifdef COMPRESERVE
-#define CONSOLE_LCR 0
-#else
-#define CONSOLE_LCR UART_LCR_WPS ( COMDATA, COMPARITY, COMSTOP )
+/* Serial console baud rate */
+#ifndef COMSPEED
+#define COMSPEED 0
 #endif
 
-/** Serial console UART */
-struct uart serial_console;
+/** Active serial console UART
+ *
+ * Explicitly initialised to @c NULL since this variable may be
+ * accessed before .bss has been zeroed.
+ */
+struct uart *serial_console = NULL;
+
+/**
+ * Get fixed serial console UART
+ *
+ * @ret uart		Serial console UART, or NULL
+ */
+struct uart * fixed_serial_console ( void ) {
+	struct uart *uart = COMCONSOLE;
+	unsigned int baud = COMSPEED;
+
+	/* Set default baud rate, if applicable */
+	if ( uart && baud )
+		uart->baud = baud;
+
+	return uart;
+}
 
 /**
  * Print a character to serial console
@@ -76,11 +92,11 @@ struct uart serial_console;
 static void serial_putchar ( int character ) {
 
 	/* Do nothing if we have no UART */
-	if ( ! serial_console.base )
+	if ( ! serial_console )
 		return;
 
 	/* Transmit character */
-	uart_transmit ( &serial_console, character );
+	uart_transmit ( serial_console, character );
 }
 
 /**
@@ -92,14 +108,14 @@ static int serial_getchar ( void ) {
 	uint8_t data;
 
 	/* Do nothing if we have no UART */
-	if ( ! serial_console.base )
+	if ( ! serial_console )
 		return 0;
 
 	/* Wait for data to be ready */
-	while ( ! uart_data_ready ( &serial_console ) ) {}
+	while ( ! uart_data_ready ( serial_console ) ) {}
 
 	/* Receive data */
-	data = uart_receive ( &serial_console );
+	data = uart_receive ( serial_console );
 
 	/* Strip any high bit and convert DEL to backspace */
 	data &= 0x7f;
@@ -118,11 +134,11 @@ static int serial_getchar ( void ) {
 static int serial_iskey ( void ) {
 
 	/* Do nothing if we have no UART */
-	if ( ! serial_console.base )
+	if ( ! serial_console )
 		return 0;
 
 	/* Check UART */
-	return uart_data_ready ( &serial_console );
+	return uart_data_ready ( serial_console );
 }
 
 /** Serial console */
@@ -135,26 +151,24 @@ struct console_driver serial_console_driver __console_driver = {
 
 /** Initialise serial console */
 static void serial_init ( void ) {
+	struct uart *uart;
 	int rc;
 
-	/* Do nothing if we have no default port */
-	if ( ! CONSOLE_PORT )
+	/* Get default serial console, if any */
+	uart = default_serial_console();
+	if ( ! uart )
 		return;
-
-	/* Select UART */
-	if ( ( rc = uart_select ( &serial_console, CONSOLE_PORT ) ) != 0 ) {
-		DBG ( "Could not select UART %d: %s\n",
-		      CONSOLE_PORT, strerror ( rc ) );
-		return;
-	}
 
 	/* Initialise UART */
-	if ( ( rc = uart_init ( &serial_console, CONSOLE_BAUD,
-				CONSOLE_LCR ) ) != 0 ) {
-		DBG ( "Could not initialise UART %d baud %d LCR %#02x: %s\n",
-		      CONSOLE_PORT, CONSOLE_BAUD, CONSOLE_LCR, strerror ( rc ));
+	if ( ( rc = uart_init ( uart ) ) != 0 ) {
+		DBGC ( uart, "SERIAL could not initialise %s: %s\n",
+		       uart->name, strerror ( rc ) );
 		return;
 	}
+
+	/* Record UART as serial console */
+	serial_console = uart;
+	DBGC ( uart, "SERIAL using %s\n", uart->name );
 }
 
 /**
@@ -165,17 +179,18 @@ static void serial_init ( void ) {
 static void serial_shutdown ( int flags __unused ) {
 
 	/* Do nothing if we have no UART */
-	if ( ! serial_console.base )
+	if ( ! serial_console )
 		return;
 
 	/* Flush any pending output */
-	uart_flush ( &serial_console );
+	uart_flush ( serial_console );
 
 	/* Leave console enabled; it's still usable */
 }
 
 /** Serial console initialisation function */
 struct init_fn serial_console_init_fn __init_fn ( INIT_CONSOLE ) = {
+	.name = "serial",
 	.initialise = serial_init,
 };
 
@@ -184,3 +199,6 @@ struct startup_fn serial_startup_fn __startup_fn ( STARTUP_EARLY ) = {
 	.name = "serial",
 	.shutdown = serial_shutdown,
 };
+
+PROVIDE_SERIAL_INLINE ( null, default_serial_console );
+PROVIDE_SERIAL ( fixed, default_serial_console, fixed_serial_console );

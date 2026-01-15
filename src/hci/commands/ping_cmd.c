@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -107,7 +108,4 @@ static int ping_exec ( int argc, char **argv ) {
 }
 
 /** Ping command */
-struct command ping_command __command = {
-	.name = "ping",
-	.exec = ping_exec,
-};
+COMMAND ( ping, ping_exec );

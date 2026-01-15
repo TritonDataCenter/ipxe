@@ -21,6 +21,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <ipxe/linux_api.h>
 #include <ipxe/linux_sysfs.h>
@@ -42,7 +43,7 @@ struct linux_acpi_table {
 	/** Index */
 	unsigned int index;
 	/** Cached data */
-	userptr_t data;
+	void *data;
 };
 
 /** List of cached ACPI tables */
@@ -53,9 +54,10 @@ static LIST_HEAD ( linux_acpi_tables );
  *
  * @v signature		Requested table signature
  * @v index		Requested index of table with this signature
- * @ret table		Table, or UNULL if not found
+ * @ret table		Table, or NULL if not found
  */
-static userptr_t linux_acpi_find ( uint32_t signature, unsigned int index ) {
+static const struct acpi_header * linux_acpi_find ( uint32_t signature,
+						    unsigned int index ) {
 	struct linux_acpi_table *table;
 	struct acpi_header *header;
 	union {
@@ -101,7 +103,7 @@ static userptr_t linux_acpi_find ( uint32_t signature, unsigned int index ) {
 		       filename, strerror ( rc ) );
 		goto err_read;
 	}
-	header = user_to_virt ( table->data, 0 );
+	header = table->data;
 	if ( ( ( ( size_t ) len ) < sizeof ( *header ) ) ||
 	     ( ( ( size_t ) len ) < le32_to_cpu ( header->length ) ) ) {
 		rc = -ENOENT;
@@ -121,7 +123,7 @@ static userptr_t linux_acpi_find ( uint32_t signature, unsigned int index ) {
  err_read:
 	free ( table );
  err_alloc:
-	return UNULL;
+	return NULL;
 }
 
 /**

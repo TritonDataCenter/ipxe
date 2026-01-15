@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 
@@ -32,6 +33,9 @@ struct x86_features {
 
 /** CPUID extended function */
 #define CPUID_EXTENDED 0x80000000UL
+
+/** CPUID hypervisor function */
+#define CPUID_HYPERVISOR 0x40000000UL
 
 /** Get vendor ID and largest standard function */
 #define CPUID_VENDOR_ID 0x00000000UL

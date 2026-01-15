@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @file
@@ -32,6 +33,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
 #include <assert.h>
 #include <ipxe/xfer.h>
@@ -424,10 +426,10 @@ int sandev_reopen ( struct san_device *sandev ) {
 struct san_command_rw_params {
 	/** SAN device read/write operation */
 	int ( * block_rw ) ( struct interface *control, struct interface *data,
-			     uint64_t lba, unsigned int count,
-			     userptr_t buffer, size_t len );
+			     uint64_t lba, unsigned int count, void *buffer,
+			     size_t len );
 	/** Data buffer */
-	userptr_t buffer;
+	void *buffer;
 	/** Starting LBA */
 	uint64_t lba;
 	/** Block count */
@@ -594,11 +596,11 @@ int sandev_reset ( struct san_device *sandev ) {
  * @ret rc		Return status code
  */
 static int sandev_rw ( struct san_device *sandev, uint64_t lba,
-		       unsigned int count, userptr_t buffer,
+		       unsigned int count, void *buffer,
 		       int ( * block_rw ) ( struct interface *control,
 					    struct interface *data,
 					    uint64_t lba, unsigned int count,
-					    userptr_t buffer, size_t len ) ) {
+					    void *buffer, size_t len ) ) {
 	union san_command_params params;
 	unsigned int remaining;
 	size_t frag_len;
@@ -625,7 +627,7 @@ static int sandev_rw ( struct san_device *sandev, uint64_t lba,
 
 		/* Move to next fragment */
 		frag_len = ( sandev->capacity.blksize * params.rw.count );
-		params.rw.buffer = userptr_add ( params.rw.buffer, frag_len );
+		params.rw.buffer += frag_len;
 		params.rw.lba += params.rw.count;
 		remaining -= params.rw.count;
 	}
@@ -643,11 +645,12 @@ static int sandev_rw ( struct san_device *sandev, uint64_t lba,
  * @ret rc		Return status code
  */
 int sandev_read ( struct san_device *sandev, uint64_t lba,
-		  unsigned int count, userptr_t buffer ) {
+		  unsigned int count, void *buffer ) {
 	int rc;
 
 	/* Read from device */
-	if ( ( rc = sandev_rw ( sandev, lba, count, buffer, block_read ) ) != 0 )
+	if ( ( rc = sandev_rw ( sandev, lba, count, buffer,
+				block_read ) ) != 0 )
 		return rc;
 
 	return 0;
@@ -663,11 +666,12 @@ int sandev_read ( struct san_device *sandev, uint64_t lba,
  * @ret rc		Return status code
  */
 int sandev_write ( struct san_device *sandev, uint64_t lba,
-		   unsigned int count, userptr_t buffer ) {
+		   unsigned int count, void *buffer ) {
 	int rc;
 
 	/* Write to device */
-	if ( ( rc = sandev_rw ( sandev, lba, count, buffer, block_write ) ) != 0 )
+	if ( ( rc = sandev_rw ( sandev, lba, count, buffer,
+				block_write ) ) != 0 )
 		return rc;
 
 	/* Quiesce system.  This is a heuristic designed to ensure
@@ -799,8 +803,7 @@ static int sandev_parse_iso9660 ( struct san_device *sandev ) {
 	}
 
 	/* Read primary volume descriptor */
-	if ( ( rc = sandev_read ( sandev, lba, count,
-				  virt_to_user ( scratch ) ) ) != 0 ) {
+	if ( ( rc = sandev_read ( sandev, lba, count, scratch ) ) != 0 ) {
 		DBGC ( sandev->drive, "SAN %#02x could not read ISO9660 "
 		       "primary volume descriptor: %s\n",
 		       sandev->drive, strerror ( rc ) );

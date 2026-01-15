@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <errno.h>
@@ -38,7 +39,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  *
  *  Bit  31	Extended function
  *  Bits 30-24	(bit 22 = 1) Subfunction number
- *		(bit 22 = 0) Number of consecutive functions to call, minus one
+ *  Bit  30	(bit 22 = 0) Hypervisor function
+ *  Bits 29-24	(bit 22 = 0) Number of consecutive functions to call, minus one
  *  Bit  23	Return result as little-endian (used for strings)
  *  Bit  22	Interpret bits 30-24 as a subfunction number
  *  Bits 21-18	Unused
@@ -98,7 +100,7 @@ enum cpuid_flags {
  * @v tag		Setting tag
  * @ret function	Starting function number
  */
-#define CPUID_FUNCTION( tag ) ( (tag) & 0x800000ffUL )
+#define CPUID_FUNCTION( tag ) ( (tag) & 0xc00000ffUL )
 
 /**
  * Extract subfunction number from CPUID setting tag
@@ -107,6 +109,14 @@ enum cpuid_flags {
  * @ret subfunction	Subfunction number
  */
 #define CPUID_SUBFUNCTION( tag ) ( ( (tag) >> 24 ) & 0x7f )
+
+/**
+ * Extract number of consecutive functions from CPUID setting tag
+ *
+ * @v tag		Setting tag
+ * @ret num_functions	Number of consecutive functions
+ */
+#define CPUID_NUM_FUNCTIONS( tag ) ( ( ( (tag) >> 24 ) & 0x3f ) + 1 )
 
 /**
  * Extract register array from CPUID setting tag
@@ -165,12 +175,13 @@ static int cpuid_settings_fetch ( struct settings *settings,
 
 	/* Call each function in turn */
 	function = CPUID_FUNCTION ( setting->tag );
-	subfunction = CPUID_SUBFUNCTION ( setting->tag );
 	if ( setting->tag & CPUID_USE_SUBFUNCTION ) {
+		function &= ~CPUID_HYPERVISOR;
+		subfunction = CPUID_SUBFUNCTION ( setting->tag );
 		num_functions = 1;
 	} else {
-		num_functions = ( subfunction + 1 );
 		subfunction = 0;
+		num_functions = CPUID_NUM_FUNCTIONS ( setting->tag );
 	}
 	for ( ; num_functions-- ; function++ ) {
 
@@ -240,6 +251,7 @@ static void cpuid_settings_init ( void ) {
 
 /** CPUID settings initialiser */
 struct init_fn cpuid_settings_init_fn __init_fn ( INIT_NORMAL ) = {
+	.name = "cpuid",
 	.initialise = cpuid_settings_init,
 };
 

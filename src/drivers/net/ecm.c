@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <errno.h>
@@ -97,8 +98,9 @@ int ecm_fetch_mac ( struct usb_function *func,
 	int rc;
 
 	/* Fetch MAC address string */
+	buf[ sizeof ( buf ) - 1 ] = '\0';
 	len = usb_get_string_descriptor ( usb, desc->mac, 0, buf,
-					  sizeof ( buf ) );
+					  ( sizeof ( buf ) - 1 ) );
 	if ( len < 0 ) {
 		rc = len;
 		return rc;

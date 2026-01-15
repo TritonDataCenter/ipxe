@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <errno.h>
@@ -64,6 +65,11 @@ const struct setting busid_setting __setting ( SETTING_NETDEV, busid ) = {
 	.name = "busid",
 	.description = "Bus ID",
 	.type = &setting_type_hex,
+};
+const struct setting linktype_setting __setting ( SETTING_NETDEV, linktype ) = {
+	.name = "linktype",
+	.description = "Link-layer type",
+	.type = &setting_type_string,
 };
 const struct setting chip_setting __setting ( SETTING_NETDEV, chip ) = {
 	.name = "chip",
@@ -164,6 +170,7 @@ static int netdev_fetch_bustype ( struct net_device *netdev, void *data,
 		[BUS_TYPE_XEN] = "XEN",
 		[BUS_TYPE_HV] = "HV",
 		[BUS_TYPE_USB] = "USB",
+		[BUS_TYPE_DT] = "DT",
 	};
 	struct device_description *desc = &netdev->dev->desc;
 	const char *bustype;
@@ -217,6 +224,22 @@ static int netdev_fetch_busid ( struct net_device *netdev, void *data,
 		len = sizeof ( dhcp_desc );
 	memcpy ( data, &dhcp_desc, len );
 	return sizeof ( dhcp_desc );
+}
+
+/**
+ * Fetch link layer type setting
+ *
+ * @v netdev		Network device
+ * @v data		Buffer to fill with setting data
+ * @v len		Length of buffer
+ * @ret len		Length of setting data, or negative error
+ */
+static int netdev_fetch_linktype ( struct net_device *netdev, void *data,
+				   size_t len ) {
+	const char *linktype = netdev->ll_protocol->name;
+
+	strncpy ( data, linktype, len );
+	return strlen ( linktype );
 }
 
 /**
@@ -281,6 +304,7 @@ static struct netdev_setting_operation netdev_setting_operations[] = {
 	{ &bustype_setting, NULL, netdev_fetch_bustype },
 	{ &busloc_setting, NULL, netdev_fetch_busloc },
 	{ &busid_setting, NULL, netdev_fetch_busid },
+	{ &linktype_setting, NULL, netdev_fetch_linktype },
 	{ &chip_setting, NULL, netdev_fetch_chip },
 	{ &ifname_setting, NULL, netdev_fetch_ifname },
 };
@@ -406,6 +430,7 @@ static void netdev_redirect_settings_init ( void ) {
 
 /** "netX" settings initialiser */
 struct init_fn netdev_redirect_settings_init_fn __init_fn ( INIT_LATE ) = {
+	.name = "netX",
 	.initialise = netdev_redirect_settings_init,
 };
 

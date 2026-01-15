@@ -1,3 +1,6 @@
+#ifndef _IPXE_EFI_USBHOSTCONTROLLER_H
+#define _IPXE_EFI_USBHOSTCONTROLLER_H
+
 /** @file
   EFI_USB_HC_PROTOCOL as defined in EFI 1.10.
 
@@ -14,6 +17,7 @@
 #define _USB_HOSTCONTROLLER_H_
 
 FILE_LICENCE ( BSD2_PATENT );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/efi/Protocol/Usb2HostController.h>
 
@@ -501,3 +505,5 @@ struct _EFI_USB_HC_PROTOCOL {
 extern EFI_GUID  gEfiUsbHcProtocolGuid;
 
 #endif
+
+#endif /* _IPXE_EFI_USBHOSTCONTROLLER_H */

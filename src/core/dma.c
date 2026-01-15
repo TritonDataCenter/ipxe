@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <assert.h>
 #include <errno.h>
@@ -47,7 +48,7 @@ PROVIDE_DMAAPI_INLINE ( flat, dma_free );
 PROVIDE_DMAAPI_INLINE ( flat, dma_umalloc );
 PROVIDE_DMAAPI_INLINE ( flat, dma_ufree );
 PROVIDE_DMAAPI_INLINE ( flat, dma_set_mask );
-PROVIDE_DMAAPI_INLINE ( flat, dma_phys );
+PROVIDE_DMAAPI_INLINE ( flat, dma );
 
 /******************************************************************************
  *
@@ -67,7 +68,7 @@ PROVIDE_DMAAPI_INLINE ( flat, dma_phys );
  * @ret rc		Return status code
  */
 static int dma_op_map ( struct dma_device *dma, struct dma_mapping *map,
-			physaddr_t addr, size_t len, int flags ) {
+			void *addr, size_t len, int flags ) {
 	struct dma_operations *op = dma->op;
 
 	if ( ! op )
@@ -79,13 +80,14 @@ static int dma_op_map ( struct dma_device *dma, struct dma_mapping *map,
  * Unmap buffer
  *
  * @v map		DMA mapping
+ * @v len		Used length
  */
-static void dma_op_unmap ( struct dma_mapping *map ) {
+static void dma_op_unmap ( struct dma_mapping *map, size_t len ) {
 	struct dma_device *dma = map->dma;
 
 	assert ( dma != NULL );
 	assert ( dma->op != NULL );
-	dma->op->unmap ( dma, map );
+	dma->op->unmap ( dma, map, len );
 }
 
 /**
@@ -130,13 +132,13 @@ static void dma_op_free ( struct dma_mapping *map, void *addr, size_t len ) {
  * @v align		Physical alignment
  * @ret addr		Buffer address, or NULL on error
  */
-static userptr_t dma_op_umalloc ( struct dma_device *dma,
-				  struct dma_mapping *map,
-				  size_t len, size_t align ) {
+static void * dma_op_umalloc ( struct dma_device *dma,
+			       struct dma_mapping *map,
+			       size_t len, size_t align ) {
 	struct dma_operations *op = dma->op;
 
 	if ( ! op )
-		return UNULL;
+		return NULL;
 	return op->umalloc ( dma, map, len, align );
 }
 
@@ -147,8 +149,7 @@ static userptr_t dma_op_umalloc ( struct dma_device *dma,
  * @v addr		Buffer address
  * @v len		Length of buffer
  */
-static void dma_op_ufree ( struct dma_mapping *map, userptr_t addr,
-			   size_t len ) {
+static void dma_op_ufree ( struct dma_mapping *map, void *addr, size_t len ) {
 	struct dma_device *dma = map->dma;
 
 	assert ( dma != NULL );
@@ -176,4 +177,4 @@ PROVIDE_DMAAPI ( op, dma_free, dma_op_free );
 PROVIDE_DMAAPI ( op, dma_umalloc, dma_op_umalloc );
 PROVIDE_DMAAPI ( op, dma_ufree, dma_op_ufree );
 PROVIDE_DMAAPI ( op, dma_set_mask, dma_op_set_mask );
-PROVIDE_DMAAPI_INLINE ( op, dma_phys );
+PROVIDE_DMAAPI_INLINE ( op, dma );

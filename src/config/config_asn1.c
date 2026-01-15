@@ -20,6 +20,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <config/general.h>
 
@@ -36,4 +37,7 @@ REQUIRE_OBJECT ( der );
 #endif
 #ifdef IMAGE_PEM
 REQUIRE_OBJECT ( pem );
+#endif
+#ifdef IMAGE_EFISIG
+REQUIRE_OBJECT ( efi_siglist );
 #endif

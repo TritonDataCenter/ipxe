@@ -30,6 +30,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 
 #include <registers.h>
+#include <librm.h>
 #include <ipxe/uaccess.h>
 #include <ipxe/timer.h>
 #include <ipxe/msr.h>
@@ -92,9 +93,9 @@ static void bios_mp_exec_boot ( mp_func_t func, void *opaque ) {
 					   "pushl %k1\n\t"
 					   "call *%k0\n\t"
 					   "addl $8, %%esp\n\t" )
-			       : : "r" ( mp_address ( mp_call ) ),
-				   "r" ( mp_address ( func ) ),
-				   "r" ( mp_address ( opaque ) ) );
+			       : : "R" ( mp_address ( mp_call ) ),
+				   "R" ( mp_address ( func ) ),
+				   "R" ( mp_address ( opaque ) ) );
 }
 
 /**

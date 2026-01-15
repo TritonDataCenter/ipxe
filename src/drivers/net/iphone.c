@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <string.h>
@@ -362,17 +363,7 @@ static int icert_cert ( struct icert *icert, struct asn1_cursor *subject,
 	struct asn1_builder raw = { NULL, 0 };
 	uint8_t digest_ctx[SHA256_CTX_SIZE];
 	uint8_t digest_out[SHA256_DIGEST_SIZE];
-	uint8_t pubkey_ctx[RSA_CTX_SIZE];
-	int len;
 	int rc;
-
-	/* Initialise "private" key */
-	if ( ( rc = pubkey_init ( pubkey, pubkey_ctx, private->data,
-				  private->len ) ) != 0 ) {
-		DBGC ( icert, "ICERT %p could not initialise private key: "
-		       "%s\n", icert, strerror ( rc ) );
-		goto err_pubkey_init;
-	}
 
 	/* Construct subjectPublicKeyInfo */
 	if ( ( rc = ( asn1_prepend_raw ( &spki, public->data, public->len ),
@@ -407,21 +398,13 @@ static int icert_cert ( struct icert *icert, struct asn1_cursor *subject,
 	digest_update ( digest, digest_ctx, tbs.data, tbs.len );
 	digest_final ( digest, digest_ctx, digest_out );
 
-	/* Construct signature */
-	if ( ( rc = asn1_grow ( &raw, pubkey_max_len ( pubkey,
-						       pubkey_ctx ) ) ) != 0 ) {
-		DBGC ( icert, "ICERT %p could not build signature: %s\n",
-		       icert, strerror ( rc ) );
-		goto err_grow;
-	}
-	if ( ( len = pubkey_sign ( pubkey, pubkey_ctx, digest, digest_out,
-				   raw.data ) ) < 0 ) {
-		rc = len;
+	/* Construct signature using "private" key */
+	if ( ( rc = pubkey_sign ( pubkey, private, digest, digest_out,
+				  &raw ) ) != 0 ) {
 		DBGC ( icert, "ICERT %p could not sign: %s\n",
 		       icert, strerror ( rc ) );
 		goto err_pubkey_sign;
 	}
-	assert ( ( ( size_t ) len ) == raw.len );
 
 	/* Construct raw certificate data */
 	if ( ( rc = ( asn1_prepend_raw ( &raw, icert_nul,
@@ -447,14 +430,11 @@ static int icert_cert ( struct icert *icert, struct asn1_cursor *subject,
  err_x509:
  err_raw:
  err_pubkey_sign:
-	free ( raw.data );
- err_grow:
-	free ( tbs.data );
  err_tbs:
-	free ( spki.data );
  err_spki:
-	pubkey_final ( pubkey, pubkey_ctx );
- err_pubkey_init:
+	free ( raw.data );
+	free ( tbs.data );
+	free ( spki.data );
 	return rc;
 }
 
@@ -1487,7 +1467,7 @@ static int ipair_rx_pubkey ( struct ipair *ipair, char *msg ) {
 	}
 
 	/* Decode inner layer of Base64 */
-	next = pem_asn1 ( virt_to_user ( decoded ), len, 0, &key );
+	next = pem_asn1 ( decoded, len, 0, &key );
 	if ( next < 0 ) {
 		rc = next;
 		DBGC ( ipair, "IPAIR %p invalid inner public key:\n%s\n",

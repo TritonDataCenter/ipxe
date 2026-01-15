@@ -597,7 +597,7 @@ static int ns8390_poll(struct nic *nic, int retrieve)
 /**************************************************************************
 NS8390_DISABLE - Turn off adapter
 **************************************************************************/
-static void ns8390_disable ( struct nic *nic ) {
+static void ns8390_disable ( struct nic *nic, void *hwdev __unused ) {
 	ns8390_reset(nic);
 }
 
@@ -1022,7 +1022,7 @@ PCI_ROM(0x8e2e, 0x3000, "ktiet32p2",    "KTI ET32P2", 0),
 PCI_DRIVER ( nepci_driver, nepci_nics, PCI_NO_CLASS );
 
 DRIVER ( "NE2000/PCI", nic_driver, pci_driver, nepci_driver,
-	 nepci_probe, ns8390_disable );
+	 nepci_probe, ns8390_disable, no_fake_bss );
 
 #endif /* INCLUDE_NS8390 */
 

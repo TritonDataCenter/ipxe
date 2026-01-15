@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @file
@@ -89,7 +90,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	__einfo_uniqify ( EINFO_EIO, 0x05, "HTTP 5xx Server Error" )
 #define ENOENT_404 __einfo_error ( EINFO_ENOENT_404 )
 #define EINFO_ENOENT_404 \
-	__einfo_uniqify ( EINFO_ENOENT, 0x01, "HTTP 404 Not Found" )
+	__einfo_uniqify ( EINFO_ENOENT, 0x01, "Not found" )
 #define ENOTSUP_CONNECTION __einfo_error ( EINFO_ENOTSUP_CONNECTION )
 #define EINFO_ENOTSUP_CONNECTION \
 	__einfo_uniqify ( EINFO_ENOTSUP, 0x01, "Unsupported connection header" )
@@ -106,6 +107,9 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /** Retry delay used when we cannot understand the Retry-After header */
 #define HTTP_RETRY_SECONDS 5
 
+/** Idle connection watchdog timeout */
+#define HTTP_WATCHDOG_SECONDS 120
+
 /** Receive profiler */
 static struct profiler http_rx_profiler __profiler = { .name = "http.rx" };
 
@@ -114,6 +118,7 @@ static struct profiler http_xfer_profiler __profiler = { .name = "http.xfer" };
 
 /** Human-readable error messages */
 struct errortab http_errors[] __errortab = {
+	__einfo_errortab ( EINFO_ENOENT_404 ),
 	__einfo_errortab ( EINFO_EIO_4XX ),
 	__einfo_errortab ( EINFO_EIO_5XX ),
 };
@@ -280,8 +285,9 @@ static void http_close ( struct http_transaction *http, int rc ) {
 	/* Stop process */
 	process_del ( &http->process );
 
-	/* Stop timer */
-	stop_timer ( &http->timer );
+	/* Stop timers */
+	stop_timer ( &http->retry );
+	stop_timer ( &http->watchdog );
 
 	/* Close all interfaces */
 	intfs_shutdown ( rc, &http->conn, &http->transfer, &http->content,
@@ -298,6 +304,18 @@ static void http_close_error ( struct http_transaction *http, int rc ) {
 
 	/* Treat any close as an error */
 	http_close ( http, ( rc ? rc : -EPIPE ) );
+}
+
+/**
+ * Hold off HTTP idle connection watchdog timer
+ *
+ * @v http		HTTP transaction
+ */
+static inline void http_watchdog ( struct http_transaction *http ) {
+
+	/* (Re)start watchdog timer */
+	start_timer_fixed ( &http->watchdog,
+			    ( HTTP_WATCHDOG_SECONDS * TICKS_PER_SEC ) );
 }
 
 /**
@@ -321,6 +339,9 @@ static void http_reopen ( struct http_transaction *http ) {
 	/* Reset state */
 	http->state = &http_request;
 
+	/* Restart idle connection watchdog timer */
+	http_watchdog ( http );
+
 	/* Reschedule transmission process */
 	process_add ( &http->process );
 
@@ -331,17 +352,34 @@ static void http_reopen ( struct http_transaction *http ) {
 }
 
 /**
- * Handle retry timer expiry
+ * Handle connection retry timer expiry
  *
- * @v timer		Retry timer
+ * @v retry		Retry timer
  * @v over		Failure indicator
  */
-static void http_expired ( struct retry_timer *timer, int over __unused ) {
+static void http_retry_expired ( struct retry_timer *retry,
+				 int over __unused ) {
 	struct http_transaction *http =
-		container_of ( timer, struct http_transaction, timer );
+		container_of ( retry, struct http_transaction, retry );
 
 	/* Reopen connection */
 	http_reopen ( http );
+}
+
+/**
+ * Handle idle connection watchdog timer expiry
+ *
+ * @v watchdog		Idle connection watchdog timer
+ * @v over		Failure indicator
+ */
+static void http_watchdog_expired ( struct retry_timer *watchdog,
+				    int over __unused ) {
+	struct http_transaction *http =
+		container_of ( watchdog, struct http_transaction, watchdog );
+
+	/* Abort connection */
+	DBGC ( http, "HTTP %p aborting idle connection\n", http );
+	http_close ( http, -ETIMEDOUT );
 }
 
 /**
@@ -459,6 +497,9 @@ static int http_content_deliver ( struct http_transaction *http,
 		return 0;
 	}
 
+	/* Hold off idle connection watchdog timer */
+	http_watchdog ( http );
+
 	/* Deliver to data transfer interface */
 	profile_start ( &http_xfer_profiler );
 	if ( ( rc = xfer_deliver ( &http->xfer, iob_disown ( iobuf ),
@@ -502,7 +543,7 @@ http_content_buffer ( struct http_transaction *http ) {
 __weak int http_block_read ( struct http_transaction *http __unused,
 			     struct interface *data __unused,
 			     uint64_t lba __unused, unsigned int count __unused,
-			     userptr_t buffer __unused, size_t len __unused ) {
+			     void *buffer __unused, size_t len __unused ) {
 
 	return -ENOTSUP;
 }
@@ -648,7 +689,8 @@ int http_open ( struct interface *xfer, struct http_method *method,
 	intf_init ( &http->conn, &http_conn_desc, &http->refcnt );
 	intf_plug_plug ( &http->transfer, &http->content );
 	process_init ( &http->process, &http_process_desc, &http->refcnt );
-	timer_init ( &http->timer, http_expired, &http->refcnt );
+	timer_init ( &http->retry, http_retry_expired, &http->refcnt );
+	timer_init ( &http->watchdog, http_watchdog_expired, &http->refcnt );
 	http->uri = uri_get ( uri );
 	http->request.method = method;
 	http->request.uri = request_uri_string;
@@ -673,6 +715,9 @@ int http_open ( struct interface *xfer, struct http_method *method,
 		       http, strerror ( rc ) );
 		goto err_connect;
 	}
+
+	/* Start watchdog timer */
+	http_watchdog ( http );
 
 	/* Attach to parent interface, mortalise self, and return */
 	intf_plug_plug ( &http->xfer, xfer );
@@ -808,8 +853,9 @@ static int http_transfer_complete ( struct http_transaction *http ) {
 	/* Start timer to initiate retry */
 	DBGC2 ( http, "HTTP %p retrying after %d seconds\n",
 		http, http->response.retry_after );
-	start_timer_fixed ( &http->timer,
+	start_timer_fixed ( &http->retry,
 			    ( http->response.retry_after * TICKS_PER_SEC ) );
+	stop_timer ( &http->watchdog );
 	return 0;
 }
 
@@ -1089,7 +1135,8 @@ static int http_tx_request ( struct http_transaction *http ) {
 	}
 
 	/* Allocate I/O buffer */
-	iobuf = alloc_iob ( len + 1 /* NUL */ + http->request.content.len );
+	iobuf = xfer_alloc_iob ( &http->conn, ( len + 1 /* NUL */ +
+						http->request.content.len ) );
 	if ( ! iobuf ) {
 		rc = -ENOMEM;
 		goto err_alloc;

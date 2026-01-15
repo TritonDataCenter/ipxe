@@ -10,6 +10,7 @@
 #define _TPM12_H_
 
 FILE_LICENCE ( BSD2_PATENT );
+FILE_SECBOOT ( PERMITTED );
 
 ///
 /// The start of TPM return codes
@@ -746,8 +747,8 @@ typedef struct tdTPM_PERMANENT_FLAGS {
   BOOLEAN              TPMpost;
   BOOLEAN              TPMpostLock;
   BOOLEAN              FIPS;
-  BOOLEAN                           operator;
-  BOOLEAN                           enableRevokeEK;
+  BOOLEAN              operator_;
+  BOOLEAN              enableRevokeEK;
   BOOLEAN              nvLocked;
   BOOLEAN              readSRKPub;
   BOOLEAN              tpmEstablished;

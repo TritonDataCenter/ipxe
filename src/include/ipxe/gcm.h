@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <ipxe/crypto.h>
@@ -89,10 +90,9 @@ static int _gcm_name ## _setkey ( void *ctx, const void *key,		\
 				  size_t keylen ) {			\
 	struct _gcm_name ## _context *context = ctx;			\
 	build_assert ( _blocksize == sizeof ( context->gcm.key ) );	\
-	build_assert ( ( ( void * ) &context->gcm ) ==			\
-		       ( ( void * ) context ) );			\
-	build_assert ( ( ( void * ) &context->raw ) ==			\
-		       ( ( void * ) context->gcm.raw_ctx ) );		\
+	build_assert ( offsetof ( typeof ( *context ), gcm ) == 0 );	\
+	build_assert ( offsetof ( typeof ( *context ), raw ) ==		\
+		       offsetof ( typeof ( *context ), gcm.raw_ctx ) );	\
 	return gcm_setkey ( &context->gcm, key, keylen, &_raw_cipher );	\
 }									\
 static void _gcm_name ## _setiv ( void *ctx, const void *iv,		\

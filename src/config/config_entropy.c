@@ -20,6 +20,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <config/entropy.h>
 
@@ -48,4 +49,7 @@ REQUIRE_OBJECT ( linux_entropy );
 #endif
 #ifdef ENTROPY_RDRAND
 REQUIRE_OBJECT ( rdrand );
+#endif
+#ifdef ENTROPY_ZKR
+REQUIRE_OBJECT ( zkr );
 #endif

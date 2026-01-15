@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <stddef.h>
@@ -17,6 +18,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/list.h>
 
 struct image;
+struct private_key;
 
 /** An X.509 serial number */
 struct x509_serial {
@@ -50,8 +52,8 @@ struct x509_public_key {
 	struct asn1_cursor raw;
 	/** Public key algorithm */
 	struct asn1_algorithm *algorithm;
-	/** Raw public key bit string */
-	struct asn1_bit_string raw_bits;
+	/** Public key value */
+	struct asn1_cursor value;
 };
 
 /** An X.509 certificate subject */
@@ -69,7 +71,7 @@ struct x509_signature {
 	/** Signature algorithm */
 	struct asn1_algorithm *algorithm;
 	/** Signature value */
-	struct asn1_bit_string value;
+	struct asn1_cursor value;
 };
 
 /** An X.509 certificate basic constraints set */
@@ -201,6 +203,13 @@ struct x509_chain {
 	struct refcnt refcnt;
 	/** List of links */
 	struct list_head links;
+	/** Mark certificate as found
+	 *
+	 * @v store		Certificate store
+	 * @v cert		X.509 certificate
+	 */
+	void ( * found ) ( struct x509_chain *store,
+			   struct x509_certificate *cert );
 };
 
 /** An X.509 certificate */
@@ -413,6 +422,9 @@ extern int x509_certificate ( const void *data, size_t len,
 			      struct x509_certificate **cert );
 extern int x509_is_valid ( struct x509_certificate *cert,
 			   struct x509_root *root );
+extern void x509_set_valid ( struct x509_certificate *cert,
+			     struct x509_certificate *issuer,
+			     struct x509_root *root );
 extern int x509_validate ( struct x509_certificate *cert,
 			   struct x509_certificate *issuer,
 			   time_t time, struct x509_root *root );
@@ -424,8 +436,19 @@ extern int x509_append ( struct x509_chain *chain,
 extern int x509_append_raw ( struct x509_chain *chain, const void *data,
 			     size_t len );
 extern void x509_truncate ( struct x509_chain *chain, struct x509_link *link );
+extern struct x509_certificate * x509_find ( struct x509_chain *store,
+					     const struct asn1_cursor *raw );
+extern struct x509_certificate *
+x509_find_subject ( struct x509_chain *store,
+		    const struct asn1_cursor *subject );
+extern struct x509_certificate *
+x509_find_issuer_serial ( struct x509_chain *store,
+			  const struct asn1_cursor *issuer,
+			  const struct asn1_cursor *serial );
+extern struct x509_certificate * x509_find_key ( struct x509_chain *store,
+						 struct private_key *key );
 extern int x509_auto_append ( struct x509_chain *chain,
-			      struct x509_chain *certs );
+			      struct x509_chain *store );
 extern int x509_validate_chain ( struct x509_chain *chain, time_t time,
 				 struct x509_chain *store,
 				 struct x509_root *root );

@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <strings.h>
@@ -177,7 +178,7 @@ struct nii_nic {
 	size_t mtu;
 
 	/** Hardware transmit/receive buffer */
-	userptr_t buffer;
+	void *buffer;
 	/** Hardware transmit/receive buffer length */
 	size_t buffer_len;
 
@@ -210,10 +211,6 @@ static int nii_pci_open ( struct nii_nic *nii ) {
 	EFI_HANDLE device = nii->efidev->device;
 	EFI_HANDLE pci_device;
 	union {
-		EFI_PCI_IO_PROTOCOL *pci_io;
-		void *interface;
-	} pci_io;
-	union {
 		EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR *acpi;
 		void *resource;
 	} desc;
@@ -230,17 +227,18 @@ static int nii_pci_open ( struct nii_nic *nii ) {
 	}
 	nii->pci_device = pci_device;
 
-	/* Open PCI I/O protocol */
-	if ( ( efirc = bs->OpenProtocol ( pci_device, &efi_pci_io_protocol_guid,
-					  &pci_io.interface, efi_image_handle,
-					  device,
-					  EFI_OPEN_PROTOCOL_GET_PROTOCOL ))!=0){
-		rc = -EEFI ( efirc );
+	/* Open PCI I/O protocol
+	 *
+	 * We cannot open this safely as a by-driver open, since doing
+	 * so would disconnect the underlying NII driver.  We must
+	 * therefore use an unsafe open.
+	 */
+	if ( ( rc = efi_open_unsafe ( pci_device, &efi_pci_io_protocol_guid,
+				      &nii->pci_io ) ) != 0 ) {
 		DBGC ( nii, "NII %s could not open PCI I/O protocol: %s\n",
 		       nii->dev.name, strerror ( rc ) );
 		goto err_open;
 	}
-	nii->pci_io = pci_io.pci_io;
 
 	/* Identify memory and I/O BARs */
 	nii->mem_bar = PCI_MAX_BAR;
@@ -280,8 +278,7 @@ static int nii_pci_open ( struct nii_nic *nii ) {
 	return 0;
 
  err_get_bar_attributes:
-	bs->CloseProtocol ( pci_device, &efi_pci_io_protocol_guid,
-			    efi_image_handle, device );
+	efi_close_unsafe ( pci_device, &efi_pci_io_protocol_guid );
  err_open:
  err_locate:
 	return rc;
@@ -294,7 +291,6 @@ static int nii_pci_open ( struct nii_nic *nii ) {
  * @ret rc		Return status code
  */
 static void nii_pci_close ( struct nii_nic *nii ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	struct nii_mapping *map;
 	struct nii_mapping *tmp;
 
@@ -308,8 +304,7 @@ static void nii_pci_close ( struct nii_nic *nii ) {
 	}
 
 	/* Close protocols */
-	bs->CloseProtocol ( nii->pci_device, &efi_pci_io_protocol_guid,
-			    efi_image_handle, nii->efidev->device );
+	efi_close_unsafe ( nii->pci_device, &efi_pci_io_protocol_guid );
 }
 
 /**
@@ -1264,18 +1259,35 @@ static struct net_device_operations nii_operations = {
 };
 
 /**
+ * Exclude existing drivers
+ *
+ * @v device		EFI device handle
+ * @ret rc		Return status code
+ */
+int nii_exclude ( EFI_HANDLE device ) {
+	EFI_GUID *protocol = &efi_nii31_protocol_guid;
+	int rc;
+
+	/* Exclude existing NII protocol drivers */
+	if ( ( rc = efi_driver_exclude ( device, protocol ) ) != 0 ) {
+		DBGC ( device, "NII %s could not exclude drivers: %s\n",
+		       efi_handle_name ( device ), strerror ( rc ) );
+		return rc;
+	}
+
+	return 0;
+}
+
+/**
  * Attach driver to device
  *
  * @v efidev		EFI device
  * @ret rc		Return status code
  */
 int nii_start ( struct efi_device *efidev ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	EFI_HANDLE device = efidev->device;
 	struct net_device *netdev;
 	struct nii_nic *nii;
-	void *interface;
-	EFI_STATUS efirc;
 	int rc;
 
 	/* Allocate and initialise structure */
@@ -1300,17 +1312,13 @@ int nii_start ( struct efi_device *efidev ) {
 	netdev->dev = &nii->dev;
 
 	/* Open NII protocol */
-	if ( ( efirc = bs->OpenProtocol ( device, &efi_nii31_protocol_guid,
-					  &interface, efi_image_handle, device,
-					  ( EFI_OPEN_PROTOCOL_BY_DRIVER |
-					    EFI_OPEN_PROTOCOL_EXCLUSIVE )))!=0){
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open_by_driver ( device, &efi_nii31_protocol_guid,
+					 &nii->nii ) ) != 0 ) {
 		DBGC ( nii, "NII %s cannot open NII protocol: %s\n",
 		       nii->dev.name, strerror ( rc ) );
 		DBGC_EFI_OPENERS ( device, device, &efi_nii31_protocol_guid );
 		goto err_open_protocol;
 	}
-	nii->nii = interface;
 
 	/* Locate UNDI and entry point */
 	nii->undi = ( ( void * ) ( intptr_t ) nii->nii->Id );
@@ -1373,8 +1381,7 @@ int nii_start ( struct efi_device *efidev ) {
  err_pci_open:
  err_hw_undi:
  err_no_undi:
-	bs->CloseProtocol ( device, &efi_nii31_protocol_guid,
-			    efi_image_handle, device );
+	efi_close_by_driver ( device, &efi_nii31_protocol_guid );
  err_open_protocol:
 	list_del ( &nii->dev.siblings );
 	netdev_nullify ( netdev );
@@ -1389,7 +1396,6 @@ int nii_start ( struct efi_device *efidev ) {
  * @v efidev		EFI device
  */
 void nii_stop ( struct efi_device *efidev ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	struct net_device *netdev = efidev_get_drvdata ( efidev );
 	struct nii_nic *nii = netdev->priv;
 	EFI_HANDLE device = efidev->device;
@@ -1404,8 +1410,7 @@ void nii_stop ( struct efi_device *efidev ) {
 	nii_pci_close ( nii );
 
 	/* Close NII protocol */
-	bs->CloseProtocol ( device, &efi_nii31_protocol_guid,
-			    efi_image_handle, device );
+	efi_close_by_driver ( device, &efi_nii31_protocol_guid );
 
 	/* Free network device */
 	list_del ( &nii->dev.siblings );

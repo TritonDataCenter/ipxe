@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <assert.h>
@@ -15,11 +16,15 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/dma.h>
 
 /**
- * Minimum I/O buffer length
+ * Minimum I/O buffer length and alignment
  *
  * alloc_iob() will round up the allocated length to this size if
  * necessary.  This is used on behalf of hardware that is not capable
  * of auto-padding.
+ *
+ * This length must be at least as large as the largest cacheline size
+ * that we expect to encounter, to allow for platforms where DMA
+ * devices are not in the same coherency domain as the CPU cache.
  */
 #define IOB_ZLEN 128
 
@@ -226,8 +231,7 @@ static inline void iob_populate ( struct io_buffer *iobuf,
 static inline __always_inline int iob_map ( struct io_buffer *iobuf,
 					    struct dma_device *dma,
 					    size_t len, int flags ) {
-	return dma_map ( dma, &iobuf->map, virt_to_phys ( iobuf->data ),
-			 len, flags );
+	return dma_map ( dma, &iobuf->map, iobuf->data, len, flags );
 }
 
 /**
@@ -273,7 +277,7 @@ static inline __always_inline physaddr_t iob_dma ( struct io_buffer *iobuf ) {
  * @ret rc		Return status code
  */
 static inline __always_inline void iob_unmap ( struct io_buffer *iobuf ) {
-	dma_unmap ( &iobuf->map );
+	dma_unmap ( &iobuf->map, iob_len ( iobuf ) );
 }
 
 extern struct io_buffer * __malloc alloc_iob_raw ( size_t len, size_t align,

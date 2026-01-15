@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @file
@@ -93,53 +94,36 @@ struct cipher_algorithm cipher_null = {
 	.auth = cipher_null_auth,
 };
 
-int pubkey_null_init ( void *ctx __unused, const void *key __unused,
-		       size_t key_len __unused ) {
+int pubkey_null_encrypt ( const struct asn1_cursor *key __unused,
+			  const struct asn1_cursor *plaintext __unused,
+			  struct asn1_builder *ciphertext __unused ) {
 	return 0;
 }
 
-size_t pubkey_null_max_len ( void *ctx __unused ) {
+int pubkey_null_decrypt ( const struct asn1_cursor *key __unused,
+			  const struct asn1_cursor *ciphertext __unused,
+			  struct asn1_builder *plaintext __unused ) {
 	return 0;
 }
 
-int pubkey_null_encrypt ( void *ctx __unused, const void *plaintext __unused,
-			  size_t plaintext_len __unused,
-			  void *ciphertext __unused ) {
-	return 0;
-}
-
-int pubkey_null_decrypt ( void *ctx __unused, const void *ciphertext __unused,
-			  size_t ciphertext_len __unused,
-			  void *plaintext __unused ) {
-	return 0;
-}
-
-int pubkey_null_sign ( void *ctx __unused,
+int pubkey_null_sign ( const struct asn1_cursor *key __unused,
 		       struct digest_algorithm *digest __unused,
-		       const void *value __unused, void *signature __unused ) {
+		       const void *value __unused,
+		       struct asn1_builder *signature __unused ) {
 	return 0;
 }
 
-int pubkey_null_verify ( void *ctx __unused,
+int pubkey_null_verify ( const struct asn1_cursor *key __unused,
 			 struct digest_algorithm *digest __unused,
 			 const void *value __unused,
-			 const void *signature __unused ,
-			 size_t signature_len __unused ) {
+			 const struct asn1_cursor *signature __unused ) {
 	return 0;
-}
-
-void pubkey_null_final ( void *ctx __unused ) {
-	/* Do nothing */
 }
 
 struct pubkey_algorithm pubkey_null = {
 	.name = "null",
-	.ctxsize = 0,
-	.init = pubkey_null_init,
-	.max_len = pubkey_null_max_len,
 	.encrypt = pubkey_null_encrypt,
 	.decrypt = pubkey_null_decrypt,
 	.sign = pubkey_null_sign,
 	.verify = pubkey_null_verify,
-	.final = pubkey_null_final,
 };

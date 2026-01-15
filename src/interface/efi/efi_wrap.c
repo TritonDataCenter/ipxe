@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @file
@@ -39,6 +40,30 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /** Colour for debug messages */
 #define colour &efi_systab
+
+/** Maximum size for hex dumps */
+#define EFI_WRAP_DUMP_MAX 128
+
+/** Number of lines to prescroll when needed */
+#define EFI_WRAP_PRESCROLL 16
+
+/** Public EFI system table pointer */
+static EFI_SYSTEM_TABLE *efi_systab_pub;
+
+/** Private EFI system table used while wrapping is active */
+static EFI_SYSTEM_TABLE efi_systab_priv;
+
+/** Original EFI boot services table pointer */
+static EFI_BOOT_SERVICES *efi_bs_orig;
+
+/** Backup of original EFI boot services table */
+static EFI_BOOT_SERVICES efi_bs_copy;
+
+/** Original EFI runtime services table pointer */
+static EFI_RUNTIME_SERVICES *efi_rs_orig;
+
+/** Backup of original EFI runtime services table */
+static EFI_RUNTIME_SERVICES efi_rs_copy;
 
 /**
  * Convert EFI status code to text
@@ -103,27 +128,6 @@ static const char * efi_status ( EFI_STATUS efirc ) {
 static const char * efi_boolean ( BOOLEAN boolean ) {
 
 	return ( boolean ? "TRUE" : "FALSE" );
-}
-
-/**
- * Convert EFI TPL to text
- *
- * @v tpl		Task priority level
- * @ret text		Task priority level as text
- */
-static const char * efi_tpl ( EFI_TPL tpl ) {
-	static char buf[ 19 /* "0xXXXXXXXXXXXXXXXX" + NUL */ ];
-
-	switch ( tpl ) {
-	case TPL_APPLICATION:		return "Application";
-	case TPL_CALLBACK:		return "Callback";
-	case TPL_NOTIFY:		return "Notify";
-	case TPL_HIGH_LEVEL:		return "HighLevel";
-	default:
-		snprintf ( buf, sizeof ( buf ), "%#lx",
-			   ( unsigned long ) tpl );
-		return buf;
-	}
 }
 
 /**
@@ -196,25 +200,86 @@ static const char * efi_timer_delay ( EFI_TIMER_DELAY type ) {
 }
 
 /**
+ * Convert EFI time to text
+ *
+ * @v time		Time, or NULL
+ * @ret text		Time as text
+ */
+static const char * efi_time ( EFI_TIME *time ) {
+	static char buf[ 20 /* "xxxx-xx-xx xx:xx:xx" + NUL */ ];
+
+	if ( ! time )
+		return "<NULL>";
+	snprintf ( buf, sizeof ( buf ), "%04d-%02d-%02d %02d:%02d:%02d",
+		   time->Year, time->Month, time->Day, time->Hour,
+		   time->Minute, time->Second );
+	return buf;
+}
+
+/**
+ * Convert EFI reset type to text
+ *
+ * @v type		Reset type
+ * @ret text		Reset type as text
+ */
+static const char * efi_reset_type ( EFI_RESET_TYPE type ) {
+	static char buf[ 11 /* "0xXXXXXXXX" + NUL */ ];
+
+	switch ( type ) {
+	case EfiResetCold:		return "Cold";
+	case EfiResetWarm:		return "Warm";
+	case EfiResetShutdown:		return "Shutdown";
+	case EfiResetPlatformSpecific:	return "PlatformSpecific";
+	default:
+		snprintf ( buf, sizeof ( buf ), "%#x", type );
+		return buf;
+	}
+}
+
+/**
+ * Pre-scroll display to create space for output lines
+ *
+ * @v lines		Number of lines required
+ * @ret efirc		EFI status code
+ */
+static int efi_prescroll ( unsigned int lines ) {
+	EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *conout = efi_systab->ConOut;
+	UINTN columns;
+	UINTN rows;
+	UINTN space;
+	EFI_STATUS efirc;
+
+	/* Get number of rows and columns */
+	if ( ( efirc = conout->QueryMode ( conout, conout->Mode->Mode,
+					   &columns, &rows ) ) != 0 )
+		return efirc;
+
+	/* Calculate available space */
+	space = ( rows - conout->Mode->CursorRow - 1 );
+
+	/* Scroll to create space */
+	while ( space++ < lines )
+		conout->OutputString ( conout, L"\n" );
+
+	/* Move cursor to start of space */
+	conout->SetCursorPosition ( conout, 0,
+				    ( conout->Mode->CursorRow - lines ) );
+
+	return 0;
+}
+
+/**
  * Dump information about a loaded image
  *
  * @v handle		Image handle
  */
 static void efi_dump_image ( EFI_HANDLE handle ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
-	union {
-		EFI_LOADED_IMAGE_PROTOCOL *image;
-		void *intf;
-	} loaded;
-	EFI_STATUS efirc;
+	EFI_LOADED_IMAGE_PROTOCOL *loaded;
 	int rc;
 
 	/* Open loaded image protocol */
-	if ( ( efirc = bs->OpenProtocol ( handle,
-					  &efi_loaded_image_protocol_guid,
-					  &loaded.intf, efi_image_handle, NULL,
-					  EFI_OPEN_PROTOCOL_GET_PROTOCOL ))!=0){
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open ( handle, &efi_loaded_image_protocol_guid,
+			       &loaded ) ) != 0 ) {
 		DBGC ( colour, "WRAP %s could not get loaded image protocol: "
 		       "%s\n", efi_handle_name ( handle ), strerror ( rc ) );
 		return;
@@ -222,18 +287,14 @@ static void efi_dump_image ( EFI_HANDLE handle ) {
 
 	/* Dump image information */
 	DBGC ( colour, "WRAP %s at base %p has protocols:\n",
-	       efi_handle_name ( handle ), loaded.image->ImageBase );
+	       efi_handle_name ( handle ), loaded->ImageBase );
 	DBGC_EFI_PROTOCOLS ( colour, handle );
 	DBGC ( colour, "WRAP %s parent", efi_handle_name ( handle ) );
-	DBGC ( colour, " %s\n", efi_handle_name ( loaded.image->ParentHandle ));
+	DBGC ( colour, " %s\n", efi_handle_name ( loaded->ParentHandle ) );
 	DBGC ( colour, "WRAP %s device", efi_handle_name ( handle ) );
-	DBGC ( colour, " %s\n", efi_handle_name ( loaded.image->DeviceHandle ));
+	DBGC ( colour, " %s\n", efi_handle_name ( loaded->DeviceHandle ) );
 	DBGC ( colour, "WRAP %s file", efi_handle_name ( handle ) );
-	DBGC ( colour, " %s\n", efi_devpath_text ( loaded.image->FilePath ) );
-
-	/* Close loaded image protocol */
-	bs->CloseProtocol ( handle, &efi_loaded_image_protocol_guid,
-			    efi_image_handle, NULL );
+	DBGC ( colour, " %s\n", efi_devpath_text ( loaded->FilePath ) );
 }
 
 /**
@@ -246,9 +307,9 @@ efi_raise_tpl_wrapper ( EFI_TPL new_tpl ) {
 	void *retaddr = __builtin_return_address ( 0 );
 	EFI_TPL old_tpl;
 
-	DBGCP ( colour, "RaiseTPL ( %s ) ", efi_tpl ( new_tpl ) );
+	DBGCP ( colour, "RaiseTPL ( %s ) ", efi_tpl_name ( new_tpl ) );
 	old_tpl = bs->RaiseTPL ( new_tpl );
-	DBGCP ( colour, "= %s -> %p\n", efi_tpl ( old_tpl ), retaddr );
+	DBGCP ( colour, "= %s -> %p\n", efi_tpl_name ( old_tpl ), retaddr );
 	return old_tpl;
 }
 
@@ -261,7 +322,7 @@ efi_restore_tpl_wrapper ( EFI_TPL old_tpl ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	void *retaddr = __builtin_return_address ( 0 );
 
-	DBGCP ( colour, "RestoreTPL ( %s ) ", efi_tpl ( old_tpl ) );
+	DBGCP ( colour, "RestoreTPL ( %s ) ", efi_tpl_name ( old_tpl ) );
 	bs->RestoreTPL ( old_tpl );
 	DBGCP ( colour, "-> %p\n", retaddr );
 }
@@ -398,8 +459,8 @@ efi_create_event_wrapper ( UINT32 type, EFI_TPL notify_tpl,
 	void *retaddr = __builtin_return_address ( 0 );
 	EFI_STATUS efirc;
 
-	DBGC ( colour, "CreateEvent ( %#x, %s, %p, %p ) ",
-	       type, efi_tpl ( notify_tpl ), notify_function, notify_context );
+	DBGC ( colour, "CreateEvent ( %#x, %s, %p, %p ) ", type,
+	       efi_tpl_name ( notify_tpl ), notify_function, notify_context );
 	efirc = bs->CreateEvent ( type, notify_tpl, notify_function,
 				  notify_context, event );
 	DBGC ( colour, "= %s ( %p ) -> %p\n",
@@ -478,7 +539,7 @@ efi_close_event_wrapper ( EFI_EVENT event ) {
 	EFI_STATUS efirc;
 
 	DBGC ( colour, "CloseEvent ( %p ) ", event );
-	efirc = bs->SignalEvent ( event );
+	efirc = bs->CloseEvent ( event );
 	DBGC ( colour, "= %s -> %p\n", efi_status ( efirc ), retaddr );
 	return efirc;
 }
@@ -493,7 +554,7 @@ efi_check_event_wrapper ( EFI_EVENT event ) {
 	EFI_STATUS efirc;
 
 	DBGCP ( colour, "CheckEvent ( %p ) ", event );
-	efirc = bs->SignalEvent ( event );
+	efirc = bs->CheckEvent ( event );
 	DBGCP ( colour, "= %s -> %p\n", efi_status ( efirc ), retaddr );
 	return efirc;
 }
@@ -783,6 +844,15 @@ efi_exit_boot_services_wrapper ( EFI_HANDLE image_handle, UINTN map_key ) {
 	if ( efirc != 0 ) {
 		DBGC ( colour, "ExitBootServices ( ... ) = %s -> %p\n",
 		       efi_status ( efirc ), retaddr );
+		/* On some systems, scrolling the output will cause
+		 * the system memory map to change (and so cause
+		 * ExitBootServices() to fail).
+		 *
+		 * After the first failed attempt, prescroll the
+		 * screen to maximise the chance of the subsequent
+		 * attempt succeeding.
+		 */
+		efi_prescroll ( EFI_WRAP_PRESCROLL );
 	}
 	return efirc;
 }
@@ -814,11 +884,11 @@ efi_stall_wrapper ( UINTN microseconds ) {
 	void *retaddr = __builtin_return_address ( 0 );
 	EFI_STATUS efirc;
 
-	DBGC2 ( colour, "Stall ( %ld.%06lds ) ",
+	DBGCP ( colour, "Stall ( %ld.%06lds ) ",
 		( ( unsigned long ) ( microseconds / 1000000 ) ),
 		( ( unsigned long ) ( microseconds % 1000000 ) ) );
 	efirc = bs->Stall ( microseconds );
-	DBGC2 ( colour, "= %s -> %p\n", efi_status ( efirc ), retaddr );
+	DBGCP ( colour, "= %s -> %p\n", efi_status ( efirc ), retaddr );
 	return efirc;
 }
 
@@ -1163,8 +1233,8 @@ efi_create_event_ex_wrapper ( UINT32 type, EFI_TPL notify_tpl,
 	EFI_STATUS efirc;
 
 	DBGC ( colour, "CreateEventEx ( %#x, %s, %p, %p, %s ) ",
-	       type, efi_tpl ( notify_tpl ), notify_function, notify_context,
-	       efi_guid_ntoa ( event_group ) );
+	       type, efi_tpl_name ( notify_tpl ), notify_function,
+	       notify_context, efi_guid_ntoa ( event_group ) );
 	efirc = bs->CreateEventEx ( type, notify_tpl, notify_function,
 				    notify_context, event_group, event );
 	DBGC ( colour, "= %s ( %p ) -> %p\n",
@@ -1173,93 +1243,336 @@ efi_create_event_ex_wrapper ( UINT32 type, EFI_TPL notify_tpl,
 }
 
 /**
- * Build boot services table wrapper
+ * Wrap GetTime()
  *
- * @ret bs		Wrapped boot services table
  */
-EFI_BOOT_SERVICES * efi_wrap_bs ( void ) {
-	static EFI_BOOT_SERVICES efi_bs_wrapper;
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+static EFI_STATUS EFIAPI
+efi_get_time_wrapper ( EFI_TIME *time, EFI_TIME_CAPABILITIES *cap ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+	EFI_STATUS efirc;
 
-	/* Build boot services table wrapper */
-	memcpy ( &efi_bs_wrapper, bs, sizeof ( efi_bs_wrapper ) );
-	efi_bs_wrapper.RaiseTPL		= efi_raise_tpl_wrapper;
-	efi_bs_wrapper.RestoreTPL	= efi_restore_tpl_wrapper;
-	efi_bs_wrapper.AllocatePages	= efi_allocate_pages_wrapper;
-	efi_bs_wrapper.FreePages	= efi_free_pages_wrapper;
-	efi_bs_wrapper.GetMemoryMap	= efi_get_memory_map_wrapper;
-	efi_bs_wrapper.AllocatePool	= efi_allocate_pool_wrapper;
-	efi_bs_wrapper.FreePool		= efi_free_pool_wrapper;
-	efi_bs_wrapper.CreateEvent	= efi_create_event_wrapper;
-	efi_bs_wrapper.SetTimer		= efi_set_timer_wrapper;
-	efi_bs_wrapper.WaitForEvent	= efi_wait_for_event_wrapper;
-	efi_bs_wrapper.SignalEvent	= efi_signal_event_wrapper;
-	efi_bs_wrapper.CloseEvent	= efi_close_event_wrapper;
-	efi_bs_wrapper.CheckEvent	= efi_check_event_wrapper;
-	efi_bs_wrapper.InstallProtocolInterface
-		= efi_install_protocol_interface_wrapper;
-	efi_bs_wrapper.ReinstallProtocolInterface
-		= efi_reinstall_protocol_interface_wrapper;
-	efi_bs_wrapper.UninstallProtocolInterface
-		= efi_uninstall_protocol_interface_wrapper;
-	efi_bs_wrapper.HandleProtocol	= efi_handle_protocol_wrapper;
-	efi_bs_wrapper.RegisterProtocolNotify
-		= efi_register_protocol_notify_wrapper;
-	efi_bs_wrapper.LocateHandle	= efi_locate_handle_wrapper;
-	efi_bs_wrapper.LocateDevicePath	= efi_locate_device_path_wrapper;
-	efi_bs_wrapper.InstallConfigurationTable
-		= efi_install_configuration_table_wrapper;
-	efi_bs_wrapper.LoadImage	= efi_load_image_wrapper;
-	efi_bs_wrapper.StartImage	= efi_start_image_wrapper;
-	efi_bs_wrapper.Exit		= efi_exit_wrapper;
-	efi_bs_wrapper.UnloadImage	= efi_unload_image_wrapper;
-	efi_bs_wrapper.ExitBootServices	= efi_exit_boot_services_wrapper;
-	efi_bs_wrapper.GetNextMonotonicCount
-		= efi_get_next_monotonic_count_wrapper;
-	efi_bs_wrapper.Stall		= efi_stall_wrapper;
-	efi_bs_wrapper.SetWatchdogTimer	= efi_set_watchdog_timer_wrapper;
-	efi_bs_wrapper.ConnectController
-		= efi_connect_controller_wrapper;
-	efi_bs_wrapper.DisconnectController
-		= efi_disconnect_controller_wrapper;
-	efi_bs_wrapper.OpenProtocol	= efi_open_protocol_wrapper;
-	efi_bs_wrapper.CloseProtocol	= efi_close_protocol_wrapper;
-	efi_bs_wrapper.OpenProtocolInformation
-		= efi_open_protocol_information_wrapper;
-	efi_bs_wrapper.ProtocolsPerHandle
-		= efi_protocols_per_handle_wrapper;
-	efi_bs_wrapper.LocateHandleBuffer
-		= efi_locate_handle_buffer_wrapper;
-	efi_bs_wrapper.LocateProtocol	= efi_locate_protocol_wrapper;
-	efi_bs_wrapper.InstallMultipleProtocolInterfaces
-		= efi_install_multiple_protocol_interfaces_wrapper;
-	efi_bs_wrapper.UninstallMultipleProtocolInterfaces
-		= efi_uninstall_multiple_protocol_interfaces_wrapper;
-	efi_bs_wrapper.CreateEventEx	= efi_create_event_ex_wrapper;
-
-	return &efi_bs_wrapper;
+	DBGCP ( colour, "GetTime() " );
+	efirc = rs->GetTime ( time, cap );
+	DBGCP ( colour, "= %s ( %s ) -> %p\n",
+		efi_status ( efirc ), efi_time ( time ), retaddr );
+	return efirc;
 }
 
 /**
- * Wrap the calls made by a loaded image
+ * Wrap SetTime()
  *
- * @v handle		Image handle
  */
-void efi_wrap ( EFI_HANDLE handle ) {
-	static EFI_SYSTEM_TABLE efi_systab_copy;
+static EFI_STATUS EFIAPI
+efi_set_time_wrapper ( EFI_TIME *time ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+	EFI_STATUS efirc;
+
+	DBGC ( colour, "SetTime ( %s ) ", efi_time ( time ) );
+	efirc = rs->SetTime ( time );
+	DBGC ( colour, "= %s -> %p\n", efi_status ( efirc ), retaddr );
+	return efirc;
+}
+
+/**
+ * Wrap GetWakeupTime()
+ *
+ */
+static EFI_STATUS EFIAPI
+efi_get_wakeup_time_wrapper ( BOOLEAN *enabled, BOOLEAN *pending,
+			      EFI_TIME *time ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+	EFI_STATUS efirc;
+
+	DBGC ( colour, "GetWakeupTime() " );
+	efirc = rs->GetWakeupTime ( enabled, pending, time );
+	DBGC ( colour, "= %s ( %s, %s, %s ) -> %p\n", efi_status ( efirc ),
+	       efi_boolean ( *enabled ), efi_boolean ( *pending ),
+	       efi_time ( time ), retaddr );
+	return efirc;
+}
+
+/**
+ * Wrap SetWakeupTime()
+ *
+ */
+static EFI_STATUS EFIAPI
+efi_set_wakeup_time_wrapper ( BOOLEAN enable, EFI_TIME *time ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+	EFI_STATUS efirc;
+
+	DBGC ( colour, "SetWakeupTime ( %s, %s ) ",
+	       efi_boolean ( enable ), efi_time ( time ) );
+	efirc = rs->SetWakeupTime ( enable, time );
+	DBGC ( colour, "= %s -> %p\n", efi_status ( efirc ), retaddr );
+	return efirc;
+}
+
+/**
+ * Wrap GetVariable()
+ *
+ */
+static EFI_STATUS EFIAPI
+efi_get_variable_wrapper ( CHAR16 *name, EFI_GUID *guid, UINT32 *attrs,
+			   UINTN *len, VOID *data ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+	size_t dumplen;
+	EFI_STATUS efirc;
+
+	DBGC ( colour, "GetVariable ( %s:%ls, %#llx ) ",
+	       efi_guid_ntoa ( guid ), name, ( ( unsigned long long ) *len ) );
+	efirc = rs->GetVariable ( name, guid, attrs, len, data );
+	DBGC ( colour, "= %s ( %#llx",
+	       efi_status ( efirc ), ( ( unsigned long long ) *len ) );
+	if ( DBG_EXTRA && ( efirc == 0 ) ) {
+		dumplen = *len;
+		if ( dumplen > EFI_WRAP_DUMP_MAX )
+			dumplen = EFI_WRAP_DUMP_MAX;
+		DBGC2 ( colour, ",\n" );
+		DBGC2_HD ( colour, data, dumplen );
+		if ( dumplen != *len )
+			DBGC2 ( colour, "... " );
+	} else {
+		DBGC ( colour, " " );
+	}
+	DBGC ( colour, ") -> %p\n", retaddr );
+	return efirc;
+}
+
+/**
+ * Wrap GetNextVariableName()
+ *
+ */
+static EFI_STATUS EFIAPI
+efi_get_next_variable_name_wrapper ( UINTN *len, CHAR16 *name,
+				     EFI_GUID *guid ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+	EFI_STATUS efirc;
+
+	DBGC ( colour, "GetNextVariableName ( %#llx, %s:%ls ) ",
+	       ( ( unsigned long long ) *len ), efi_guid_ntoa ( guid ), name );
+	efirc = rs->GetNextVariableName ( len, name, guid );
+	DBGC ( colour, "= %s ( %#llx, %s:%ls ) -> %p\n", efi_status ( efirc ),
+	       ( ( unsigned long long ) *len ), efi_guid_ntoa ( guid ), name,
+	       retaddr );
+	return efirc;
+}
+
+/**
+ * Wrap SetVariable()
+ *
+ */
+static EFI_STATUS EFIAPI
+efi_set_variable_wrapper ( CHAR16 *name, EFI_GUID *guid, UINT32 attrs,
+			   UINTN len, VOID *data ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+	EFI_STATUS efirc;
+
+	DBGC ( colour, "SetVariable ( %s:%ls, %#02x",
+	       efi_guid_ntoa ( guid ), name, attrs );
+	if ( len ) {
+		DBGC ( colour, ",\n" );
+		DBGC_HD ( colour, data, len );
+		DBGC ( colour, ") " );
+	} else {
+		DBGC ( colour, ", %#llx, %p ) ",
+		       ( ( unsigned long long ) len ), data );
+	}
+	efirc = rs->SetVariable ( name, guid, attrs, len, data );
+	DBGC ( colour, "= %s -> %p\n", efi_status ( efirc ), retaddr );
+	return efirc;
+}
+
+/**
+ * Wrap ResetSystem()
+ *
+ */
+static VOID EFIAPI
+efi_reset_system_wrapper ( EFI_RESET_TYPE type, EFI_STATUS status,
+			   UINTN len, VOID *data ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+	void *retaddr = __builtin_return_address ( 0 );
+
+	DBGC ( colour, "ResetSystem ( %s, %s, %#llx, %p ) -> %p\n",
+	       efi_reset_type ( type ), efi_status ( status ),
+	       ( ( unsigned long long ) len ), data, retaddr );
+	rs->ResetSystem ( type, status, len, data );
+}
+
+/**
+ * Wrap a boot services table
+ *
+ * @v wrapper		Boot services table to wrap
+ */
+void efi_wrap_bs ( EFI_BOOT_SERVICES *wrapper ) {
+	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 
 	/* Do nothing unless debugging is enabled */
 	if ( ! DBG_LOG )
 		return;
 
-	/* Construct modified system table */
-	if ( efi_systab != &efi_systab_copy ) {
-		memcpy ( &efi_systab_copy, efi_systab,
-			 sizeof ( efi_systab_copy ) );
-		efi_systab->BootServices = efi_wrap_bs();
-		efi_systab = &efi_systab_copy;
+	/* Build boot services table wrapper */
+	memcpy ( wrapper, bs, sizeof ( *wrapper ) );
+	wrapper->RaiseTPL		= efi_raise_tpl_wrapper;
+	wrapper->RestoreTPL		= efi_restore_tpl_wrapper;
+	wrapper->AllocatePages		= efi_allocate_pages_wrapper;
+	wrapper->FreePages		= efi_free_pages_wrapper;
+	wrapper->GetMemoryMap		= efi_get_memory_map_wrapper;
+	wrapper->AllocatePool		= efi_allocate_pool_wrapper;
+	wrapper->FreePool		= efi_free_pool_wrapper;
+	wrapper->CreateEvent		= efi_create_event_wrapper;
+	wrapper->SetTimer		= efi_set_timer_wrapper;
+	wrapper->WaitForEvent		= efi_wait_for_event_wrapper;
+	wrapper->SignalEvent		= efi_signal_event_wrapper;
+	wrapper->CloseEvent		= efi_close_event_wrapper;
+	wrapper->CheckEvent		= efi_check_event_wrapper;
+	wrapper->InstallProtocolInterface
+		= efi_install_protocol_interface_wrapper;
+	wrapper->ReinstallProtocolInterface
+		= efi_reinstall_protocol_interface_wrapper;
+	wrapper->UninstallProtocolInterface
+		= efi_uninstall_protocol_interface_wrapper;
+	wrapper->HandleProtocol		= efi_handle_protocol_wrapper;
+	wrapper->RegisterProtocolNotify	= efi_register_protocol_notify_wrapper;
+	wrapper->LocateHandle		= efi_locate_handle_wrapper;
+	wrapper->LocateDevicePath	= efi_locate_device_path_wrapper;
+	wrapper->InstallConfigurationTable
+		= efi_install_configuration_table_wrapper;
+	wrapper->LoadImage		= efi_load_image_wrapper;
+	wrapper->StartImage		= efi_start_image_wrapper;
+	wrapper->Exit			= efi_exit_wrapper;
+	wrapper->UnloadImage		= efi_unload_image_wrapper;
+	wrapper->ExitBootServices	= efi_exit_boot_services_wrapper;
+	wrapper->GetNextMonotonicCount	= efi_get_next_monotonic_count_wrapper;
+	wrapper->Stall			= efi_stall_wrapper;
+	wrapper->SetWatchdogTimer	= efi_set_watchdog_timer_wrapper;
+	wrapper->ConnectController	= efi_connect_controller_wrapper;
+	wrapper->DisconnectController	= efi_disconnect_controller_wrapper;
+	wrapper->OpenProtocol		= efi_open_protocol_wrapper;
+	wrapper->CloseProtocol		= efi_close_protocol_wrapper;
+	wrapper->OpenProtocolInformation
+		= efi_open_protocol_information_wrapper;
+	wrapper->ProtocolsPerHandle	= efi_protocols_per_handle_wrapper;
+	wrapper->LocateHandleBuffer	= efi_locate_handle_buffer_wrapper;
+	wrapper->LocateProtocol		= efi_locate_protocol_wrapper;
+	wrapper->InstallMultipleProtocolInterfaces
+		= efi_install_multiple_protocol_interfaces_wrapper;
+	wrapper->UninstallMultipleProtocolInterfaces
+		= efi_uninstall_multiple_protocol_interfaces_wrapper;
+	wrapper->CreateEventEx		= efi_create_event_ex_wrapper;
+}
+
+/**
+ * Wrap a runtime services table
+ *
+ * @v wrapper		Runtime services table to wrap
+ */
+void efi_wrap_rs ( EFI_RUNTIME_SERVICES *wrapper ) {
+	EFI_RUNTIME_SERVICES *rs = efi_systab->RuntimeServices;
+
+	/* Do nothing unless debugging is enabled */
+	if ( ! DBG_LOG )
+		return;
+
+	/* Build boot services table wrapper */
+	memcpy ( wrapper, rs, sizeof ( *wrapper ) );
+	wrapper->GetTime		= efi_get_time_wrapper;
+	wrapper->SetTime		= efi_set_time_wrapper;
+	wrapper->GetWakeupTime		= efi_get_wakeup_time_wrapper;
+	wrapper->SetWakeupTime		= efi_set_wakeup_time_wrapper;
+	wrapper->GetVariable		= efi_get_variable_wrapper;
+	wrapper->GetNextVariableName	= efi_get_next_variable_name_wrapper;
+	wrapper->SetVariable		= efi_set_variable_wrapper;
+	wrapper->ResetSystem		= efi_reset_system_wrapper;
+}
+
+/**
+ * Wrap the public EFI system table
+ *
+ * @v global		Patch global boot services table in-place
+ */
+void efi_wrap_systab ( int global ) {
+	static EFI_BOOT_SERVICES local_bs;
+	static EFI_RUNTIME_SERVICES local_rs;
+	EFI_BOOT_SERVICES *bs;
+	EFI_RUNTIME_SERVICES *rs;
+
+	/* Do nothing unless debugging is enabled */
+	if ( ! DBG_LOG )
+		return;
+
+	/* Preserve original system and boot services tables */
+	if ( ! efi_systab_pub ) {
+		efi_systab_pub = efi_systab;
+		efi_bs_orig = efi_systab_pub->BootServices;
+		efi_rs_orig = efi_systab_pub->RuntimeServices;
+		memcpy ( &efi_bs_copy, efi_bs_orig, sizeof ( efi_bs_copy ) );
+		memcpy ( &efi_rs_copy, efi_rs_orig, sizeof ( efi_rs_copy ) );
 	}
+
+	/* Construct and use private system table */
+	if ( efi_systab != &efi_systab_priv ) {
+		memcpy ( &efi_systab_priv, efi_systab_pub,
+			 sizeof ( efi_systab_priv ) );
+		efi_systab_priv.BootServices = &efi_bs_copy;
+		efi_systab_priv.RuntimeServices = &efi_rs_copy;
+		efi_systab = &efi_systab_priv;
+	}
+
+	/* Wrap global or local boot services table as applicable */
+	bs = ( global ? efi_bs_orig : &local_bs );
+	rs = ( global ? efi_rs_orig : &local_rs );
+	efi_wrap_bs ( bs );
+	efi_wrap_rs ( rs );
+	efi_systab_pub->BootServices = bs;
+	efi_systab_pub->RuntimeServices = rs;
+	DBGC ( colour, "WRAP installed %s wrappers\n",
+	       ( global ? "global" : "local" ) );
+}
+
+/**
+ * Remove boot services table wrapper
+ *
+ */
+void efi_unwrap ( void ) {
+
+	/* Do nothing unless debugging is enabled */
+	if ( ! DBG_LOG )
+		return;
+
+	/* Do nothing if wrapping was never enabled */
+	if ( ! efi_systab_pub )
+		return;
+
+	/* Restore original system and boot services tables */
+	memcpy ( efi_bs_orig, &efi_bs_copy, sizeof ( *efi_bs_orig ) );
+	efi_systab_pub->BootServices = efi_bs_orig;
+
+	/* Switch back to using public system table */
+	efi_systab = efi_systab_pub;
+	DBGC ( colour, "WRAP uninstalled wrappers\n" );
+}
+
+/**
+ * Wrap calls made by a newly loaded image
+ *
+ * @v handle		Image handle
+ */
+void efi_wrap_image ( EFI_HANDLE handle ) {
+
+	/* Do nothing unless debugging is enabled */
+	if ( ! DBG_LOG )
+		return;
 
 	/* Dump image information */
 	efi_dump_image ( handle );
+
+	/* Patch public system table */
+	efi_wrap_systab ( 0 );
 }

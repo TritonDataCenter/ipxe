@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <ipxe/tables.h>
@@ -437,6 +438,8 @@ netmask_setting __setting ( SETTING_IP4, netmask );
 extern const struct setting
 gateway_setting __setting ( SETTING_IP4, gateway );
 extern const struct setting
+static_route_setting __setting ( SETTING_IP4, static_routes );
+extern const struct setting
 dns_setting __setting ( SETTING_IP4_EXTRA, dns );
 extern const struct setting
 ip6_setting __setting ( SETTING_IP6, ip6 );
@@ -444,6 +447,8 @@ extern const struct setting
 len6_setting __setting ( SETTING_IP6, len6 );
 extern const struct setting
 gateway6_setting __setting ( SETTING_IP6, gateway6 );
+extern const struct setting
+dns6_setting __setting ( SETTING_IP6_EXTRA, dns6 );
 extern const struct setting
 hostname_setting __setting ( SETTING_HOST, hostname );
 extern const struct setting
@@ -468,6 +473,8 @@ extern const struct setting
 mac_setting __setting ( SETTING_NETDEV, mac );
 extern const struct setting
 busid_setting __setting ( SETTING_NETDEV, busid );
+extern const struct setting
+linktype_setting __setting ( SETTING_NETDEV, linktype );
 extern const struct setting
 user_class_setting __setting ( SETTING_HOST_EXTRA, user-class );
 extern const struct setting

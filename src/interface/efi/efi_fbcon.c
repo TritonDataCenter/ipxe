@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @file
@@ -42,6 +43,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/ansicol.h>
 #include <ipxe/fbcon.h>
 #include <ipxe/console.h>
+#include <ipxe/uaccess.h>
 #include <ipxe/umalloc.h>
 #include <ipxe/rotate.h>
 #include <config/console.h>
@@ -91,7 +93,7 @@ struct efifb {
 	/** Font definition */
 	struct fbcon_font font;
 	/** Character glyph cache */
-	userptr_t glyphs;
+	uint8_t *glyphs;
 	/** Dynamic characters in cache */
 	unsigned int dynamic[EFIFB_DYNAMIC];
 	/** Next dynamic character cache entry to evict */
@@ -117,14 +119,14 @@ static int efifb_draw ( unsigned int character, unsigned int index,
 	unsigned int height;
 	unsigned int x;
 	unsigned int y;
+	uint8_t *glyph;
 	uint8_t bitmask;
-	size_t offset;
 	EFI_STATUS efirc;
 	int rc;
 
 	/* Clear existing glyph */
-	offset = ( index * efifb.font.height );
-	memset_user ( efifb.glyphs, offset, 0, efifb.font.height );
+	glyph = &efifb.glyphs[ index * efifb.font.height ];
+	memset ( glyph, 0, efifb.font.height );
 
 	/* Get glyph */
 	blt = NULL;
@@ -157,8 +159,7 @@ static int efifb_draw ( unsigned int character, unsigned int index,
 			pixel++;
 		}
 		bitmask ^= toggle;
-		copy_to_user ( efifb.glyphs, offset++, &bitmask,
-			       sizeof ( bitmask ) );
+		*(glyph++) = bitmask;
 	}
 
 	/* Free glyph */
@@ -223,11 +224,10 @@ static unsigned int efifb_dynamic ( unsigned int character ) {
  * Get character glyph
  *
  * @v character		Unicode character
- * @v glyph		Character glyph to fill in
+ * @ret glyph		Character glyph to fill in
  */
-static void efifb_glyph ( unsigned int character, uint8_t *glyph ) {
+static const uint8_t * efifb_glyph ( unsigned int character ) {
 	unsigned int index;
-	size_t offset;
 
 	/* Identify glyph */
 	if ( character < EFIFB_ASCII ) {
@@ -241,9 +241,8 @@ static void efifb_glyph ( unsigned int character, uint8_t *glyph ) {
 		index = efifb_dynamic ( character );
 	}
 
-	/* Copy cached glyph */
-	offset = ( index * efifb.font.height );
-	copy_from_user ( glyph, efifb.glyphs, offset, efifb.font.height );
+	/* Return cached glyph */
+	return &efifb.glyphs[ index * efifb.font.height ];
 }
 
 /**
@@ -296,7 +295,7 @@ static int efifb_glyphs ( void ) {
 		rc = -ENOMEM;
 		goto err_alloc;
 	}
-	memset_user ( efifb.glyphs, 0, 0, len );
+	memset ( efifb.glyphs, 0, len );
 
 	/* Get font data */
 	for ( character = 0 ; character < EFIFB_ASCII ; character++ ) {
@@ -583,7 +582,7 @@ static int efifb_init ( struct console_configuration *config ) {
 	       mode, efifb.pixel.width, efifb.pixel.height, bpp, efifb.start );
 
 	/* Initialise frame buffer console */
-	if ( ( rc = fbcon_init ( &efifb.fbcon, phys_to_user ( efifb.start ),
+	if ( ( rc = fbcon_init ( &efifb.fbcon, phys_to_virt ( efifb.start ),
 				 &efifb.pixel, &efifb.map, &efifb.font,
 				 config ) ) != 0 )
 		goto err_fbcon_init;

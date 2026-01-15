@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <byteswap.h>
 #include <ipxe/x25519.h>
@@ -42,4 +43,5 @@ struct asn1_algorithm x25519_algorithm __asn1_algorithm = {
 struct tls_named_curve tls_x25519_named_curve __tls_named_curve ( 01 ) = {
 	.curve = &x25519_curve,
 	.code = htons ( TLS_NAMED_CURVE_X25519 ),
+	.pre_master_secret_len = sizeof ( struct x25519_value ),
 };

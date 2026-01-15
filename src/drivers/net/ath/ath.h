@@ -21,8 +21,10 @@
 #define ATH_H
 
 FILE_LICENCE ( BSD2 );
+FILE_SECBOOT ( FORBIDDEN );
 
 #include <unistd.h>
+#include <string.h>
 #include <ipxe/net80211.h>
 
 /* This block of functions are from kernel.h v3.0.1 */

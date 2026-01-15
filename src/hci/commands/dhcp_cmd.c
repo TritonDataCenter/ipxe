@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <stdint.h>
@@ -92,13 +93,5 @@ static int pxebs_exec ( int argc, char **argv ) {
 }
 
 /** DHCP management commands */
-struct command dhcp_commands[] __command = {
-	{
-		.name = "dhcp",
-		.exec = ifconf_exec, /* synonym for "ifconf" */
-	},
-	{
-		.name = "pxebs",
-		.exec = pxebs_exec,
-	},
-};
+COMMAND ( dhcp, ifconf_exec ); /* synonym for "ifconf" */
+COMMAND ( pxebs, pxebs_exec );

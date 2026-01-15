@@ -2,14 +2,14 @@
 #define _BITS_ERRFILE_H
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /**
  * @addtogroup errfile Error file identifiers
  * @{
  */
 
-#define ERRFILE_memtop_umalloc	( ERRFILE_ARCH | ERRFILE_CORE | 0x00000000 )
-#define ERRFILE_memmap		( ERRFILE_ARCH | ERRFILE_CORE | 0x00010000 )
+#define ERRFILE_int15		( ERRFILE_ARCH | ERRFILE_CORE | 0x00010000 )
 #define ERRFILE_pnpbios		( ERRFILE_ARCH | ERRFILE_CORE | 0x00020000 )
 #define ERRFILE_bios_smbios	( ERRFILE_ARCH | ERRFILE_CORE | 0x00030000 )
 #define ERRFILE_biosint		( ERRFILE_ARCH | ERRFILE_CORE | 0x00040000 )
@@ -42,7 +42,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define ERRFILE_comboot_resolv ( ERRFILE_ARCH | ERRFILE_IMAGE | 0x00090000 )
 #define ERRFILE_comboot_call   ( ERRFILE_ARCH | ERRFILE_IMAGE | 0x000a0000 )
 #define ERRFILE_sdi	       ( ERRFILE_ARCH | ERRFILE_IMAGE | 0x000b0000 )
-#define ERRFILE_initrd	       ( ERRFILE_ARCH | ERRFILE_IMAGE | 0x000c0000 )
 #define ERRFILE_pxe_call       ( ERRFILE_ARCH | ERRFILE_IMAGE | 0x000d0000 )
 #define ERRFILE_ucode	       ( ERRFILE_ARCH | ERRFILE_IMAGE | 0x000e0000 )
 #define ERRFILE_multiboot2     ( ERRFILE_ARCH | ERRFILE_IMAGE | 0x000f0000 )

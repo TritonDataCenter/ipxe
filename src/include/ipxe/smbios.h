@@ -8,11 +8,11 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <ipxe/api.h>
 #include <config/general.h>
-#include <ipxe/uaccess.h>
 
 /**
  * Provide an SMBIOS API implementation
@@ -25,6 +25,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	PROVIDE_SINGLE_API ( SMBIOS_PREFIX_ ## _subsys, _api_func, _func )
 
 /* Include all architecture-independent SMBIOS API headers */
+#include <ipxe/null_smbios.h>
 #include <ipxe/efi/efi_smbios.h>
 #include <ipxe/linux/linux_smbios.h>
 
@@ -125,16 +126,6 @@ struct smbios_header {
 	uint16_t handle;
 } __attribute__ (( packed ));
 
-/** SMBIOS structure descriptor */
-struct smbios_structure {
-	/** Copy of SMBIOS structure header */
-	struct smbios_header header;
-	/** Offset of structure within SMBIOS */
-	size_t offset;
-	/** Length of strings section */
-	size_t strings_len;
-};
-
 /** SMBIOS system information structure */
 struct smbios_system_information {
 	/** SMBIOS structure header */
@@ -206,7 +197,7 @@ struct smbios_enclosure_information {
  */
 struct smbios {
 	/** Start of SMBIOS structures */
-	userptr_t address;
+	const void *address;
 	/** Length of SMBIOS structures */
 	size_t len;
 	/** Number of SMBIOS structures */
@@ -225,17 +216,14 @@ struct smbios {
 #define SMBIOS_VERSION( major, minor ) ( ( (major) << 8 ) | (minor) )
 
 extern int find_smbios ( struct smbios *smbios );
-extern int find_smbios_entry ( userptr_t start, size_t len,
-			       struct smbios_entry *entry );
-extern int find_smbios3_entry ( userptr_t start, size_t len,
-				struct smbios3_entry *entry );
-extern int find_smbios_structure ( unsigned int type, unsigned int instance,
-				   struct smbios_structure *structure );
-extern int read_smbios_structure ( struct smbios_structure *structure,
-				   void *data, size_t len );
-extern int read_smbios_string ( struct smbios_structure *structure,
-				unsigned int index,
-				void *data, size_t len );
+extern const struct smbios_entry * find_smbios_entry ( const void *start,
+						       size_t len );
+extern const struct smbios3_entry * find_smbios3_entry ( const void *start,
+							 size_t len );
+extern const struct smbios_header * smbios_structure ( unsigned int type,
+						       unsigned int instance );
+extern const char * smbios_string ( const struct smbios_header *header,
+				    unsigned int index );
 extern int smbios_version ( void );
 extern void smbios_clear ( void );
 

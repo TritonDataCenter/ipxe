@@ -9,6 +9,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/list.h>
 #include <ipxe/tables.h>
@@ -68,6 +69,9 @@ struct device_description {
 
 /** USB bus type */
 #define BUS_TYPE_USB 10
+
+/** Devicetree bus type */
+#define BUS_TYPE_DT 11
 
 /** A hardware device */
 struct device {

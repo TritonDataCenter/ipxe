@@ -22,9 +22,11 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <getopt.h>
 #include <ipxe/image.h>
 #include <ipxe/command.h>
@@ -162,13 +164,5 @@ static int imgverify_exec ( int argc, char **argv ) {
 }
 
 /** Image trust management commands */
-struct command image_trust_commands[] __command = {
-	{
-		.name = "imgtrust",
-		.exec = imgtrust_exec,
-	},
-	{
-		.name = "imgverify",
-		.exec = imgverify_exec,
-	},
-};
+COMMAND ( imgtrust, imgtrust_exec );
+COMMAND ( imgverify, imgverify_exec );

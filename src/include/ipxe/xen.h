@@ -8,13 +8,13 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /* Define Xen interface version before including any Xen header files */
 #define __XEN_INTERFACE_VERSION__ 0x00040400
 
 #include <stdint.h>
 #include <ipxe/bitops.h>
-#include <ipxe/uaccess.h>
 #include <xen/xen.h>
 #include <xen/event_channel.h>
 

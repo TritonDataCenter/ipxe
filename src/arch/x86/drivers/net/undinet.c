@@ -373,6 +373,18 @@ extern void undiisr ( void );
 uint8_t __data16 ( undiisr_irq );
 #define undiisr_irq __use_data16 ( undiisr_irq )
 
+/** IRQ mask register */
+uint16_t __data16 ( undiisr_imr );
+#define undiisr_imr __use_data16 ( undiisr_imr )
+
+/** IRQ mask bit */
+uint8_t __data16 ( undiisr_bit );
+#define undiisr_bit __use_data16 ( undiisr_bit )
+
+/** IRQ rearm flag */
+uint8_t __data16 ( undiisr_rearm );
+#define undiisr_rearm __use_data16 ( undiisr_rearm )
+
 /** IRQ chain vector */
 struct segoff __data16 ( undiisr_next_handler );
 #define undiisr_next_handler __use_data16 ( undiisr_next_handler )
@@ -395,6 +407,9 @@ static void undinet_hook_isr ( unsigned int irq ) {
 	assert ( undiisr_irq == 0 );
 
 	undiisr_irq = irq;
+	undiisr_imr = IMR_REG ( irq );
+	undiisr_bit = IMR_BIT ( irq );
+	undiisr_rearm = 0;
 	hook_bios_interrupt ( IRQ_INT ( irq ), ( ( intptr_t ) undiisr ),
 			      &undiisr_next_handler );
 }
@@ -588,6 +603,14 @@ static void undinet_poll ( struct net_device *netdev ) {
 		 * support interrupts.
 		 */
 		if ( ! undinet_isr_triggered() ) {
+
+			/* Rearm interrupt if needed */
+			if ( undiisr_rearm ) {
+				undiisr_rearm = 0;
+				assert ( undinic->irq != 0 );
+				enable_irq ( undinic->irq );
+			}
+
 			/* Allow interrupt to occur */
 			profile_start ( &undinet_irq_profiler );
 			__asm__ __volatile__ ( "sti\n\t"
@@ -838,15 +861,19 @@ static const struct undinet_irq_broken undinet_irq_broken_list[] = {
 	{ 0x8086, 0x1503, PCI_ANY_ID, PCI_ANY_ID },
 	/* HP 745 G3 laptop */
 	{ 0x14e4, 0x1687, PCI_ANY_ID, PCI_ANY_ID },
+	/* ASUSTeK KNPA-U16 server */
+	{ 0x8086, 0x1521, 0x1043, PCI_ANY_ID },
 };
 
 /**
  * Check for devices with broken support for generating interrupts
  *
- * @v desc		Device description
+ * @v netdev		Net device
  * @ret irq_is_broken	Interrupt support is broken; no interrupts are generated
  */
-static int undinet_irq_is_broken ( struct device_description *desc ) {
+static int undinet_irq_is_broken ( struct net_device *netdev ) {
+	struct undi_nic *undinic = netdev->priv;
+	struct device_description *desc = &netdev->dev->desc;
 	const struct undinet_irq_broken *broken;
 	struct pci_device pci;
 	uint16_t subsys_vendor;
@@ -872,9 +899,25 @@ static int undinet_irq_is_broken ( struct device_description *desc ) {
 		       ( broken->pci_subsys_vendor == PCI_ANY_ID ) ) &&
 		     ( ( broken->pci_subsys == subsys ) ||
 		       ( broken->pci_subsys == PCI_ANY_ID ) ) ) {
+			DBGC ( undinic, "UNDINIC %p %04x:%04x subsys "
+			       "%04x:%04x has broken interrupts\n",
+			       undinic, desc->vendor, desc->device,
+			       subsys_vendor, subsys );
 			return 1;
 		}
 	}
+
+	/* Check for a PCI Express capability.  Given the number of
+	 * issues found with legacy INTx emulation on PCIe systems, we
+	 * assume that there is a high chance of interrupts not
+	 * working on any PCIe device.
+	 */
+	if ( pci_find_capability ( &pci, PCI_CAP_ID_EXP ) ) {
+		DBGC ( undinic, "UNDINIC %p is PCI Express: assuming "
+		       "interrupts are unreliable\n", undinic );
+		return 1;
+	}
+
 	return 0;
 }
 
@@ -972,6 +1015,10 @@ int undinet_probe ( struct undi_device *undi, struct device *dev ) {
 	}
 	DBGC ( undinic, "UNDINIC %p has MAC address %s and IRQ %d\n",
 	       undinic, eth_ntoa ( netdev->hw_addr ), undinic->irq );
+	if ( undinic->irq ) {
+		/* Sanity check - prefix should have disabled the IRQ */
+		assert ( ! irq_enabled ( undinic->irq ) );
+	}
 
 	/* Get interface information */
 	memset ( &undi_iface, 0, sizeof ( undi_iface ) );
@@ -993,7 +1040,7 @@ int undinet_probe ( struct undi_device *undi, struct device *dev ) {
 		       undinic );
 		undinic->hacks |= UNDI_HACK_EB54;
 	}
-	if ( undinet_irq_is_broken ( &dev->desc ) ) {
+	if ( undinet_irq_is_broken ( netdev ) ) {
 		DBGC ( undinic, "UNDINIC %p forcing polling mode due to "
 		       "broken interrupts\n", undinic );
 		undinic->irq_supported = 0;

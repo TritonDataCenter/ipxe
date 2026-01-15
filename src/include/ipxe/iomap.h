@@ -10,11 +10,11 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdint.h>
 #include <ipxe/api.h>
 #include <config/ioapi.h>
-#include <ipxe/uaccess.h>
 
 /**
  * Calculate static inline I/O mapping API function name

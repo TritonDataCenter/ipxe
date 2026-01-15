@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/pci.h>
 
@@ -40,6 +41,10 @@ struct pci_msix {
 	void *table;
 	/** Pending bit array */
 	void *pba;
+	/** Dummy message target */
+	uint32_t *msg;
+	/** Dummy message target mapping */
+	struct dma_mapping map;
 };
 
 extern int pci_msix_enable ( struct pci_device *pci, struct pci_msix *msix );

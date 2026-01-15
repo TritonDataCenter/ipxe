@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <ipxe/process.h>
@@ -170,6 +171,7 @@ static void timer_probe ( void ) {
 
 /** Timer initialisation function */
 struct init_fn timer_init_fn __init_fn ( INIT_EARLY ) = {
+	.name = "timer",
 	.initialise = timer_probe,
 };
 

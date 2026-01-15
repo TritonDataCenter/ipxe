@@ -65,12 +65,13 @@ static unsigned int cur_phy;
 
 static unsigned int cur_rx;
 
-struct {
+struct sis900_bss {
     BufferDesc txd;
     BufferDesc rxd[NUM_RX_DESC];
     unsigned char txb[TX_BUF_SIZE];
     unsigned char rxb[NUM_RX_DESC * RX_BUF_SIZE];
-} sis900_bufs __shared;
+};
+#define sis900_bufs NIC_FAKE_BSS ( struct sis900_bss )
 #define txd sis900_bufs.txd
 #define rxd sis900_bufs.rxd
 #define txb sis900_bufs.txb
@@ -164,7 +165,7 @@ static void sis900_transmit(struct nic *nic, const char *d,
                             unsigned int t, unsigned int s, const char *p);
 static int  sis900_poll(struct nic *nic, int retrieve);
 
-static void sis900_disable(struct nic *nic);
+static void sis900_disable(struct nic *nic, void *hwdev);
 
 static void sis900_irq(struct nic *nic, irq_action_t action);
 
@@ -1238,7 +1239,7 @@ sis900_poll(struct nic *nic, int retrieve)
  */
 
 static void
-sis900_disable ( struct nic *nic ) {
+sis900_disable ( struct nic *nic, void *hwdev __unused ) {
 
     sis900_init(nic);
 
@@ -1291,7 +1292,7 @@ PCI_ROM(0x1039, 0x7016, "sis7016", "SIS7016", 0),
 PCI_DRIVER ( sis900_driver, sis900_nics, PCI_NO_CLASS );
 
 DRIVER ( "SIS900", nic_driver, pci_driver, sis900_driver,
-	 sis900_probe, sis900_disable );
+	 sis900_probe, sis900_disable, sis900_bufs );
 
 /*
  * Local variables:

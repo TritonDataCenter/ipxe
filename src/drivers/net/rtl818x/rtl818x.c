@@ -18,8 +18,10 @@
  */
 
 FILE_LICENCE(GPL2_ONLY);
+FILE_SECBOOT(FORBIDDEN);
 
 #include <stdint.h>
+#include <string.h>
 #include <errno.h>
 #include <stdio.h>
 #include <unistd.h>

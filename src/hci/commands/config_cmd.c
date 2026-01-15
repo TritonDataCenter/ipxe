@@ -31,6 +31,7 @@
 #include <ipxe/settings_ui.h>
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -79,7 +80,4 @@ static int config_exec ( int argc, char **argv ) {
 }
 
 /** Configuration UI commands */
-struct command config_command __command = {
-	.name = "config",
-	.exec = config_exec,
-};
+COMMAND ( config, config_exec );

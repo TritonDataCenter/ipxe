@@ -13,6 +13,7 @@ Literature dealing with the network protocols:
 **************************************************************************/
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stddef.h>
 #include <stdio.h>
@@ -32,9 +33,8 @@ __asmcall int main ( void ) {
 	initialise();
 
 	/* Some devices take an unreasonably long time to initialise */
-	printf ( "%s initialising devices...", product_short_name );
+	printf ( "%s initialising devices...\n", product_short_name );
 	startup();
-	printf ( "ok\n" );
 
 	/* Attempt to boot */
 	if ( ( rc = ipxe ( NULL ) ) != 0 )

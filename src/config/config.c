@@ -20,6 +20,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <config/general.h>
 #include <config/console.h>
@@ -77,6 +78,9 @@ REQUIRE_OBJECT ( vmconsole );
 #endif
 #ifdef CONSOLE_DEBUGCON
 REQUIRE_OBJECT ( debugcon );
+#endif
+#ifdef CONSOLE_SBI
+REQUIRE_OBJECT ( sbi_console );
 #endif
 
 /*
@@ -228,7 +232,10 @@ REQUIRE_OBJECT ( dhcp_cmd );
 REQUIRE_OBJECT ( sanboot_cmd );
 #endif
 #ifdef MENU_CMD
-REQUIRE_OBJECT ( menu_cmd );
+REQUIRE_OBJECT ( dynui_cmd );
+#endif
+#ifdef FORM_CMD
+REQUIRE_OBJECT ( dynui_cmd );
 #endif
 #ifdef LOGIN_CMD
 REQUIRE_OBJECT ( login_cmd );
@@ -299,6 +306,15 @@ REQUIRE_OBJECT ( image_mem_cmd );
 #ifdef SHIM_CMD
 REQUIRE_OBJECT ( shim_cmd );
 #endif
+#ifdef IMAGE_CRYPT_CMD
+REQUIRE_OBJECT ( image_crypt_cmd );
+#endif
+#ifdef USB_CMD
+REQUIRE_OBJECT ( usb_cmd );
+#endif
+#ifdef FDT_CMD
+REQUIRE_OBJECT ( fdt_cmd );
+#endif
 
 /*
  * Drag in miscellaneous objects
@@ -343,9 +359,6 @@ REQUIRE_OBJECT ( efi_bofm );
 /*
  * Drag in relevant settings sources
  */
-#ifdef PCI_SETTINGS
-REQUIRE_OBJECT ( pci_settings );
-#endif
 #ifdef VMWARE_SETTINGS
 REQUIRE_OBJECT ( guestinfo );
 #endif

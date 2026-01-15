@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <string.h>
 #include <stdio.h>
@@ -135,9 +136,11 @@ struct validator {
  * @ret name		Validator name
  */
 static const char * validator_name ( struct validator *validator ) {
+	struct x509_certificate *cert;
 
-	/* Use name of first certificate in chain */
-	return x509_name ( x509_first ( validator->chain ) );
+	/* Use name of first certificate in chain, if present */
+	cert = x509_first ( validator->chain );
+	return ( cert ? x509_name ( cert ) : "<empty>" );
 }
 
 /**

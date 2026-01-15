@@ -52,7 +52,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 struct golan_page {
 	struct list_head list;
-	userptr_t addr;
+	void *addr;
 };
 
 static void golan_free_fw_areas ( struct golan *golan ) {
@@ -61,7 +61,7 @@ static void golan_free_fw_areas ( struct golan *golan ) {
 	for (i = 0; i < GOLAN_FW_AREAS_NUM; i++) {
 		if ( golan->fw_areas[i].area ) {
 			ufree ( golan->fw_areas[i].area );
-			golan->fw_areas[i].area = UNULL;
+			golan->fw_areas[i].area = NULL;
 		}
 	}
 }
@@ -75,7 +75,7 @@ static int golan_init_fw_areas ( struct golan *golan ) {
 	}
 
 	for (i = 0; i < GOLAN_FW_AREAS_NUM; i++)
-		golan->fw_areas[i].area = UNULL;
+		golan->fw_areas[i].area = NULL;
 
 	return rc;
 
@@ -448,12 +448,12 @@ static inline int golan_provide_pages ( struct golan *golan , uint32_t pages
 	int size_ibox = 0;
 	int size_obox = 0;
 	int rc = 0;
-	userptr_t next_page_addr = UNULL;
+	void *next_page_addr = NULL;
 
 	DBGC(golan, "%s\n", __FUNCTION__);
 	if ( ! fw_area->area ) {
 		fw_area->area = umalloc ( GOLAN_PAGE_SIZE * pages );
-		if ( fw_area->area == UNULL ) {
+		if ( fw_area->area == NULL ) {
 			rc = -ENOMEM;
 			DBGC (golan ,"Failed to allocated %d pages \n",pages);
 			goto err_golan_alloc_fw_area;
@@ -467,7 +467,7 @@ static inline int golan_provide_pages ( struct golan *golan , uint32_t pages
 		unsigned i, j;
 		struct golan_cmd_layout	*cmd;
 		struct golan_manage_pages_inbox *in;
-		userptr_t addr = 0;
+		void *addr = NULL;
 
 		mailbox = GET_INBOX(golan, MEM_MBOX);
 		size_ibox = sizeof(struct golan_manage_pages_inbox) + (pas_num * GOLAN_PAS_SIZE);
@@ -486,8 +486,8 @@ static inline int golan_provide_pages ( struct golan *golan , uint32_t pages
 		for ( i = 0 , j = MANAGE_PAGES_PSA_OFFSET; i < pas_num; ++i ,++j,
 				next_page_addr += GOLAN_PAGE_SIZE ) {
 			addr = next_page_addr;
-			if (GOLAN_PAGE_MASK & user_to_phys(addr, 0)) {
-				DBGC (golan ,"Addr not Page alligned [%lx %lx]\n", user_to_phys(addr, 0), addr);
+			if (GOLAN_PAGE_MASK & virt_to_phys(addr)) {
+				DBGC (golan ,"Addr not Page alligned [%lx]\n", virt_to_phys(addr));
 			}
 			mailbox->mblock.data[j]	= USR_2_BE64_BUS(addr);
 		}

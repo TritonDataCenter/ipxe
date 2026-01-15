@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <getopt.h>
@@ -66,9 +67,4 @@ static int ipstat_exec ( int argc, char **argv ) {
 }
 
 /** Routing table management commands */
-struct command ipstat_commands[] __command = {
-	{
-		.name = "ipstat",
-		.exec = ipstat_exec,
-	},
-};
+COMMAND ( ipstat, ipstat_exec );

@@ -22,6 +22,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -147,8 +148,8 @@ struct ata_command_type {
 	 * @ret data_in		Data-in buffer
 	 * @ret data_in_len	Data-in buffer length
 	 */
-	void ( * data_in ) ( struct ata_command *atacmd, userptr_t buffer,
-			     size_t len, userptr_t *data_in,
+	void ( * data_in ) ( struct ata_command *atacmd, void *buffer,
+			     size_t len, void **data_in,
 			     size_t *data_in_len );
 	/**
 	 * Calculate data-out buffer
@@ -160,8 +161,8 @@ struct ata_command_type {
 	 * @ret data_out	Data-out buffer
 	 * @ret data_out_len	Data-out buffer length
 	 */
-	void ( * data_out ) ( struct ata_command *atacmd, userptr_t buffer,
-			      size_t len, userptr_t *data_out,
+	void ( * data_out ) ( struct ata_command *atacmd, void *buffer,
+			      size_t len, void **data_out,
 			      size_t *data_out_len );
 	/**
 	 * Handle ATA command completion
@@ -285,8 +286,8 @@ static void atacmd_done ( struct ata_command *atacmd, int rc ) {
  * @ret data_len	Data buffer length
  */
 static void atacmd_data_buffer ( struct ata_command *atacmd __unused,
-				 userptr_t buffer, size_t len,
-				 userptr_t *data, size_t *data_len ) {
+				 void *buffer, size_t len,
+				 void **data, size_t *data_len ) {
 	*data = buffer;
 	*data_len = len;
 }
@@ -301,8 +302,8 @@ static void atacmd_data_buffer ( struct ata_command *atacmd __unused,
  * @ret data_len	Data buffer length
  */
 static void atacmd_data_none ( struct ata_command *atacmd __unused,
-			       userptr_t buffer __unused, size_t len __unused,
-			       userptr_t *data __unused,
+			       void *buffer __unused, size_t len __unused,
+			       void **data __unused,
 			       size_t *data_len __unused ) {
 	/* Nothing to do */
 }
@@ -317,9 +318,9 @@ static void atacmd_data_none ( struct ata_command *atacmd __unused,
  * @ret data_len	Data buffer length
  */
 static void atacmd_data_priv ( struct ata_command *atacmd,
-			       userptr_t buffer __unused, size_t len __unused,
-			       userptr_t *data, size_t *data_len ) {
-	*data = virt_to_user ( atacmd_priv ( atacmd ) );
+			       void *buffer __unused, size_t len __unused,
+			       void **data, size_t *data_len ) {
+	*data = atacmd_priv ( atacmd );
 	*data_len = atacmd->type->priv_len;
 }
 
@@ -455,7 +456,7 @@ static int atadev_command ( struct ata_device *atadev,
 			    struct interface *block,
 			    struct ata_command_type *type,
 			    uint64_t lba, unsigned int count,
-			    userptr_t buffer, size_t len ) {
+			    void *buffer, size_t len ) {
 	struct ata_command *atacmd;
 	struct ata_cmd command;
 	int tag;
@@ -543,7 +544,7 @@ static int atadev_command ( struct ata_device *atadev,
 static int atadev_read ( struct ata_device *atadev,
 			 struct interface *block,
 			 uint64_t lba, unsigned int count,
-			 userptr_t buffer, size_t len ) {
+			 void *buffer, size_t len ) {
 	return atadev_command ( atadev, block, &atacmd_read,
 				lba, count, buffer, len );
 }
@@ -562,7 +563,7 @@ static int atadev_read ( struct ata_device *atadev,
 static int atadev_write ( struct ata_device *atadev,
 			  struct interface *block,
 			  uint64_t lba, unsigned int count,
-			  userptr_t buffer, size_t len ) {
+			  void *buffer, size_t len ) {
 	return atadev_command ( atadev, block, &atacmd_write,
 				lba, count, buffer, len );
 }
@@ -581,7 +582,7 @@ static int atadev_read_capacity ( struct ata_device *atadev,
 	assert ( atacmd_identify.priv_len == sizeof ( *identity ) );
 	assert ( atacmd_identify.priv_len == ATA_SECTOR_SIZE );
 	return atadev_command ( atadev, block, &atacmd_identify,
-				0, 1, UNULL, ATA_SECTOR_SIZE );
+				0, 1, NULL, ATA_SECTOR_SIZE );
 }
 
 /**

@@ -22,6 +22,7 @@
  */
 
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <getopt.h>
 #include <ipxe/pci.h>
@@ -29,6 +30,7 @@
 #include <ipxe/parseopt.h>
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /** @file
  *
@@ -114,9 +116,4 @@ static int pciscan_exec ( int argc, char **argv ) {
 }
 
 /** PCI commands */
-struct command pci_commands[] __command = {
-	{
-		.name = "pciscan",
-		.exec = pciscan_exec,
-	},
-};
+COMMAND ( pciscan, pciscan_exec );

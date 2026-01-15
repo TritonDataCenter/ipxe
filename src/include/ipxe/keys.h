@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 /*
  * Symbolic names for some standard ASCII characters
@@ -47,6 +48,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define LF		CTRL_J
 #define CR		CTRL_M
 #define ESC		0x1b
+#define DEL		0x7f
 
 /*
  * Special keys outside the normal Unicode range

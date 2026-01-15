@@ -31,15 +31,14 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 
 #include <stdio.h>
-#include <string.h>
 #include <errno.h>
-#include <ipxe/uuid.h>
 #include <ipxe/base16.h>
 #include <ipxe/vsprintf.h>
 #include <ipxe/efi/efi.h>
 #include <ipxe/efi/efi_path.h>
 #include <ipxe/efi/Protocol/ComponentName.h>
 #include <ipxe/efi/Protocol/ComponentName2.h>
+#include <ipxe/efi/Protocol/DriverBinding.h>
 #include <ipxe/efi/Protocol/DevicePathToText.h>
 #include <ipxe/efi/IndustryStandard/PeImage.h>
 
@@ -47,234 +46,25 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 static EFI_DEVICE_PATH_TO_TEXT_PROTOCOL *efidpt;
 EFI_REQUEST_PROTOCOL ( EFI_DEVICE_PATH_TO_TEXT_PROTOCOL, &efidpt );
 
-/** HttpBootDxe module GUID */
-static EFI_GUID efi_http_boot_dxe_guid = {
-	0xecebcb00, 0xd9c8, 0x11e4,
-	{ 0xaf, 0x3d, 0x8c, 0xdc, 0xd4, 0x26, 0xc9, 0x73 }
-};
-
-/** IScsiDxe module GUID */
-static EFI_GUID efi_iscsi_dxe_guid = {
-	0x86cddf93, 0x4872, 0x4597,
-	{ 0x8a, 0xf9, 0xa3, 0x5a, 0xe4, 0xd3, 0x72, 0x5f }
-};
-
-/** Old IScsi4Dxe module GUID */
-static EFI_GUID efi_iscsi4_dxe_guid = {
-	0x4579b72d, 0x7ec4, 0x4dd4,
-	{ 0x84, 0x86, 0x08, 0x3c, 0x86, 0xb1, 0x82, 0xa7 }
-};
-
-/** UefiPxeBcDxe module GUID */
-static EFI_GUID efi_uefi_pxe_bc_dxe_guid = {
-	0xb95e9fda, 0x26de, 0x48d2,
-	{ 0x88, 0x07, 0x1f, 0x91, 0x07, 0xac, 0x5e, 0x3a }
-};
-
-/** VlanConfigDxe module GUID */
-static EFI_GUID efi_vlan_config_dxe_guid = {
-	0xe4f61863, 0xfe2c, 0x4b56,
-	{ 0xa8, 0xf4, 0x08, 0x51, 0x9b, 0xc4, 0x39, 0xdf }
-};
-
-/** A well-known GUID */
-struct efi_well_known_guid {
-	/** GUID */
-	EFI_GUID *guid;
-	/** Name */
-	const char *name;
-};
-
-/** Well-known GUIDs */
-static struct efi_well_known_guid efi_well_known_guids[] = {
-	{ &efi_absolute_pointer_protocol_guid,
-	  "AbsolutePointer" },
-	{ &efi_acpi_table_protocol_guid,
-	  "AcpiTable" },
-	{ &efi_apple_net_boot_protocol_guid,
-	  "AppleNetBoot" },
-	{ &efi_arp_protocol_guid,
-	  "Arp" },
-	{ &efi_arp_service_binding_protocol_guid,
-	  "ArpSb" },
-	{ &efi_block_io_protocol_guid,
-	  "BlockIo" },
-	{ &efi_block_io2_protocol_guid,
-	  "BlockIo2" },
-	{ &efi_bus_specific_driver_override_protocol_guid,
-	  "BusSpecificDriverOverride" },
-	{ &efi_component_name_protocol_guid,
-	  "ComponentName" },
-	{ &efi_component_name2_protocol_guid,
-	  "ComponentName2" },
-	{ &efi_console_control_protocol_guid,
-	  "ConsoleControl" },
-	{ &efi_device_path_protocol_guid,
-	  "DevicePath" },
-	{ &efi_driver_binding_protocol_guid,
-	  "DriverBinding" },
-	{ &efi_dhcp4_protocol_guid,
-	  "Dhcp4" },
-	{ &efi_dhcp4_service_binding_protocol_guid,
-	  "Dhcp4Sb" },
-	{ &efi_dhcp6_protocol_guid,
-	  "Dhcp6" },
-	{ &efi_dhcp6_service_binding_protocol_guid,
-	  "Dhcp6Sb" },
-	{ &efi_disk_io_protocol_guid,
-	  "DiskIo" },
-	{ &efi_dns4_protocol_guid,
-	  "Dns4" },
-	{ &efi_dns4_service_binding_protocol_guid,
-	  "Dns4Sb" },
-	{ &efi_dns6_protocol_guid,
-	  "Dns6" },
-	{ &efi_dns6_service_binding_protocol_guid,
-	  "Dns6Sb" },
-	{ &efi_graphics_output_protocol_guid,
-	  "GraphicsOutput" },
-	{ &efi_hii_config_access_protocol_guid,
-	  "HiiConfigAccess" },
-	{ &efi_hii_font_protocol_guid,
-	  "HiiFont" },
-	{ &efi_http_boot_dxe_guid,
-	  "HttpBootDxe" },
-	{ &efi_http_protocol_guid,
-	  "Http" },
-	{ &efi_http_service_binding_protocol_guid,
-	  "HttpSb" },
-	{ &efi_ip4_protocol_guid,
-	  "Ip4" },
-	{ &efi_ip4_config_protocol_guid,
-	  "Ip4Config" },
-	{ &efi_ip4_config2_protocol_guid,
-	  "Ip4Config2" },
-	{ &efi_ip4_service_binding_protocol_guid,
-	  "Ip4Sb" },
-	{ &efi_ip6_protocol_guid,
-	  "Ip6" },
-	{ &efi_ip6_config_protocol_guid,
-	  "Ip6Config" },
-	{ &efi_ip6_service_binding_protocol_guid,
-	  "Ip6Sb" },
-	{ &efi_iscsi_dxe_guid,
-	  "IScsiDxe" },
-	{ &efi_iscsi4_dxe_guid,
-	  "IScsi4Dxe" },
-	{ &efi_load_file_protocol_guid,
-	  "LoadFile" },
-	{ &efi_load_file2_protocol_guid,
-	  "LoadFile2" },
-	{ &efi_loaded_image_protocol_guid,
-	  "LoadedImage" },
-	{ &efi_loaded_image_device_path_protocol_guid,
-	  "LoadedImageDevicePath"},
-	{ &efi_managed_network_protocol_guid,
-	  "ManagedNetwork" },
-	{ &efi_managed_network_service_binding_protocol_guid,
-	  "ManagedNetworkSb" },
-	{ &efi_mtftp4_protocol_guid,
-	  "Mtftp4" },
-	{ &efi_mtftp4_service_binding_protocol_guid,
-	  "Mtftp4Sb" },
-	{ &efi_mtftp6_protocol_guid,
-	  "Mtftp6" },
-	{ &efi_mtftp6_service_binding_protocol_guid,
-	  "Mtftp6Sb" },
-	{ &efi_nii_protocol_guid,
-	  "Nii" },
-	{ &efi_nii31_protocol_guid,
-	  "Nii31" },
-	{ &efi_pci_io_protocol_guid,
-	  "PciIo" },
-	{ &efi_pci_root_bridge_io_protocol_guid,
-	  "PciRootBridgeIo" },
-	{ &efi_pxe_base_code_protocol_guid,
-	  "PxeBaseCode" },
-	{ &efi_serial_io_protocol_guid,
-	  "SerialIo" },
-	{ &efi_shim_lock_protocol_guid,
-	  "ShimLock" },
-	{ &efi_simple_file_system_protocol_guid,
-	  "SimpleFileSystem" },
-	{ &efi_simple_network_protocol_guid,
-	  "SimpleNetwork" },
-	{ &efi_simple_pointer_protocol_guid,
-	  "SimplePointer" },
-	{ &efi_simple_text_input_protocol_guid,
-	  "SimpleTextInput" },
-	{ &efi_simple_text_input_ex_protocol_guid,
-	  "SimpleTextInputEx" },
-	{ &efi_simple_text_output_protocol_guid,
-	  "SimpleTextOutput" },
-	{ &efi_tcg_protocol_guid,
-	  "Tcg" },
-	{ &efi_tcp4_protocol_guid,
-	  "Tcp4" },
-	{ &efi_tcp4_service_binding_protocol_guid,
-	  "Tcp4Sb" },
-	{ &efi_tcp6_protocol_guid,
-	  "Tcp6" },
-	{ &efi_tcp6_service_binding_protocol_guid,
-	  "Tcp6Sb" },
-	{ &efi_tree_protocol_guid,
-	  "TrEE" },
-	{ &efi_udp4_protocol_guid,
-	  "Udp4" },
-	{ &efi_udp4_service_binding_protocol_guid,
-	  "Udp4Sb" },
-	{ &efi_udp6_protocol_guid,
-	  "Udp6" },
-	{ &efi_udp6_service_binding_protocol_guid,
-	  "Udp6Sb" },
-	{ &efi_uefi_pxe_bc_dxe_guid,
-	  "UefiPxeBcDxe" },
-	{ &efi_uga_draw_protocol_guid,
-	  "UgaDraw" },
-	{ &efi_unicode_collation_protocol_guid,
-	  "UnicodeCollation" },
-	{ &efi_usb_hc_protocol_guid,
-	  "UsbHc" },
-	{ &efi_usb2_hc_protocol_guid,
-	  "Usb2Hc" },
-	{ &efi_usb_io_protocol_guid,
-	  "UsbIo" },
-	{ &efi_vlan_config_protocol_guid,
-	  "VlanConfig" },
-	{ &efi_vlan_config_dxe_guid,
-	  "VlanConfigDxe" },
-};
-
 /**
- * Convert GUID to a printable string
+ * Name EFI TPL
  *
- * @v guid		GUID
- * @ret string		Printable string
+ * @v tpl		Task priority level
+ * @ret text		Task priority level as text
  */
-const __attribute__ (( pure )) char * efi_guid_ntoa ( CONST EFI_GUID *guid ) {
-	union {
-		union uuid uuid;
-		EFI_GUID guid;
-	} u;
-	unsigned int i;
+const __attribute__ (( pure )) char * efi_tpl_name ( EFI_TPL tpl ) {
+	static char buf[ 19 /* "0xXXXXXXXXXXXXXXXX" + NUL */ ];
 
-	/* Sanity check */
-	if ( ! guid )
-		return NULL;
-
-	/* Check for a match against well-known GUIDs */
-	for ( i = 0 ; i < ( sizeof ( efi_well_known_guids ) /
-			    sizeof ( efi_well_known_guids[0] ) ) ; i++ ) {
-		if ( memcmp ( guid, efi_well_known_guids[i].guid,
-			      sizeof ( *guid ) ) == 0 ) {
-			return efi_well_known_guids[i].name;
-		}
+	switch ( tpl ) {
+	case TPL_APPLICATION:		return "Application";
+	case TPL_CALLBACK:		return "Callback";
+	case TPL_NOTIFY:		return "Notify";
+	case TPL_HIGH_LEVEL:		return "HighLevel";
+	default:
+		snprintf ( buf, sizeof ( buf ), "%#lx",
+			   ( unsigned long ) tpl );
+		return buf;
 	}
-
-	/* Convert GUID to standard endianness */
-	memcpy ( &u.guid, guid, sizeof ( u.guid ) );
-	uuid_mangle ( &u.uuid );
-	return uuid_ntoa ( &u.uuid );
 }
 
 /**
@@ -393,15 +183,11 @@ void dbg_efi_openers ( EFI_HANDLE handle, EFI_GUID *protocol ) {
  * @v protocol		Protocol GUID
  */
 void dbg_efi_protocol ( EFI_HANDLE handle, EFI_GUID *protocol ) {
-	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
 	VOID *interface;
-	EFI_STATUS efirc;
 	int rc;
 
 	/* Get protocol instance */
-	if ( ( efirc = bs->HandleProtocol ( handle, protocol,
-					    &interface ) ) != 0 ) {
-		rc = -EEFI ( efirc );
+	if ( ( rc = efi_open ( handle, protocol, &interface ) ) != 0 ) {
 		printf ( "HANDLE %s could not identify %s: %s\n",
 			 efi_handle_name ( handle ),
 			 efi_guid_ntoa ( protocol ), strerror ( rc ) );
@@ -550,6 +336,64 @@ static const char * efi_driver_name2 ( EFI_COMPONENT_NAME2_PROTOCOL *wtf ) {
 	/* Convert name from CHAR16 to char */
 	snprintf ( name, sizeof ( name ), "%ls", driver_name );
 	return name;
+}
+
+/**
+ * Get driver binding name
+ *
+ * @v binding		Driver binding protocol
+ * @ret name		Driver name, or NULL
+ */
+static const char * efi_binding_name ( EFI_DRIVER_BINDING_PROTOCOL *binding ) {
+	EFI_COMPONENT_NAME_PROTOCOL *name;
+	EFI_HANDLE image;
+	int rc;
+
+	/* Sanity check */
+	if ( ! binding ) {
+		DBG ( "[NULL DriverBinding]" );
+		return NULL;
+	}
+
+	/* Try to open component name protocol on image handle */
+	image = binding->ImageHandle;
+	if ( ( rc = efi_open ( image, &efi_component_name_protocol_guid,
+			       &name ) ) != 0 ) {
+		DBG ( "[DriverBinding no ComponentName]" );
+		return NULL;
+	}
+
+	/* Try to get name from component name protocol */
+	return efi_driver_name ( name );
+}
+
+/**
+ * Get driver binding name
+ *
+ * @v binding		Driver binding protocol
+ * @ret name		Driver name, or NULL
+ */
+static const char * efi_binding_name2 ( EFI_DRIVER_BINDING_PROTOCOL *binding ){
+	EFI_HANDLE image;
+	EFI_COMPONENT_NAME2_PROTOCOL *name2;
+	int rc;
+
+	/* Sanity check */
+	if ( ! binding ) {
+		DBG ( "[NULL DriverBinding]" );
+		return NULL;
+	}
+
+	/* Try to open component name protocol on image handle */
+	image = binding->ImageHandle;
+	if ( ( rc = efi_open ( image, &efi_component_name2_protocol_guid,
+			       &name2 ) ) != 0 ) {
+		DBG ( "[DriverBinding no ComponentName2]" );
+		return NULL;
+	}
+
+	/* Try to get name from component name protocol */
+	return efi_driver_name2 ( name2 );
 }
 
 /**
@@ -770,15 +614,12 @@ struct efi_handle_name_type {
 
 /** EFI handle name types */
 static struct efi_handle_name_type efi_handle_name_types[] = {
-	/* Device path */
-	EFI_HANDLE_NAME_TYPE ( &efi_device_path_protocol_guid,
-			       efi_devpath_text ),
-	/* Driver name (for driver image handles) */
-	EFI_HANDLE_NAME_TYPE ( &efi_component_name2_protocol_guid,
-			       efi_driver_name2 ),
+	/* Driver name (for driver binding handles) */
+	EFI_HANDLE_NAME_TYPE ( &efi_driver_binding_protocol_guid,
+			       efi_binding_name2 ),
 	/* Driver name (via obsolete original ComponentName protocol) */
-	EFI_HANDLE_NAME_TYPE ( &efi_component_name_protocol_guid,
-			       efi_driver_name ),
+	EFI_HANDLE_NAME_TYPE ( &efi_driver_binding_protocol_guid,
+			       efi_binding_name ),
 	/* PE/COFF debug filename (for image handles) */
 	EFI_HANDLE_NAME_TYPE ( &efi_loaded_image_protocol_guid,
 			       efi_pecoff_debug_name ),
@@ -791,6 +632,9 @@ static struct efi_handle_name_type efi_handle_name_types[] = {
 	/* Handle's loaded image file path (for image handles) */
 	EFI_HANDLE_NAME_TYPE ( &efi_loaded_image_protocol_guid,
 			       efi_loaded_image_filepath_name ),
+	/* Device path */
+	EFI_HANDLE_NAME_TYPE ( &efi_device_path_protocol_guid,
+			       efi_devpath_text ),
 	/* Our standard input file handle */
 	EFI_HANDLE_NAME_TYPE ( &efi_simple_text_input_protocol_guid,
 			       efi_conin_name ),
@@ -816,6 +660,7 @@ const __attribute__ (( pure )) char * efi_handle_name ( EFI_HANDLE handle ) {
 	void *interface;
 	const char *name;
 	EFI_STATUS efirc;
+	int rc;
 
 	/* Fail immediately for NULL handles */
 	if ( ! handle )
@@ -828,10 +673,8 @@ const __attribute__ (( pure )) char * efi_handle_name ( EFI_HANDLE handle ) {
 		DBG2 ( "<%d", i );
 
 		/* Try to open the applicable protocol */
-		efirc = bs->OpenProtocol ( handle, type->protocol, &interface,
-					   efi_image_handle, handle,
-					   EFI_OPEN_PROTOCOL_GET_PROTOCOL );
-		if ( efirc != 0 ) {
+		if ( ( rc = efi_open ( handle, type->protocol,
+				       &interface ) ) != 0 ) {
 			DBG2 ( ">" );
 			continue;
 		}
@@ -839,12 +682,7 @@ const __attribute__ (( pure )) char * efi_handle_name ( EFI_HANDLE handle ) {
 		/* Try to get name from this protocol */
 		DBG2 ( "-" );
 		name = type->name ( interface );
-		DBG2 ( "%c", ( name ? ( name[0] ? 'Y' : 'E' ) : 'N' ) );
-
-		/* Close protocol */
-		bs->CloseProtocol ( handle, type->protocol,
-				    efi_image_handle, handle );
-		DBG2 ( ">" );
+		DBG2 ( "%c>", ( name ? ( name[0] ? 'Y' : 'E' ) : 'N' ) );
 
 		/* Use this name, if possible */
 		if ( name && name[0] )

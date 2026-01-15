@@ -25,17 +25,18 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 #include <limits.h>
 #include <byteswap.h>
 #include <errno.h>
 #include <assert.h>
 #include <ipxe/blockdev.h>
-#include <ipxe/io.h>
 #include <ipxe/acpi.h>
 #include <ipxe/sanboot.h>
 #include <ipxe/device.h>
 #include <ipxe/pci.h>
 #include <ipxe/eltorito.h>
+#include <ipxe/memmap.h>
 #include <realmode.h>
 #include <bios.h>
 #include <biosint.h>
@@ -181,8 +182,7 @@ static int int13_parse_eltorito ( struct san_device *sandev, void *scratch ) {
 	int rc;
 
 	/* Read boot record volume descriptor */
-	if ( ( rc = sandev_read ( sandev, ELTORITO_LBA, 1,
-				  virt_to_user ( boot ) ) ) != 0 ) {
+	if ( ( rc = sandev_read ( sandev, ELTORITO_LBA, 1, boot ) ) != 0 ) {
 		DBGC ( sandev->drive, "INT13 drive %02x could not read El "
 		       "Torito boot record volume descriptor: %s\n",
 		       sandev->drive, strerror ( rc ) );
@@ -228,7 +228,7 @@ static int int13_guess_geometry_hdd ( struct san_device *sandev, void *scratch,
 	int rc;
 
 	/* Read partition table */
-	if ( ( rc = sandev_read ( sandev, 0, 1, virt_to_user ( mbr ) ) ) != 0 ) {
+	if ( ( rc = sandev_read ( sandev, 0, 1, mbr ) ) != 0 ) {
 		DBGC ( sandev->drive, "INT13 drive %02x could not read "
 		       "partition table to guess geometry: %s\n",
 		       sandev->drive, strerror ( rc ) );
@@ -517,12 +517,12 @@ static int int13_rw_sectors ( struct san_device *sandev,
 			      int ( * sandev_rw ) ( struct san_device *sandev,
 						    uint64_t lba,
 						    unsigned int count,
-						    userptr_t buffer ) ) {
+						    void *buffer ) ) {
 	struct int13_data *int13 = sandev->priv;
 	unsigned int cylinder, head, sector;
 	unsigned long lba;
 	unsigned int count;
-	userptr_t buffer;
+	void *buffer;
 	int rc;
 
 	/* Validate blocksize */
@@ -549,7 +549,7 @@ static int int13_rw_sectors ( struct san_device *sandev,
 	lba = ( ( ( ( cylinder * int13->heads ) + head )
 		  * int13->sectors_per_track ) + sector - 1 );
 	count = ix86->regs.al;
-	buffer = real_to_user ( ix86->segs.es, ix86->regs.bx );
+	buffer = real_to_virt ( ix86->segs.es, ix86->regs.bx );
 
 	DBGC2 ( sandev->drive, "C/H/S %d/%d/%d = LBA %08lx <-> %04x:%04x "
 		"(count %d)\n", cylinder, head, sector, lba, ix86->segs.es,
@@ -710,12 +710,12 @@ static int int13_extended_rw ( struct san_device *sandev,
 			       int ( * sandev_rw ) ( struct san_device *sandev,
 						     uint64_t lba,
 						     unsigned int count,
-						     userptr_t buffer ) ) {
+						     void *buffer ) ) {
 	struct int13_disk_address addr;
 	uint8_t bufsize;
 	uint64_t lba;
 	unsigned long count;
-	userptr_t buffer;
+	void *buffer;
 	int rc;
 
 	/* Extended reads are not allowed on floppy drives.
@@ -743,11 +743,11 @@ static int int13_extended_rw ( struct san_device *sandev,
 	if ( ( addr.count == 0xff ) ||
 	     ( ( addr.buffer.segment == 0xffff ) &&
 	       ( addr.buffer.offset == 0xffff ) ) ) {
-		buffer = phys_to_user ( addr.buffer_phys );
+		buffer = phys_to_virt ( addr.buffer_phys );
 		DBGC2 ( sandev->drive, "%08llx",
 			( ( unsigned long long ) addr.buffer_phys ) );
 	} else {
-		buffer = real_to_user ( addr.buffer.segment,
+		buffer = real_to_virt ( addr.buffer.segment,
 					addr.buffer.offset );
 		DBGC2 ( sandev->drive, "%04x:%04x", addr.buffer.segment,
 			addr.buffer.offset );
@@ -1058,7 +1058,7 @@ static int int13_cdrom_read_boot_catalog ( struct san_device *sandev,
 
 	/* Read from boot catalog */
 	if ( ( rc = sandev_read ( sandev, start, command.count,
-				  phys_to_user ( command.buffer ) ) ) != 0 ) {
+				  phys_to_virt ( command.buffer ) ) ) != 0 ) {
 		DBGC ( sandev->drive, "INT13 drive %02x could not read boot "
 		       "catalog: %s\n", sandev->drive, strerror ( rc ) );
 		return -INT13_STATUS_READ_ERROR;
@@ -1455,8 +1455,8 @@ static int int13_load_eltorito ( unsigned int drive, struct segoff *address ) {
 		       "catalog (status %04x)\n", drive, status );
 		return -EIO;
 	}
-	copy_from_user ( &catalog, phys_to_user ( eltorito_cmd.buffer ), 0,
-			 sizeof ( catalog ) );
+	memcpy ( &catalog, phys_to_virt ( eltorito_cmd.buffer ),
+		 sizeof ( catalog ) );
 
 	/* Sanity checks */
 	if ( catalog.valid.platform_id != ELTORITO_PLATFORM_X86 ) {
@@ -1523,7 +1523,6 @@ static int int13_load_eltorito ( unsigned int drive, struct segoff *address ) {
  */
 static int int13_boot ( unsigned int drive,
 			struct san_boot_config *config __unused ) {
-	struct memory_map memmap;
 	struct segoff address;
 	int rc;
 
@@ -1537,7 +1536,7 @@ static int int13_boot ( unsigned int drive,
 	 * many problems that turn out to be memory-map related that
 	 * it's worth doing.
 	 */
-	get_memmap ( &memmap );
+	memmap_dump_all ( 1 );
 
 	/* Jump to boot sector */
 	if ( ( rc = call_bootsector ( address.segment, address.offset,

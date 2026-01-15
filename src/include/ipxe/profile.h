@@ -8,6 +8,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <bits/profile.h>
 #include <ipxe/tables.h>
@@ -59,6 +60,8 @@ struct profiler {
 #else
 #define __profiler
 #endif
+
+unsigned long profile_timestamp ( void );
 
 extern unsigned long profile_excluded;
 

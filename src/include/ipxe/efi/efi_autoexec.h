@@ -8,10 +8,8 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
-#include <ipxe/efi/efi.h>
-
-extern int efi_autoexec_load ( EFI_HANDLE device,
-			       EFI_DEVICE_PATH_PROTOCOL *path );
+extern int efi_autoexec_load ( void );
 
 #endif /* _IPXE_EFI_AUTOEXEC_H */

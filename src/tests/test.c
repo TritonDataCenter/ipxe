@@ -34,6 +34,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <assert.h>
 #include <ipxe/test.h>
@@ -161,6 +162,7 @@ static struct image_type test_image_type = {
 static struct image test_image = {
 	.refcnt = REF_INIT ( ref_no_free ),
 	.name = "<TESTS>",
+	.flags = ( IMAGE_STATIC | IMAGE_STATIC_NAME ),
 	.type = &test_image_type,
 };
 
@@ -178,5 +180,6 @@ static void test_init ( void ) {
 
 /** Self-test initialisation function */
 struct init_fn test_init_fn __init_fn ( INIT_EARLY ) = {
+	.name = "test",
 	.initialise = test_init,
 };

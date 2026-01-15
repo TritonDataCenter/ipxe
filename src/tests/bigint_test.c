@@ -40,6 +40,14 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /** Define inline big integer */
 #define BIGINT(...) { __VA_ARGS__ }
 
+/** A big integer test value */
+struct bigint_test {
+	/** Raw value */
+	const uint8_t *raw;
+	/** Length of raw value */
+	size_t len;
+};
+
 /* Provide global functions to allow inspection of generated assembly code */
 
 void bigint_init_sample ( bigint_element_t *value0, unsigned int size,
@@ -58,38 +66,38 @@ void bigint_done_sample ( const bigint_element_t *value0, unsigned int size,
 	bigint_done ( value, out, len );
 }
 
-void bigint_add_sample ( const bigint_element_t *addend0,
-			 bigint_element_t *value0, unsigned int size ) {
+int bigint_add_sample ( const bigint_element_t *addend0,
+			bigint_element_t *value0, unsigned int size ) {
 	const bigint_t ( size ) *addend __attribute__ (( may_alias ))
 		= ( ( const void * ) addend0 );
 	bigint_t ( size ) *value __attribute__ (( may_alias ))
 		= ( ( void * ) value0 );
 
-	bigint_add ( addend, value );
+	return bigint_add ( addend, value );
 }
 
-void bigint_subtract_sample ( const bigint_element_t *subtrahend0,
-			      bigint_element_t *value0, unsigned int size ) {
+int bigint_subtract_sample ( const bigint_element_t *subtrahend0,
+			     bigint_element_t *value0, unsigned int size ) {
 	const bigint_t ( size ) *subtrahend __attribute__ (( may_alias ))
 		= ( ( const void * ) subtrahend0 );
 	bigint_t ( size ) *value __attribute__ (( may_alias ))
 		= ( ( void * ) value0 );
 
-	bigint_subtract ( subtrahend, value );
+	return bigint_subtract ( subtrahend, value );
 }
 
-void bigint_rol_sample ( bigint_element_t *value0, unsigned int size ) {
+int bigint_shl_sample ( bigint_element_t *value0, unsigned int size ) {
 	bigint_t ( size ) *value __attribute__ (( may_alias ))
 		= ( ( void * ) value0 );
 
-	bigint_rol ( value );
+	return bigint_shl ( value );
 }
 
-void bigint_ror_sample ( bigint_element_t *value0, unsigned int size ) {
+int bigint_shr_sample ( bigint_element_t *value0, unsigned int size ) {
 	bigint_t ( size ) *value __attribute__ (( may_alias ))
 		= ( ( void * ) value0 );
 
-	bigint_ror ( value );
+	return bigint_shr ( value );
 }
 
 int bigint_is_zero_sample ( const bigint_element_t *value0,
@@ -185,22 +193,39 @@ void bigint_multiply_sample ( const bigint_element_t *multiplicand0,
 	bigint_multiply ( multiplicand, multiplier, result );
 }
 
-void bigint_mod_multiply_sample ( const bigint_element_t *multiplicand0,
-				  const bigint_element_t *multiplier0,
-				  const bigint_element_t *modulus0,
-				  bigint_element_t *result0,
-				  unsigned int size,
-				  void *tmp ) {
-	const bigint_t ( size ) *multiplicand __attribute__ (( may_alias ))
-		= ( ( const void * ) multiplicand0 );
-	const bigint_t ( size ) *multiplier __attribute__ (( may_alias ))
-		= ( ( const void * ) multiplier0 );
-	const bigint_t ( size ) *modulus __attribute__ (( may_alias ))
-		= ( ( const void * ) modulus0 );
-	bigint_t ( size ) *result __attribute__ (( may_alias ))
-		= ( ( void * ) result0 );
+void bigint_reduce_sample ( const bigint_element_t *modulus0,
+			    bigint_element_t *result0, unsigned int size ) {
+	const bigint_t ( size ) __attribute__ (( may_alias ))
+		*modulus = ( ( const void * ) modulus0 );
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*result = ( ( void * ) result0 );
 
-	bigint_mod_multiply ( multiplicand, multiplier, modulus, result, tmp );
+	bigint_reduce ( modulus, result );
+}
+
+void bigint_mod_invert_sample ( const bigint_element_t *invertend0,
+				bigint_element_t *inverse0,
+				unsigned int size ) {
+	const bigint_t ( size ) __attribute__ (( may_alias ))
+		*invertend = ( ( const void * ) invertend0 );
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*inverse = ( ( void * ) inverse0 );
+
+	bigint_mod_invert ( invertend, inverse );
+}
+
+void bigint_montgomery_sample ( const bigint_element_t *modulus0,
+				bigint_element_t *value0,
+				bigint_element_t *result0,
+				unsigned int size ) {
+	const bigint_t ( size ) __attribute__ (( may_alias ))
+		*modulus = ( ( const void * ) modulus0 );
+	bigint_t ( 2 * size ) __attribute__ (( may_alias ))
+		*value = ( ( void * ) value0 );
+	bigint_t ( size ) __attribute__ (( may_alias ))
+		*result = ( ( void * ) result0 );
+
+	bigint_montgomery ( modulus, value, result );
 }
 
 void bigint_mod_exp_sample ( const bigint_element_t *base0,
@@ -227,33 +252,50 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  * @v addend		Big integer to add
  * @v value		Big integer to be added to
  * @v expected		Big integer expected result
+ * @v overflow		Expected result overflows range
+ * @v file		Test code file
+ * @v line		Test code line
  */
-#define bigint_add_ok( addend, value, expected ) do {			\
+static void bigint_add_okx ( struct bigint_test *addend,
+			     struct bigint_test *value,
+			     struct bigint_test *expected, int overflow,
+			     const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int size = bigint_required_size ( value->len );
+	unsigned int msb = ( 8 * value->len );
+	bigint_t ( size ) addend_temp;
+	bigint_t ( size ) value_temp;
+	int carry;
+
+	assert ( bigint_size ( &addend_temp ) == bigint_size ( &value_temp ) );
+	bigint_init ( &value_temp, value->raw, value->len );
+	bigint_init ( &addend_temp, addend->raw, addend->len );
+	DBG ( "Add: 0x%s", bigint_ntoa ( &addend_temp ) );
+	DBG ( " + 0x%s", bigint_ntoa ( &value_temp ) );
+	carry = bigint_add ( &addend_temp, &value_temp );
+	DBG ( " = 0x%s%s\n", bigint_ntoa ( &value_temp ),
+	      ( carry ? " (carry)" : "" ) );
+	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+	if ( sizeof ( result_raw ) < sizeof ( value_temp ) )
+		carry += bigint_bit_is_set ( &value_temp, msb );
+	okx ( carry == overflow, file, line );
+}
+#define bigint_add_ok( addend, value, expected, overflow ) do {		\
 	static const uint8_t addend_raw[] = addend;			\
 	static const uint8_t value_raw[] = value;			\
 	static const uint8_t expected_raw[] = expected;			\
-	uint8_t result_raw[ sizeof ( expected_raw ) ];			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) addend_temp;					\
-	bigint_t ( size ) value_temp;					\
-	{} /* Fix emacs alignment */					\
-									\
-	assert ( bigint_size ( &addend_temp ) ==			\
-		 bigint_size ( &value_temp ) );				\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	bigint_init ( &addend_temp, addend_raw,				\
-		      sizeof ( addend_raw ) );				\
-	DBG ( "Add:\n" );						\
-	DBG_HDA ( 0, &addend_temp, sizeof ( addend_temp ) );		\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_add ( &addend_temp, &value_temp );			\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );	\
-									\
-	ok ( memcmp ( result_raw, expected_raw,				\
-		      sizeof ( result_raw ) ) == 0 );			\
-	} while ( 0 )
+	static struct bigint_test addend_test =				\
+		{ addend_raw, sizeof ( addend_raw ) };			\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_add_okx ( &addend_test, &value_test, &expected_test,	\
+			 overflow, __FILE__, __LINE__ );		\
+} while ( 0 )
 
 /**
  * Report result of big integer subtraction test
@@ -261,84 +303,128 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  * @v subtrahend	Big integer to subtract
  * @v value		Big integer to be subtracted from
  * @v expected		Big integer expected result
+ * @v underflow		Expected result underflows range
+ * @v file		Test code file
+ * @v line		Test code line
  */
-#define bigint_subtract_ok( subtrahend, value, expected ) do {		\
+static void bigint_subtract_okx ( struct bigint_test *subtrahend,
+				  struct bigint_test *value,
+				  struct bigint_test *expected, int underflow,
+				  const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int size = bigint_required_size ( value->len );
+	bigint_t ( size ) subtrahend_temp;
+	bigint_t ( size ) value_temp;
+	int borrow;
+
+	assert ( bigint_size ( &subtrahend_temp ) ==
+		 bigint_size ( &value_temp ) );
+	bigint_init ( &value_temp, value->raw, value->len );
+	bigint_init ( &subtrahend_temp, subtrahend->raw, subtrahend->len );
+	DBG ( "Subtract: 0x%s", bigint_ntoa ( &value_temp ) );
+	DBG ( " - 0x%s", bigint_ntoa ( &subtrahend_temp ) );
+	borrow = bigint_subtract ( &subtrahend_temp, &value_temp );
+	DBG ( " = 0x%s%s\n", bigint_ntoa ( &value_temp ),
+	      ( borrow ? " (borrow)" : "" ) );
+	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+	okx ( borrow == underflow, file, line );
+}
+#define bigint_subtract_ok( subtrahend, value, expected,		\
+			    underflow ) do {				\
 	static const uint8_t subtrahend_raw[] = subtrahend;		\
 	static const uint8_t value_raw[] = value;			\
 	static const uint8_t expected_raw[] = expected;			\
-	uint8_t result_raw[ sizeof ( expected_raw ) ];			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) subtrahend_temp;				\
-	bigint_t ( size ) value_temp;					\
-	{} /* Fix emacs alignment */					\
-									\
-	assert ( bigint_size ( &subtrahend_temp ) ==			\
-		 bigint_size ( &value_temp ) );				\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	bigint_init ( &subtrahend_temp, subtrahend_raw,			\
-		      sizeof ( subtrahend_raw ) );			\
-	DBG ( "Subtract:\n" );						\
-	DBG_HDA ( 0, &subtrahend_temp, sizeof ( subtrahend_temp ) );	\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_subtract ( &subtrahend_temp, &value_temp );		\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );	\
-									\
-	ok ( memcmp ( result_raw, expected_raw,				\
-		      sizeof ( result_raw ) ) == 0 );			\
+	static struct bigint_test subtrahend_test =			\
+		{ subtrahend_raw, sizeof ( subtrahend_raw ) };		\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_subtract_okx ( &subtrahend_test, &value_test,		\
+			      &expected_test, underflow,		\
+			      __FILE__, __LINE__ );			\
 	} while ( 0 )
 
 /**
- * Report result of big integer left rotation test
+ * Report result of big integer left shift test
  *
  * @v value		Big integer
  * @v expected		Big integer expected result
+ * @v bit		Expected bit shifted out
+ * @v file		Test code file
+ * @v line		Test code line
  */
-#define bigint_rol_ok( value, expected ) do {				\
+static void bigint_shl_okx ( struct bigint_test *value,
+			     struct bigint_test *expected, int bit,
+			     const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int size = bigint_required_size ( value->len );
+	unsigned int msb = ( 8 * value->len );
+	bigint_t ( size ) value_temp;
+	int out;
+
+	bigint_init ( &value_temp, value->raw, value->len );
+	DBG ( "Shift left 0x%s << 1", bigint_ntoa ( &value_temp ) );
+	out = bigint_shl ( &value_temp );
+	DBG ( " = 0x%s (%d)\n", bigint_ntoa ( &value_temp ), out );
+	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+	if ( sizeof ( result_raw ) < sizeof ( value_temp ) )
+		out += bigint_bit_is_set ( &value_temp, msb );
+	okx ( out == bit, file, line );
+}
+#define bigint_shl_ok( value, expected, bit ) do {			\
 	static const uint8_t value_raw[] = value;			\
 	static const uint8_t expected_raw[] = expected;			\
-	uint8_t result_raw[ sizeof ( expected_raw ) ];			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) value_temp;					\
-	{} /* Fix emacs alignment */					\
-									\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	DBG ( "Rotate left:\n" );					\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_rol ( &value_temp );					\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );	\
-									\
-	ok ( memcmp ( result_raw, expected_raw,				\
-		      sizeof ( result_raw ) ) == 0 );			\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_shl_okx ( &value_test, &expected_test, bit,		\
+			 __FILE__, __LINE__ );				\
 	} while ( 0 )
 
 /**
- * Report result of big integer right rotation test
+ * Report result of big integer right shift test
  *
  * @v value		Big integer
  * @v expected		Big integer expected result
+ * @v bit		Expected bit shifted out
+ * @v file		Test code file
+ * @v line		Test code line
  */
-#define bigint_ror_ok( value, expected ) do {				\
+static void bigint_shr_okx ( struct bigint_test *value,
+			     struct bigint_test *expected, int bit,
+			     const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int size = bigint_required_size ( value->len );
+	bigint_t ( size ) value_temp;
+	int out;
+
+	bigint_init ( &value_temp, value->raw, value->len );
+	DBG ( "Shift right 0x%s >> 1", bigint_ntoa ( &value_temp ) );
+	out = bigint_shr ( &value_temp );
+	DBG ( " = 0x%s (%d)\n", bigint_ntoa ( &value_temp ), out );
+	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+	okx ( out == bit, file, line );
+}
+#define bigint_shr_ok( value, expected, bit ) do {			\
 	static const uint8_t value_raw[] = value;			\
 	static const uint8_t expected_raw[] = expected;			\
-	uint8_t result_raw[ sizeof ( expected_raw ) ];			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) value_temp;					\
-	{} /* Fix emacs alignment */					\
-									\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	DBG ( "Rotate right:\n" );					\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_ror ( &value_temp );					\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bigint_done ( &value_temp, result_raw, sizeof ( result_raw ) );	\
-									\
-	ok ( memcmp ( result_raw, expected_raw,				\
-		      sizeof ( result_raw ) ) == 0 );			\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_shr_okx ( &value_test, &expected_test, bit,		\
+			 __FILE__, __LINE__ );				\
 	} while ( 0 )
 
 /**
@@ -346,21 +432,27 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  *
  * @v value		Big integer
  * @v expected		Expected result
+ * @v file		Test code file
+ * @v line		Test code line
  */
+static void bigint_is_zero_okx ( struct bigint_test *value, int expected,
+				 const char *file, unsigned int line ) {
+	unsigned int size = bigint_required_size ( value->len );
+	bigint_t ( size ) value_temp;
+	int is_zero;
+
+	bigint_init ( &value_temp, value->raw, value->len );
+	DBG ( "Zero comparison: 0x%s", bigint_ntoa ( &value_temp ) );
+	is_zero = bigint_is_zero ( &value_temp );
+	DBG ( " %s 0\n", ( is_zero ? "==" : "!=" ) );
+	okx ( ( !! is_zero ) == ( !! (expected) ), file, line );
+}
 #define bigint_is_zero_ok( value, expected ) do {			\
 	static const uint8_t value_raw[] = value;			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) value_temp;					\
-	int is_zero;							\
-	{} /* Fix emacs alignment */					\
-									\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	DBG ( "Zero comparison:\n" );					\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	is_zero = bigint_is_zero ( &value_temp );			\
-	DBG ( "...is %szero\n", ( is_zero ? "" : "not " ) );		\
-	ok ( ( !! is_zero ) == ( !! (expected) ) );			\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	bigint_is_zero_okx ( &value_test, expected,			\
+			     __FILE__, __LINE__ );			\
 	} while ( 0 )
 
 /**
@@ -369,29 +461,37 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  * @v value		Big integer
  * @v reference		Reference big integer
  * @v expected		Expected result
+ * @v file		Test code file
+ * @v line		Test code line
  */
+static void bigint_is_geq_okx ( struct bigint_test *value,
+				struct bigint_test *reference, int expected,
+				const char *file, unsigned int line ) {
+	unsigned int size = bigint_required_size ( value->len );
+	bigint_t ( size ) value_temp;
+	bigint_t ( size ) reference_temp;
+	int is_geq;
+
+	assert ( bigint_size ( &reference_temp ) ==
+		 bigint_size ( &value_temp ) );
+	bigint_init ( &value_temp, value->raw, value->len );
+	bigint_init ( &reference_temp, reference->raw, reference->len );
+	DBG ( "Greater-than-or-equal comparison: 0x%s",
+	      bigint_ntoa ( &value_temp ) );
+	is_geq = bigint_is_geq ( &value_temp, &reference_temp );
+	DBG ( " %s 0x%s\n", ( is_geq ? ">=" : "<" ),
+	      bigint_ntoa ( &reference_temp ) );
+	okx ( ( !! is_geq ) == ( !! (expected) ), file, line );
+}
 #define bigint_is_geq_ok( value, reference, expected ) do {		\
 	static const uint8_t value_raw[] = value;			\
 	static const uint8_t reference_raw[] = reference;		\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) value_temp;					\
-	bigint_t ( size ) reference_temp;				\
-	int is_geq;							\
-	{} /* Fix emacs alignment */					\
-									\
-	assert ( bigint_size ( &reference_temp ) ==			\
-		 bigint_size ( &value_temp ) );				\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	bigint_init ( &reference_temp, reference_raw,			\
-		      sizeof ( reference_raw ) );			\
-	DBG ( "Greater-than-or-equal comparison:\n" );			\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	DBG_HDA ( 0, &reference_temp, sizeof ( reference_temp ) );	\
-	is_geq = bigint_is_geq ( &value_temp, &reference_temp );	\
-	DBG ( "...is %sgreater than or equal\n",			\
-	      ( is_geq ? "" : "not " ) );				\
-	ok ( ( !! is_geq ) == ( !! (expected) ) );			\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	static struct bigint_test reference_test =			\
+		{ reference_raw, sizeof ( reference_raw ) };		\
+	bigint_is_geq_okx ( &value_test, &reference_test, expected,	\
+			    __FILE__, __LINE__ );			\
 	} while ( 0 )
 
 /**
@@ -400,22 +500,28 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  * @v value		Big integer
  * @v bit		Bit to test
  * @v expected		Expected result
+ * @v file		Test code file
+ * @v line		Test code line
  */
+static void bigint_bit_is_set_okx ( struct bigint_test *value,
+				    unsigned int bit, int expected,
+				    const char *file, unsigned int line ) {
+	unsigned int size = bigint_required_size ( value->len );
+	bigint_t ( size ) value_temp;
+	int bit_is_set;
+
+	bigint_init ( &value_temp, value->raw, value->len );
+	DBG ( "Bit set: 0x%s bit %d", bigint_ntoa ( &value_temp ), bit );
+	bit_is_set = bigint_bit_is_set ( &value_temp, bit );
+	DBG ( " is %sset\n", ( bit_is_set ? "" : "not " ) );
+	okx ( ( !! bit_is_set ) == ( !! (expected) ), file, line );
+}
 #define bigint_bit_is_set_ok( value, bit, expected ) do {		\
 	static const uint8_t value_raw[] = value;			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) value_temp;					\
-	int bit_is_set;							\
-	{} /* Fix emacs alignment */					\
-									\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	DBG ( "Bit set:\n" );						\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	bit_is_set = bigint_bit_is_set ( &value_temp, bit );		\
-	DBG ( "...bit %d is %sset\n", bit,				\
-	      ( bit_is_set ? "" : "not " ) );				\
-	ok ( ( !! bit_is_set ) == ( !! (expected) ) );			\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	bigint_bit_is_set_okx ( &value_test, bit, expected,		\
+				__FILE__, __LINE__ );			\
 	} while ( 0 )
 
 /**
@@ -423,21 +529,27 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  *
  * @v value		Big integer
  * @v expected		Expected result
+ * @v file		Test code file
+ * @v line		Test code line
  */
+static void bigint_max_set_bit_okx ( struct bigint_test *value, int expected,
+				     const char *file, unsigned int line ) {
+	unsigned int size = bigint_required_size ( value->len );
+	bigint_t ( size ) value_temp;
+	int max_set_bit;
+
+	bigint_init ( &value_temp, value->raw, value->len );
+	DBG ( "Maximum set bit: 0x%s", bigint_ntoa ( &value_temp ) );
+	max_set_bit = bigint_max_set_bit ( &value_temp );
+	DBG ( " MSB is bit %d\n", ( max_set_bit - 1 ) );
+	okx ( max_set_bit == expected, file, line );
+}
 #define bigint_max_set_bit_ok( value, expected ) do {			\
 	static const uint8_t value_raw[] = value;			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( value_raw ) );		\
-	bigint_t ( size ) value_temp;					\
-	int max_set_bit;						\
-	{} /* Fix emacs alignment */					\
-									\
-	bigint_init ( &value_temp, value_raw, sizeof ( value_raw ) );	\
-	DBG ( "Maximum set bit:\n" );					\
-	DBG_HDA ( 0, &value_temp, sizeof ( value_temp ) );		\
-	max_set_bit = bigint_max_set_bit ( &value_temp );		\
-	DBG ( "...maximum set bit is bit %d\n", ( max_set_bit - 1 ) );	\
-	ok ( max_set_bit == (expected) );				\
+	static struct bigint_test value_test =				\
+		{ value_raw, sizeof ( value_raw ) };			\
+	bigint_max_set_bit_okx ( &value_test, expected,			\
+				 __FILE__, __LINE__ );			\
 	} while ( 0 )
 
 /**
@@ -445,35 +557,46 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  *
  * @v first		Big integer to be conditionally swapped
  * @v second		Big integer to be conditionally swapped
+ * @v file		Test code file
+ * @v line		Test code line
  */
+static void bigint_swap_okx ( struct bigint_test *first,
+			      struct bigint_test *second,
+			      const char *file, unsigned int line ) {
+	uint8_t temp[ first->len ];
+	unsigned int size = bigint_required_size ( sizeof ( temp) );
+	bigint_t ( size ) first_temp;
+	bigint_t ( size ) second_temp;
+
+	assert ( first->len == sizeof ( temp ) );
+	assert ( second->len == sizeof ( temp ) );
+	bigint_init ( &first_temp, first->raw, first->len );
+	bigint_init ( &second_temp, second->raw, second->len );
+	bigint_swap ( &first_temp, &second_temp, 0 );
+	bigint_done ( &first_temp, temp, sizeof ( temp ) );
+	okx ( memcmp ( temp, first->raw, sizeof ( temp ) ) == 0, file, line );
+	bigint_done ( &second_temp, temp, sizeof ( temp ) );
+	okx ( memcmp ( temp, second->raw, sizeof ( temp ) ) == 0, file, line );
+	bigint_swap ( &first_temp, &second_temp, 1 );
+	bigint_done ( &first_temp, temp, sizeof ( temp ) );
+	okx ( memcmp ( temp, second->raw, sizeof ( temp ) ) == 0, file, line );
+	bigint_done ( &second_temp, temp, sizeof ( temp ) );
+	okx ( memcmp ( temp, first->raw, sizeof ( temp ) ) == 0, file, line );
+	bigint_swap ( &first_temp, &second_temp, 1 );
+	bigint_done ( &first_temp, temp, sizeof ( temp ) );
+	okx ( memcmp ( temp, first->raw, sizeof ( temp ) ) == 0, file, line );
+	bigint_done ( &second_temp, temp, sizeof ( temp ) );
+	okx ( memcmp ( temp, second->raw, sizeof ( temp ) ) == 0, file, line );
+}
 #define bigint_swap_ok( first, second ) do {				\
 	static const uint8_t first_raw[] = first;			\
 	static const uint8_t second_raw[] = second;			\
-	uint8_t temp[ sizeof ( first_raw ) ];				\
-	unsigned int size = bigint_required_size ( sizeof ( temp) );	\
-	bigint_t ( size ) first_temp;					\
-	bigint_t ( size ) second_temp;					\
-	{} /* Fix emacs alignment */					\
-									\
-	assert ( sizeof ( first_raw ) == sizeof ( temp ) );		\
-	assert ( sizeof ( second_raw ) == sizeof ( temp ) );		\
-	bigint_init ( &first_temp, first_raw, sizeof ( first_raw ) );	\
-	bigint_init ( &second_temp, second_raw, sizeof ( second_raw ) );\
-	bigint_swap ( &first_temp, &second_temp, 0 );			\
-	bigint_done ( &first_temp, temp, sizeof ( temp ) );		\
-	ok ( memcmp ( temp, first_raw, sizeof ( temp ) ) == 0 );	\
-	bigint_done ( &second_temp, temp, sizeof ( temp ) );		\
-	ok ( memcmp ( temp, second_raw, sizeof ( temp ) ) == 0 );	\
-	bigint_swap ( &first_temp, &second_temp, 1 );			\
-	bigint_done ( &first_temp, temp, sizeof ( temp ) );		\
-	ok ( memcmp ( temp, second_raw, sizeof ( temp ) ) == 0 );	\
-	bigint_done ( &second_temp, temp, sizeof ( temp ) );		\
-	ok ( memcmp ( temp, first_raw, sizeof ( temp ) ) == 0 );	\
-	bigint_swap ( &first_temp, &second_temp, 1 );			\
-	bigint_done ( &first_temp, temp, sizeof ( temp ) );		\
-	ok ( memcmp ( temp, first_raw, sizeof ( temp ) ) == 0 );	\
-	bigint_done ( &second_temp, temp, sizeof ( temp ) );		\
-	ok ( memcmp ( temp, second_raw, sizeof ( temp ) ) == 0 );	\
+	static struct bigint_test first_test =				\
+		{ first_raw, sizeof ( first_raw ) };			\
+	static struct bigint_test second_test =				\
+		{ second_raw, sizeof ( second_raw ) };			\
+	bigint_swap_okx ( &first_test, &second_test,			\
+			  __FILE__, __LINE__ );				\
 	} while ( 0 )
 
 /**
@@ -482,88 +605,175 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  * @v multiplicand	Big integer to be multiplied
  * @v multiplier	Big integer to be multiplied
  * @v expected		Big integer expected result
+ * @v file		Test code file
+ * @v line		Test code line
  */
+static void bigint_multiply_okx ( struct bigint_test *multiplicand,
+				  struct bigint_test *multiplier,
+				  struct bigint_test *expected,
+				  const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int multiplicand_size =
+		bigint_required_size ( multiplicand->len );
+	unsigned int multiplier_size =
+		bigint_required_size ( multiplier->len );
+	bigint_t ( multiplicand_size ) multiplicand_temp;
+	bigint_t ( multiplier_size ) multiplier_temp;
+	bigint_t ( multiplicand_size + multiplier_size ) result_temp;
+
+	assert ( bigint_size ( &result_temp ) ==
+		 ( bigint_size ( &multiplicand_temp ) +
+		   bigint_size ( &multiplier_temp ) ) );
+	bigint_init ( &multiplicand_temp, multiplicand->raw,
+		      multiplicand->len );
+	bigint_init ( &multiplier_temp, multiplier->raw, multiplier->len );
+	DBG ( "Multiply 0x%s", bigint_ntoa ( &multiplicand_temp ) );
+	DBG ( " * 0x%s", bigint_ntoa ( &multiplier_temp ) );
+	bigint_multiply ( &multiplicand_temp, &multiplier_temp, &result_temp );
+	DBG ( " = 0x%s\n", bigint_ntoa ( &result_temp ) );
+	bigint_done ( &result_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+}
 #define bigint_multiply_ok( multiplicand, multiplier, expected ) do {	\
 	static const uint8_t multiplicand_raw[] = multiplicand;		\
 	static const uint8_t multiplier_raw[] = multiplier;		\
 	static const uint8_t expected_raw[] = expected;			\
-	uint8_t result_raw[ sizeof ( expected_raw ) ];			\
-	unsigned int multiplicand_size =				\
-		bigint_required_size ( sizeof ( multiplicand_raw ) );	\
-	unsigned int multiplier_size =					\
-		bigint_required_size ( sizeof ( multiplier_raw ) );	\
-	bigint_t ( multiplicand_size ) multiplicand_temp;		\
-	bigint_t ( multiplier_size ) multiplier_temp;			\
-	bigint_t ( multiplicand_size + multiplier_size ) result_temp;	\
-	{} /* Fix emacs alignment */					\
-									\
-	assert ( bigint_size ( &result_temp ) ==			\
-		 ( bigint_size ( &multiplicand_temp ) +			\
-		   bigint_size ( &multiplier_temp ) ) );		\
-	bigint_init ( &multiplicand_temp, multiplicand_raw,		\
-		      sizeof ( multiplicand_raw ) );			\
-	bigint_init ( &multiplier_temp, multiplier_raw,			\
-		      sizeof ( multiplier_raw ) );			\
-	DBG ( "Multiply:\n" );						\
-	DBG_HDA ( 0, &multiplicand_temp, sizeof ( multiplicand_temp ) );\
-	DBG_HDA ( 0, &multiplier_temp, sizeof ( multiplier_temp ) );	\
-	bigint_multiply ( &multiplicand_temp, &multiplier_temp,		\
-			  &result_temp );				\
-	DBG_HDA ( 0, &result_temp, sizeof ( result_temp ) );		\
-	bigint_done ( &result_temp, result_raw, sizeof ( result_raw ) );\
-									\
-	ok ( memcmp ( result_raw, expected_raw,				\
-		      sizeof ( result_raw ) ) == 0 );			\
+	static struct bigint_test multiplicand_test =			\
+		{ multiplicand_raw, sizeof ( multiplicand_raw ) };	\
+	static struct bigint_test multiplier_test =			\
+		{ multiplier_raw, sizeof ( multiplier_raw ) };		\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_multiply_okx ( &multiplicand_test, &multiplier_test,	\
+			      &expected_test, __FILE__, __LINE__ );	\
 	} while ( 0 )
 
 /**
- * Report result of big integer modular multiplication test
+ * Report result of big integer modular direct reduction of R^2 test
  *
- * @v multiplicand	Big integer to be multiplied
- * @v multiplier	Big integer to be multiplied
  * @v modulus		Big integer modulus
  * @v expected		Big integer expected result
+ * @v file		Test code file
+ * @v line		Test code line
  */
-#define bigint_mod_multiply_ok( multiplicand, multiplier, modulus,	\
-				expected ) do {				\
-	static const uint8_t multiplicand_raw[] = multiplicand;		\
-	static const uint8_t multiplier_raw[] = multiplier;		\
+static void bigint_reduce_okx ( struct bigint_test *modulus,
+				struct bigint_test *expected,
+				const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int size = bigint_required_size ( modulus->len );
+	bigint_t ( size ) modulus_temp;
+	bigint_t ( size ) result_temp;
+
+	assert ( bigint_size ( &modulus_temp ) ==
+		 bigint_size ( &result_temp ) );
+	assert ( sizeof ( result_temp ) == sizeof ( result_raw ) );
+	bigint_init ( &modulus_temp, modulus->raw, modulus->len );
+	DBG ( "Modular reduce (2^%zd)", ( 2 * 8 * sizeof ( modulus_temp ) ) );
+	bigint_reduce ( &modulus_temp, &result_temp );
+	DBG ( " = 0x%s", bigint_ntoa ( &result_temp ) );
+	DBG ( " (mod 0x%s)\n", bigint_ntoa ( &modulus_temp ) );
+
+	bigint_done ( &result_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+}
+#define bigint_reduce_ok( modulus, expected ) do {			\
 	static const uint8_t modulus_raw[] = modulus;			\
 	static const uint8_t expected_raw[] = expected;			\
-	uint8_t result_raw[ sizeof ( expected_raw ) ];			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( multiplicand_raw ) );	\
-	bigint_t ( size ) multiplicand_temp;				\
-	bigint_t ( size ) multiplier_temp;				\
-	bigint_t ( size ) modulus_temp;					\
-	bigint_t ( size ) result_temp;					\
-	size_t tmp_len = bigint_mod_multiply_tmp_len ( &modulus_temp ); \
-	uint8_t tmp[tmp_len];						\
-	{} /* Fix emacs alignment */					\
-									\
-	assert ( bigint_size ( &multiplier_temp ) ==			\
-		 bigint_size ( &multiplicand_temp ) );			\
-	assert ( bigint_size ( &multiplier_temp ) ==			\
-		 bigint_size ( &modulus_temp ) );			\
-	assert ( bigint_size ( &multiplier_temp ) ==			\
-		 bigint_size ( &result_temp ) );			\
-	bigint_init ( &multiplicand_temp, multiplicand_raw,		\
-		      sizeof ( multiplicand_raw ) );			\
-	bigint_init ( &multiplier_temp, multiplier_raw,			\
-		      sizeof ( multiplier_raw ) );			\
-	bigint_init ( &modulus_temp, modulus_raw,			\
-		      sizeof ( modulus_raw ) );				\
-	DBG ( "Modular multiply:\n" );					\
-	DBG_HDA ( 0, &multiplicand_temp, sizeof ( multiplicand_temp ) );\
-	DBG_HDA ( 0, &multiplier_temp, sizeof ( multiplier_temp ) );	\
-	DBG_HDA ( 0, &modulus_temp, sizeof ( modulus_temp ) );		\
-	bigint_mod_multiply ( &multiplicand_temp, &multiplier_temp,	\
-			      &modulus_temp, &result_temp, tmp );	\
-	DBG_HDA ( 0, &result_temp, sizeof ( result_temp ) );		\
-	bigint_done ( &result_temp, result_raw, sizeof ( result_raw ) );\
-									\
-	ok ( memcmp ( result_raw, expected_raw,				\
-		      sizeof ( result_raw ) ) == 0 );			\
+	static struct bigint_test modulus_test =			\
+		{ modulus_raw, sizeof ( modulus_raw ) };		\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_reduce_okx ( &modulus_test, &expected_test,		\
+			    __FILE__, __LINE__ );			\
+	} while ( 0 )
+
+/**
+ * Report result of big integer modular inversion test
+ *
+ * @v invertend		Big integer to be inverted
+ * @v expected		Big integer expected result
+ * @v file		Test code file
+ * @v line		Test code line
+ */
+static void bigint_mod_invert_okx ( struct bigint_test *invertend,
+				    struct bigint_test *expected,
+				    const char *file, unsigned int line ) {
+	uint8_t inverse_raw[ expected->len ];
+	unsigned int invertend_size = bigint_required_size ( invertend->len );
+	unsigned int inverse_size =
+		bigint_required_size ( sizeof ( inverse_raw ) );
+	bigint_t ( invertend_size ) invertend_temp;
+	bigint_t ( inverse_size ) inverse_temp;
+
+	bigint_init ( &invertend_temp, invertend->raw, invertend->len );
+	DBG ( "Modular invert: 0x%s", bigint_ntoa ( &invertend_temp ) );
+	bigint_mod_invert ( &invertend_temp, &inverse_temp );
+	DBG ( " * 0x%s = 1 (mod 2^%zd)\n", bigint_ntoa ( &inverse_temp ),
+	      ( 8 * sizeof ( inverse_raw ) ) );
+	bigint_done ( &inverse_temp, inverse_raw, sizeof ( inverse_raw ) );
+
+	okx ( memcmp ( inverse_raw, expected->raw,
+		       sizeof ( inverse_raw ) ) == 0, file, line );
+}
+#define bigint_mod_invert_ok( invertend, expected ) do {		\
+	static const uint8_t invertend_raw[] = invertend;		\
+	static const uint8_t expected_raw[] = expected;			\
+	static struct bigint_test invertend_test =			\
+		{ invertend_raw, sizeof ( invertend_raw ) };		\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_mod_invert_okx ( &invertend_test, &expected_test,	\
+				__FILE__, __LINE__ );			\
+	} while ( 0 )
+
+/**
+ * Report result of Montgomery reduction (REDC) test
+ *
+ * @v modulus		Big integer modulus
+ * @v mont		Big integer Montgomery product
+ * @v expected		Big integer expected result
+ * @v file		Test code file
+ * @v line		Test code line
+ */
+static void bigint_montgomery_okx ( struct bigint_test *modulus,
+				    struct bigint_test *mont,
+				    struct bigint_test *expected,
+				    const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int size = bigint_required_size ( modulus->len );
+	bigint_t ( size ) modulus_temp;
+	bigint_t ( 2 * size ) mont_temp;
+	bigint_t ( size ) result_temp;
+
+	assert ( ( modulus->len % sizeof ( bigint_element_t ) ) == 0 );
+	bigint_init ( &modulus_temp, modulus->raw, modulus->len );
+	bigint_init ( &mont_temp, mont->raw, mont->len );
+	DBG ( "Montgomery 0x%s", bigint_ntoa ( &mont_temp ) );
+	bigint_montgomery ( &modulus_temp, &mont_temp, &result_temp );
+	DBG ( " = 0x%s * (2 ^ %zd)", bigint_ntoa ( &result_temp ),
+	      ( 8 * sizeof ( modulus_temp ) ) );
+	DBG ( " (mod 0x%s)\n", bigint_ntoa ( &modulus_temp ) );
+	bigint_done ( &result_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+}
+#define bigint_montgomery_ok( modulus, mont, expected ) do {		\
+	static const uint8_t modulus_raw[] = modulus;			\
+	static const uint8_t mont_raw[] = mont;				\
+	static const uint8_t expected_raw[] = expected;			\
+	static struct bigint_test modulus_test =			\
+		{ modulus_raw, sizeof ( modulus_raw ) };		\
+	static struct bigint_test mont_test =				\
+		{ mont_raw, sizeof ( mont_raw ) };			\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_montgomery_okx ( &modulus_test, &mont_test,		\
+				&expected_test, __FILE__, __LINE__ );	\
 	} while ( 0 )
 
 /**
@@ -573,46 +783,56 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  * @v modulus		Big integer modulus
  * @v exponent		Big integer exponent
  * @v expected		Big integer expected result
+ * @v file		Test code file
+ * @v line		Test code line
  */
+static void bigint_mod_exp_okx ( struct bigint_test *base,
+				 struct bigint_test *modulus,
+				 struct bigint_test *exponent,
+				 struct bigint_test *expected,
+				 const char *file, unsigned int line ) {
+	uint8_t result_raw[ expected->len ];
+	unsigned int size = bigint_required_size ( base->len );
+	unsigned int exponent_size = bigint_required_size ( exponent->len );
+	bigint_t ( size ) base_temp;
+	bigint_t ( size ) modulus_temp;
+	bigint_t ( exponent_size ) exponent_temp;
+	bigint_t ( size ) result_temp;
+	size_t tmp_len = bigint_mod_exp_tmp_len ( &modulus_temp );
+	uint8_t tmp[tmp_len];
+
+	assert ( bigint_size ( &modulus_temp ) == bigint_size ( &base_temp ) );
+	assert ( bigint_size ( &modulus_temp ) ==
+		 bigint_size ( &result_temp ) );
+	bigint_init ( &base_temp, base->raw, base->len );
+	bigint_init ( &modulus_temp, modulus->raw, modulus->len );
+	bigint_init ( &exponent_temp, exponent->raw, exponent->len );
+	DBG ( "Modular exponentiation: 0x%s", bigint_ntoa ( &base_temp ) );
+	DBG ( " ^ 0x%s", bigint_ntoa ( &exponent_temp ) );
+	bigint_mod_exp ( &base_temp, &modulus_temp, &exponent_temp,
+			 &result_temp, tmp );
+	DBG ( " = 0x%s", bigint_ntoa ( &result_temp ) );
+	DBG ( " (mod 0x%s)\n", bigint_ntoa ( &modulus_temp ) );
+	bigint_done ( &result_temp, result_raw, sizeof ( result_raw ) );
+
+	okx ( memcmp ( result_raw, expected->raw, sizeof ( result_raw ) ) == 0,
+	      file, line );
+}
 #define bigint_mod_exp_ok( base, modulus, exponent, expected ) do {	\
 	static const uint8_t base_raw[] = base;				\
 	static const uint8_t modulus_raw[] = modulus;			\
 	static const uint8_t exponent_raw[] = exponent;			\
 	static const uint8_t expected_raw[] = expected;			\
-	uint8_t result_raw[ sizeof ( expected_raw ) ];			\
-	unsigned int size =						\
-		bigint_required_size ( sizeof ( base_raw ) );		\
-	unsigned int exponent_size =					\
-		bigint_required_size ( sizeof ( exponent_raw ) );	\
-	bigint_t ( size ) base_temp;					\
-	bigint_t ( size ) modulus_temp;					\
-	bigint_t ( exponent_size ) exponent_temp;			\
-	bigint_t ( size ) result_temp;					\
-	size_t tmp_len = bigint_mod_exp_tmp_len ( &modulus_temp,	\
-						  &exponent_temp );	\
-	uint8_t tmp[tmp_len];						\
-	{} /* Fix emacs alignment */					\
-									\
-	assert ( bigint_size ( &modulus_temp ) ==			\
-		 bigint_size ( &base_temp ) );				\
-	assert ( bigint_size ( &modulus_temp ) ==			\
-		 bigint_size ( &result_temp ) );			\
-	bigint_init ( &base_temp, base_raw, sizeof ( base_raw ) );	\
-	bigint_init ( &modulus_temp, modulus_raw,			\
-		      sizeof ( modulus_raw ) );				\
-	bigint_init ( &exponent_temp, exponent_raw,			\
-		      sizeof ( exponent_raw ) );			\
-	DBG ( "Modular exponentiation:\n" );				\
-	DBG_HDA ( 0, &base_temp, sizeof ( base_temp ) );		\
-	DBG_HDA ( 0, &modulus_temp, sizeof ( modulus_temp ) );		\
-	DBG_HDA ( 0, &exponent_temp, sizeof ( exponent_temp ) );	\
-	bigint_mod_exp ( &base_temp, &modulus_temp, &exponent_temp,	\
-			 &result_temp, tmp );				\
-	DBG_HDA ( 0, &result_temp, sizeof ( result_temp ) );		\
-	bigint_done ( &result_temp, result_raw, sizeof ( result_raw ) );\
-									\
-	ok ( memcmp ( result_raw, expected_raw,				\
-		      sizeof ( result_raw ) ) == 0 );			\
+	static struct bigint_test base_test =				\
+		{ base_raw, sizeof ( base_raw ) };			\
+	static struct bigint_test modulus_test =			\
+		{ modulus_raw, sizeof ( modulus_raw ) };		\
+	static struct bigint_test exponent_test =			\
+		{ exponent_raw, sizeof ( exponent_raw ) };		\
+	static struct bigint_test expected_test =			\
+		{ expected_raw, sizeof ( expected_raw ) };		\
+	bigint_mod_exp_okx ( &base_test, &modulus_test, &exponent_test,	\
+			     &expected_test, __FILE__, __LINE__ );	\
 	} while ( 0 )
 
 /**
@@ -621,18 +841,31 @@ void bigint_mod_exp_sample ( const bigint_element_t *base0,
  */
 static void bigint_test_exec ( void ) {
 
+	bigint_add_ok ( BIGINT(), BIGINT(), BIGINT(), 0 );
 	bigint_add_ok ( BIGINT ( 0x8a ),
 			BIGINT ( 0x43 ),
-			BIGINT ( 0xcd ) );
+			BIGINT ( 0xcd ), 0 );
 	bigint_add_ok ( BIGINT ( 0xc5, 0x7b ),
 			BIGINT ( 0xd6, 0xb1 ),
-			BIGINT ( 0x9c, 0x2c ) );
+			BIGINT ( 0x9c, 0x2c ), 1 );
 	bigint_add_ok ( BIGINT ( 0xf9, 0xd9, 0xdc ),
 			BIGINT ( 0x6d, 0x4b, 0xca ),
-			BIGINT ( 0x67, 0x25, 0xa6 ) );
+			BIGINT ( 0x67, 0x25, 0xa6 ), 1 );
 	bigint_add_ok ( BIGINT ( 0xdd, 0xc2, 0x20, 0x5f ),
 			BIGINT ( 0x80, 0x32, 0xc4, 0xb0 ),
-			BIGINT ( 0x5d, 0xf4, 0xe5, 0x0f ) );
+			BIGINT ( 0x5d, 0xf4, 0xe5, 0x0f ), 1 );
+	bigint_add_ok ( BIGINT ( 0x5e, 0x46, 0x4d, 0xc6, 0xa2, 0x7d, 0x45,
+				 0xc3 ),
+			BIGINT ( 0xd6, 0xc0, 0xd7, 0xd4, 0xf6, 0x04, 0x47,
+				 0xed ),
+			BIGINT ( 0x35, 0x07, 0x25, 0x9b, 0x98, 0x81, 0x8d,
+				 0xb0 ), 1 );
+	bigint_add_ok ( BIGINT ( 0x0e, 0x46, 0x4d, 0xc6, 0xa2, 0x7d, 0x45,
+				 0xc3 ),
+			BIGINT ( 0xd6, 0xc0, 0xd7, 0xd4, 0xf6, 0x04, 0x47,
+				 0xed ),
+			BIGINT ( 0xe5, 0x07, 0x25, 0x9b, 0x98, 0x81, 0x8d,
+				 0xb0 ), 0 );
 	bigint_add_ok ( BIGINT ( 0x01, 0xed, 0x45, 0x4b, 0x41, 0xeb, 0x4c,
 				 0x2e, 0x53, 0x07, 0x15, 0x51, 0x56, 0x47,
 				 0x29, 0xfc, 0x9c, 0xbd, 0xbd, 0xfb, 0x1b,
@@ -644,7 +877,7 @@ static void bigint_test_exec ( void ) {
 			BIGINT ( 0x75, 0xdb, 0x41, 0x80, 0x73, 0x0e, 0x23,
 				 0xe0, 0x3d, 0x98, 0x70, 0x36, 0x11, 0x03,
 				 0xcb, 0x35, 0x0f, 0x6c, 0x09, 0x17, 0xdc,
-				 0xd6, 0xd0 ) );
+				 0xd6, 0xd0 ), 0 );
 	bigint_add_ok ( BIGINT ( 0x06, 0x8e, 0xd6, 0x18, 0xbb, 0x4b, 0x0c,
 				 0xc5, 0x85, 0xde, 0xee, 0x9b, 0x3f, 0x65,
 				 0x63, 0x86, 0xf5, 0x5a, 0x9f, 0xa2, 0xd7,
@@ -701,19 +934,20 @@ static void bigint_test_exec ( void ) {
 				 0x68, 0x76, 0xf5, 0x20, 0xa1, 0xa8, 0x1a,
 				 0x9f, 0x60, 0x58, 0xff, 0xb6, 0x76, 0x45,
 				 0xe6, 0xed, 0x61, 0x8d, 0xe6, 0xc0, 0x72,
-				 0x1c, 0x07 ) );
+				 0x1c, 0x07 ), 0 );
+	bigint_subtract_ok ( BIGINT(), BIGINT(), BIGINT(), 0 );
 	bigint_subtract_ok ( BIGINT ( 0x83 ),
 			     BIGINT ( 0x50 ),
-			     BIGINT ( 0xcd ) );
+			     BIGINT ( 0xcd ), 1 );
 	bigint_subtract_ok ( BIGINT ( 0x2c, 0x7c ),
 			     BIGINT ( 0x49, 0x0e ),
-			     BIGINT ( 0x1c, 0x92 ) );
+			     BIGINT ( 0x1c, 0x92 ), 0 );
 	bigint_subtract_ok ( BIGINT ( 0x9c, 0x30, 0xbf ),
 			     BIGINT ( 0xde, 0x4e, 0x07 ),
-			     BIGINT ( 0x42, 0x1d, 0x48 ) );
+			     BIGINT ( 0x42, 0x1d, 0x48 ), 0 );
 	bigint_subtract_ok ( BIGINT ( 0xbb, 0x77, 0x32, 0x5a ),
 			     BIGINT ( 0x5a, 0xd5, 0xfe, 0x28 ),
-			     BIGINT ( 0x9f, 0x5e, 0xcb, 0xce ) );
+			     BIGINT ( 0x9f, 0x5e, 0xcb, 0xce ), 1 );
 	bigint_subtract_ok ( BIGINT ( 0x00, 0x00, 0xff, 0xff, 0xff, 0xff,
 				      0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 				      0xff, 0xff, 0xff, 0xff, 0xff, 0xff ),
@@ -722,7 +956,7 @@ static void bigint_test_exec ( void ) {
 				      0x00, 0x00, 0x00, 0x00, 0x00, 0x2a ),
 			     BIGINT ( 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
 				      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-				      0x00, 0x00, 0x00, 0x00, 0x00, 0x2b ) );
+				      0x00, 0x00, 0x00, 0x00, 0x00, 0x2b ), 1 );
 	bigint_subtract_ok ( BIGINT ( 0x7b, 0xaa, 0x16, 0xcf, 0x15, 0x87,
 				      0xe0, 0x4f, 0x2c, 0xa3, 0xec, 0x2f,
 				      0x46, 0xfb, 0x83, 0xc6, 0xe0, 0xee,
@@ -734,7 +968,7 @@ static void bigint_test_exec ( void ) {
 			     BIGINT ( 0xca, 0xab, 0x9f, 0x54, 0x4e, 0x48,
 				      0x75, 0x8c, 0x63, 0x28, 0x69, 0x78,
 				      0xe8, 0x8a, 0x3d, 0xd8, 0x4b, 0x24,
-				      0xb8, 0xa4, 0x71, 0x6d, 0x6b ) );
+				      0xb8, 0xa4, 0x71, 0x6d, 0x6b ), 1 );
 	bigint_subtract_ok ( BIGINT ( 0x5b, 0x06, 0x77, 0x7b, 0xfd, 0x34,
 				      0x5f, 0x0f, 0xd9, 0xbd, 0x8e, 0x5d,
 				      0xc8, 0x4a, 0x70, 0x95, 0x1b, 0xb6,
@@ -800,24 +1034,37 @@ static void bigint_test_exec ( void ) {
 				      0x29, 0x8c, 0x43, 0x9f, 0xf0, 0x9d,
 				      0xda, 0xc8, 0x8c, 0x71, 0x86, 0x97,
 				      0x7f, 0xcb, 0x94, 0x31, 0x1d, 0xbc,
-				      0x44, 0x1a ) );
-	bigint_rol_ok ( BIGINT ( 0xe0 ),
-			BIGINT ( 0xc0 ) );
-	bigint_rol_ok ( BIGINT ( 0x43, 0x1d ),
-			BIGINT ( 0x86, 0x3a ) );
-	bigint_rol_ok ( BIGINT ( 0xac, 0xed, 0x9b ),
-			BIGINT ( 0x59, 0xdb, 0x36 ) );
-	bigint_rol_ok ( BIGINT ( 0x2c, 0xe8, 0x3a, 0x22 ),
-			BIGINT ( 0x59, 0xd0, 0x74, 0x44 ) );
-	bigint_rol_ok ( BIGINT ( 0x4e, 0x88, 0x4a, 0x05, 0x5e, 0x10, 0xee,
+				      0x44, 0x1a ), 0 );
+	bigint_shl_ok ( BIGINT(), BIGINT(), 0 );
+	bigint_shl_ok ( BIGINT ( 0xe0 ),
+			BIGINT ( 0xc0 ), 1 );
+	bigint_shl_ok ( BIGINT ( 0x43, 0x1d ),
+			BIGINT ( 0x86, 0x3a ), 0 );
+	bigint_shl_ok ( BIGINT ( 0xac, 0xed, 0x9b ),
+			BIGINT ( 0x59, 0xdb, 0x36 ), 1 );
+	bigint_shl_ok ( BIGINT ( 0x2c, 0xe8, 0x3a, 0x22 ),
+			BIGINT ( 0x59, 0xd0, 0x74, 0x44 ), 0 );
+	bigint_shl_ok ( BIGINT ( 0x4e, 0x88, 0x4a, 0x05, 0x5e, 0x10, 0xee,
 				 0x5b, 0xc6, 0x40, 0x0e, 0x03, 0xd7, 0x0d,
 				 0x28, 0xa5, 0x55, 0xb2, 0x50, 0xef, 0x69,
 				 0xd1, 0x1d ),
 			BIGINT ( 0x9d, 0x10, 0x94, 0x0a, 0xbc, 0x21, 0xdc,
 				 0xb7, 0x8c, 0x80, 0x1c, 0x07, 0xae, 0x1a,
 				 0x51, 0x4a, 0xab, 0x64, 0xa1, 0xde, 0xd3,
-				 0xa2, 0x3a ) );
-	bigint_rol_ok ( BIGINT ( 0x07, 0x62, 0x78, 0x70, 0x2e, 0xd4, 0x41,
+				 0xa2, 0x3a ), 0 );
+	bigint_shl_ok ( BIGINT ( 0x84, 0x56, 0xaa, 0xb4, 0x23, 0xd4, 0x4e,
+				 0xea, 0x92, 0x34, 0x61, 0x11, 0x3e, 0x38,
+				 0x31, 0x8b ),
+			BIGINT ( 0x08, 0xad, 0x55, 0x68, 0x47, 0xa8, 0x9d,
+				 0xd5, 0x24, 0x68, 0xc2, 0x22, 0x7c, 0x70,
+				 0x63, 0x16 ), 1 );
+	bigint_shl_ok ( BIGINT ( 0x4a, 0x2b, 0x6b, 0x7c, 0xbf, 0x8a, 0x43,
+				 0x71, 0x96, 0xd6, 0x2f, 0x14, 0xa0, 0x2a,
+				 0xf8, 0x15 ),
+			BIGINT ( 0x94, 0x56, 0xd6, 0xf9, 0x7f, 0x14, 0x86,
+				 0xe3, 0x2d, 0xac, 0x5e, 0x29, 0x40, 0x55,
+				 0xf0, 0x2a ), 0 );
+	bigint_shl_ok ( BIGINT ( 0x07, 0x62, 0x78, 0x70, 0x2e, 0xd4, 0x41,
 				 0xaa, 0x9b, 0x50, 0xb1, 0x9a, 0x71, 0xf5,
 				 0x1c, 0x2f, 0xe7, 0x0d, 0xf1, 0x46, 0x57,
 				 0x04, 0x99, 0x78, 0x4e, 0x84, 0x78, 0xba,
@@ -854,24 +1101,37 @@ static void bigint_test_exec ( void ) {
 				 0x10, 0xee, 0x09, 0xea, 0x09, 0x9a, 0xd6,
 				 0x49, 0x7c, 0x1e, 0xdb, 0xc7, 0x65, 0xa6,
 				 0x0e, 0xd1, 0xd2, 0x00, 0xb3, 0x41, 0xc9,
-				 0x3c, 0xbc ) );
-	bigint_ror_ok ( BIGINT ( 0x8f ),
-			BIGINT ( 0x47 ) );
-	bigint_ror_ok ( BIGINT ( 0xaa, 0x1d ),
-			BIGINT ( 0x55, 0x0e ) );
-	bigint_ror_ok ( BIGINT ( 0xf0, 0xbd, 0x68 ),
-			BIGINT ( 0x78, 0x5e, 0xb4 ) );
-	bigint_ror_ok ( BIGINT ( 0x33, 0xa0, 0x3d, 0x95 ),
-			BIGINT ( 0x19, 0xd0, 0x1e, 0xca ) );
-	bigint_ror_ok ( BIGINT ( 0xa1, 0xf4, 0xb9, 0x64, 0x91, 0x99, 0xa1,
+				 0x3c, 0xbc ), 0 );
+	bigint_shr_ok ( BIGINT(), BIGINT(), 0 );
+	bigint_shr_ok ( BIGINT ( 0x8f ),
+			BIGINT ( 0x47 ), 1 );
+	bigint_shr_ok ( BIGINT ( 0xaa, 0x1d ),
+			BIGINT ( 0x55, 0x0e ), 1 );
+	bigint_shr_ok ( BIGINT ( 0xf0, 0xbd, 0x68 ),
+			BIGINT ( 0x78, 0x5e, 0xb4 ), 0 );
+	bigint_shr_ok ( BIGINT ( 0x33, 0xa0, 0x3d, 0x95 ),
+			BIGINT ( 0x19, 0xd0, 0x1e, 0xca ), 1 );
+	bigint_shr_ok ( BIGINT ( 0xa1, 0xf4, 0xb9, 0x64, 0x91, 0x99, 0xa1,
 				 0xf4, 0xae, 0xeb, 0x71, 0x97, 0x1b, 0x71,
 				 0x09, 0x38, 0x3f, 0x8f, 0xc5, 0x3a, 0xb9,
 				 0x75, 0x94 ),
 			BIGINT ( 0x50, 0xfa, 0x5c, 0xb2, 0x48, 0xcc, 0xd0,
 				 0xfa, 0x57, 0x75, 0xb8, 0xcb, 0x8d, 0xb8,
 				 0x84, 0x9c, 0x1f, 0xc7, 0xe2, 0x9d, 0x5c,
-				 0xba, 0xca ) );
-	bigint_ror_ok ( BIGINT ( 0xc0, 0xb3, 0x78, 0x46, 0x69, 0x6e, 0x35,
+				 0xba, 0xca ), 0 );
+	bigint_shr_ok ( BIGINT ( 0xa4, 0x19, 0xbb, 0x93, 0x0b, 0x3f, 0x47,
+				 0x5b, 0xb4, 0xb5, 0x7d, 0x75, 0x42, 0x22,
+				 0xcc, 0xdf ),
+			BIGINT ( 0x52, 0x0c, 0xdd, 0xc9, 0x85, 0x9f, 0xa3,
+				 0xad, 0xda, 0x5a, 0xbe, 0xba, 0xa1, 0x11,
+				 0x66, 0x6f ), 1 );
+	bigint_shr_ok ( BIGINT ( 0x27, 0x7e, 0x8f, 0x60, 0x40, 0x93, 0x43,
+				 0xd6, 0x89, 0x3e, 0x40, 0x61, 0x9a, 0x04,
+				 0x4c, 0x02 ),
+			BIGINT ( 0x13, 0xbf, 0x47, 0xb0, 0x20, 0x49, 0xa1,
+				 0xeb, 0x44, 0x9f, 0x20, 0x30, 0xcd, 0x02,
+				 0x26, 0x01 ), 0 );
+	bigint_shr_ok ( BIGINT ( 0xc0, 0xb3, 0x78, 0x46, 0x69, 0x6e, 0x35,
 				 0x94, 0xed, 0x28, 0xdc, 0xfd, 0xf6, 0xdb,
 				 0x2d, 0x24, 0xcb, 0xa4, 0x6f, 0x0e, 0x58,
 				 0x89, 0x04, 0xec, 0xc8, 0x0c, 0x2d, 0xb3,
@@ -908,7 +1168,8 @@ static void bigint_test_exec ( void ) {
 				 0x10, 0x64, 0x55, 0x07, 0xec, 0xa8, 0xc7,
 				 0x46, 0xa8, 0x94, 0xb0, 0xf7, 0xa4, 0x57,
 				 0x1f, 0x72, 0x88, 0x5f, 0xed, 0x4d, 0xc9,
-				 0x59, 0xbb ) );
+				 0x59, 0xbb ), 1 );
+	bigint_is_zero_ok ( BIGINT(), 1 );
 	bigint_is_zero_ok ( BIGINT ( 0x9b ),
 			    0 );
 	bigint_is_zero_ok ( BIGINT ( 0x5a, 0x9d ),
@@ -1017,6 +1278,7 @@ static void bigint_test_exec ( void ) {
 				     0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 				     0xff, 0xff ),
 			    0 );
+	bigint_is_geq_ok ( BIGINT(), BIGINT(), 1 );
 	bigint_is_geq_ok ( BIGINT ( 0xa2 ),
 			   BIGINT ( 0x58 ),
 			   1 );
@@ -1284,6 +1546,7 @@ static void bigint_test_exec ( void ) {
 					0x83, 0xf8, 0xa2, 0x11, 0xf5, 0xd4,
 					0xcb, 0xe0 ),
 			       1013, 0 );
+	bigint_max_set_bit_ok ( BIGINT(), 0 );
 	bigint_max_set_bit_ok ( BIGINT ( 0x3a ),
 				6 );
 	bigint_max_set_bit_ok ( BIGINT ( 0x03 ),
@@ -1674,126 +1937,103 @@ static void bigint_test_exec ( void ) {
 				      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 				      0x00, 0x00, 0x00, 0x01 ) );
-	bigint_mod_multiply_ok ( BIGINT ( 0x37 ),
-				 BIGINT ( 0x67 ),
-				 BIGINT ( 0x3f ),
-				 BIGINT ( 0x3a ) );
-	bigint_mod_multiply_ok ( BIGINT ( 0x45, 0x94 ),
-				 BIGINT ( 0xbd, 0xd2 ),
-				 BIGINT ( 0xca, 0xc7 ),
-				 BIGINT ( 0xac, 0xc1 ) );
-	bigint_mod_multiply_ok ( BIGINT ( 0x8e, 0xcd, 0x74 ),
-				 BIGINT ( 0xe2, 0xf1, 0xea ),
-				 BIGINT ( 0x59, 0x51, 0x53 ),
-				 BIGINT ( 0x22, 0xdd, 0x1c ) );
-	bigint_mod_multiply_ok ( BIGINT ( 0xc2, 0xa8, 0x40, 0x6f ),
-				 BIGINT ( 0x29, 0xd7, 0xf4, 0x77 ),
-				 BIGINT ( 0xbb, 0xbd, 0xdb, 0x3d ),
-				 BIGINT ( 0x8f, 0x39, 0xd0, 0x47 ) );
-	bigint_mod_multiply_ok ( BIGINT ( 0x2e, 0xcb, 0x74, 0x7c, 0x64, 0x60,
-					  0xb3, 0x44, 0xf3, 0x23, 0x49, 0x4a,
-					  0xc6, 0xb6, 0xbf, 0xea, 0x80, 0xd8,
-					  0x34, 0xc5, 0x54, 0x22, 0x09 ),
-				 BIGINT ( 0x61, 0x2c, 0x5a, 0xc5, 0xde, 0x07,
-					  0x65, 0x8e, 0xab, 0x88, 0x1a, 0x2e,
-					  0x7a, 0x95, 0x17, 0xe3, 0x3b, 0x17,
-					  0xe4, 0x21, 0xb0, 0xb4, 0x57 ),
-				 BIGINT ( 0x8e, 0x46, 0xa5, 0x87, 0x7b, 0x7f,
-					  0xc4, 0xd7, 0x31, 0xb1, 0x94, 0xe7,
-					  0xe7, 0x1c, 0x7e, 0x7a, 0xc2, 0x6c,
-					  0xce, 0xcb, 0xc8, 0x5d, 0x70 ),
-				 BIGINT ( 0x1e, 0xd1, 0x5b, 0x3d, 0x1d, 0x17,
-					  0x7c, 0x31, 0x95, 0x13, 0x1b, 0xd8,
-					  0xee, 0x0a, 0xb0, 0xe1, 0x5b, 0x13,
-					  0xad, 0x83, 0xe9, 0xf8, 0x7f ) );
-	bigint_mod_multiply_ok ( BIGINT ( 0x56, 0x37, 0xab, 0x07, 0x8b, 0x25,
-					  0xa7, 0xc2, 0x50, 0x30, 0x43, 0xfc,
-					  0x63, 0x8b, 0xdf, 0x84, 0x68, 0x85,
-					  0xca, 0xce, 0x44, 0x5c, 0xb1, 0x14,
-					  0xa4, 0xb5, 0xba, 0x43, 0xe0, 0x31,
-					  0x45, 0x6b, 0x82, 0xa9, 0x0b, 0x9e,
-					  0x3a, 0xb0, 0x39, 0x09, 0x2a, 0x68,
-					  0x2e, 0x0f, 0x09, 0x54, 0x47, 0x04,
-					  0xdb, 0xcf, 0x4a, 0x3a, 0x2d, 0x7b,
-					  0x7d, 0x50, 0xa4, 0xc5, 0xeb, 0x13,
-					  0xdd, 0x49, 0x61, 0x7d, 0x18, 0xa1,
-					  0x0d, 0x6b, 0x58, 0xba, 0x9f, 0x7c,
-					  0x81, 0x34, 0x9e, 0xf9, 0x9c, 0x9e,
-					  0x28, 0xa8, 0x1c, 0x15, 0x16, 0x20,
-					  0x3c, 0x0a, 0xb1, 0x11, 0x06, 0x93,
-					  0xbc, 0xd8, 0x4e, 0x49, 0xae, 0x7b,
-					  0xb4, 0x02, 0x8b, 0x1c, 0x5b, 0x18,
-					  0xb4, 0xac, 0x7f, 0xdd, 0x70, 0xef,
-					  0x87, 0xac, 0x1b, 0xac, 0x25, 0xa3,
-					  0xc9, 0xa7, 0x3a, 0xc5, 0x76, 0x68,
-					  0x09, 0x1f, 0xa1, 0x48, 0x53, 0xb6,
-					  0x13, 0xac ),
-				 BIGINT ( 0xef, 0x5c, 0x1f, 0x1a, 0x44, 0x64,
-					  0x66, 0xcf, 0xdd, 0x3f, 0x0b, 0x27,
-					  0x81, 0xa7, 0x91, 0x7a, 0x35, 0x7b,
-					  0x0f, 0x46, 0x5e, 0xca, 0xbf, 0xf8,
-					  0x50, 0x5e, 0x99, 0x7c, 0xc6, 0x64,
-					  0x43, 0x00, 0x9f, 0xb2, 0xda, 0xfa,
-					  0x42, 0x15, 0x9c, 0xa3, 0xd6, 0xc8,
-					  0x64, 0xa7, 0x65, 0x4a, 0x98, 0xf7,
-					  0xb3, 0x96, 0x5f, 0x42, 0xf9, 0x73,
-					  0xe1, 0x75, 0xc3, 0xc4, 0x0b, 0x5d,
-					  0x5f, 0xf3, 0x04, 0x8a, 0xee, 0x59,
-					  0xa6, 0x1b, 0x06, 0x38, 0x0b, 0xa2,
-					  0x9f, 0xb4, 0x4f, 0x6d, 0x50, 0x5e,
-					  0x37, 0x37, 0x21, 0x83, 0x9d, 0xa3,
-					  0x12, 0x16, 0x4d, 0xab, 0x36, 0x51,
-					  0x21, 0xb1, 0x74, 0x66, 0x40, 0x9a,
-					  0xd3, 0x72, 0xcc, 0x18, 0x40, 0x53,
-					  0x89, 0xff, 0xd7, 0x00, 0x8d, 0x7e,
-					  0x93, 0x81, 0xdb, 0x29, 0xb6, 0xd7,
-					  0x23, 0x2b, 0x67, 0x2f, 0x11, 0x98,
-					  0x49, 0x87, 0x2f, 0x46, 0xb7, 0x33,
-					  0x6d, 0x12 ),
-				 BIGINT ( 0x67, 0x7a, 0x17, 0x6a, 0xd2, 0xf8,
-					  0x49, 0xfb, 0x7c, 0x95, 0x25, 0x54,
-					  0xf0, 0xab, 0x5b, 0xb3, 0x0e, 0x01,
-					  0xab, 0xd3, 0x65, 0x6f, 0x7e, 0x18,
-					  0x05, 0xed, 0x9b, 0xc4, 0x90, 0x6c,
-					  0xd0, 0x6d, 0x94, 0x79, 0x28, 0xd6,
-					  0x24, 0x77, 0x9a, 0x08, 0xd2, 0x2f,
-					  0x7c, 0x2d, 0xa0, 0x0c, 0x14, 0xbe,
-					  0x7b, 0xee, 0x9e, 0x48, 0x88, 0x3c,
-					  0x8f, 0x9f, 0xb9, 0x7a, 0xcb, 0x98,
-					  0x76, 0x61, 0x0d, 0xee, 0xa2, 0x42,
-					  0x67, 0x1b, 0x2c, 0x42, 0x8f, 0x41,
-					  0xcc, 0x78, 0xba, 0xba, 0xaa, 0xa2,
-					  0x92, 0xb0, 0x6e, 0x0c, 0x4e, 0xe1,
-					  0xa5, 0x13, 0x7d, 0x8a, 0x8f, 0x81,
-					  0x95, 0x8a, 0xdf, 0x57, 0x93, 0x88,
-					  0x27, 0x4f, 0x1a, 0x59, 0xa4, 0x74,
-					  0x22, 0xa9, 0x78, 0xe5, 0xed, 0xb1,
-					  0x09, 0x26, 0x59, 0xde, 0x88, 0x21,
-					  0x8d, 0xa2, 0xa8, 0x58, 0x10, 0x7b,
-					  0x65, 0x96, 0xbf, 0x69, 0x3b, 0xc5,
-					  0x55, 0xf8 ),
-				 BIGINT ( 0x15, 0xf7, 0x00, 0xeb, 0xc7, 0x5a,
-					  0x6f, 0xf0, 0x50, 0xf3, 0x21, 0x8a,
-					  0x8e, 0xa6, 0xf6, 0x67, 0x56, 0x7d,
-					  0x07, 0x45, 0x89, 0xdb, 0xd7, 0x7e,
-					  0x9e, 0x28, 0x7f, 0xfb, 0xed, 0xca,
-					  0x2c, 0xbf, 0x47, 0x77, 0x99, 0x95,
-					  0xf3, 0xd6, 0x9d, 0xc5, 0x57, 0x81,
-					  0x7f, 0x97, 0xf2, 0x6b, 0x24, 0xee,
-					  0xce, 0xc5, 0x9b, 0xe6, 0x42, 0x2d,
-					  0x37, 0xb7, 0xeb, 0x3d, 0xb5, 0xf7,
-					  0x1e, 0x86, 0xc2, 0x40, 0x44, 0xc9,
-					  0x85, 0x5a, 0x1a, 0xc0, 0xac, 0x9e,
-					  0x78, 0x69, 0x00, 0x7b, 0x93, 0x65,
-					  0xd7, 0x7f, 0x0c, 0xd6, 0xba, 0x4f,
-					  0x06, 0x00, 0x61, 0x05, 0xb2, 0x44,
-					  0xb4, 0xe7, 0xbb, 0x3b, 0x96, 0xb0,
-					  0x6d, 0xe8, 0x43, 0xd2, 0x03, 0xb7,
-					  0x0a, 0xc4, 0x6d, 0x30, 0xd8, 0xd5,
-					  0xe6, 0x54, 0x65, 0xdd, 0xa9, 0x1b,
-					  0x50, 0xc0, 0xb9, 0x95, 0xb0, 0x7d,
-					  0x7c, 0xca, 0x63, 0xf8, 0x72, 0xbe,
-					  0x3b, 0x00 ) );
+	bigint_reduce_ok ( BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x00 ),
+			   BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x00 ) );
+	bigint_reduce_ok ( BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x01 ),
+			   BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x00 ) );
+	bigint_reduce_ok ( BIGINT ( 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00,
+				    0x00 ),
+			   BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x00 ) );
+	bigint_reduce_ok ( BIGINT ( 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x00 ),
+			   BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x00 ) );
+	bigint_reduce_ok ( BIGINT ( 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+				    0xff ),
+			   BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				    0x01 ) );
+	bigint_reduce_ok ( BIGINT ( 0x39, 0x18, 0x47, 0xc9, 0xa2, 0x1d, 0x4b,
+				    0xa6 ),
+			   BIGINT ( 0x30, 0x9d, 0xcc, 0xac, 0xd6, 0xf9, 0x2f,
+				    0xa0 ) );
+	bigint_reduce_ok ( BIGINT ( 0x81, 0x96, 0xdb, 0x36, 0xa6, 0xb7, 0x41,
+				    0x45, 0x92, 0x37, 0x7d, 0x48, 0x1b, 0x2f,
+				    0x3c, 0xa6 ),
+			   BIGINT ( 0x4a, 0x68, 0x25, 0xf7, 0x2b, 0x72, 0x91,
+				    0x6e, 0x09, 0x83, 0xca, 0xf1, 0x45, 0x79,
+				    0x84, 0x18 ) );
+	bigint_reduce_ok ( BIGINT ( 0x84, 0x2d, 0xe4, 0x1c, 0xc3, 0x11, 0x4f,
+				    0xa0, 0x90, 0x4b, 0xa9, 0xa1, 0xdf, 0xed,
+				    0x4b, 0xe0, 0xb7, 0xfc, 0x5e, 0xd1, 0x91,
+				    0x59, 0x4d, 0xc2, 0xae, 0x2f, 0x46, 0x9e,
+				    0x32, 0x6e, 0xf4, 0x67 ),
+			   BIGINT ( 0x46, 0xdd, 0x36, 0x6c, 0x0b, 0xac, 0x3a,
+				    0x8f, 0x9a, 0x25, 0x90, 0xb2, 0x39, 0xe9,
+				    0xa4, 0x65, 0xc1, 0xd4, 0xc1, 0x99, 0x61,
+				    0x95, 0x47, 0xab, 0x4f, 0xd7, 0xad, 0xd4,
+				    0x3e, 0xe9, 0x9c, 0xfc ) );
+	bigint_mod_invert_ok ( BIGINT ( 0x01 ), BIGINT ( 0x01 ) );
+	bigint_mod_invert_ok ( BIGINT ( 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+					0xff, 0xff ),
+			       BIGINT ( 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+					0xff, 0xff ) );
+	bigint_mod_invert_ok ( BIGINT ( 0xa4, 0xcb, 0xbc, 0xc9, 0x9f, 0x7a,
+					0x65, 0xbf ),
+			       BIGINT ( 0xb9, 0xd5, 0xf4, 0x88, 0x0b, 0xf8,
+					0x8a, 0x3f ) );
+	bigint_mod_invert_ok ( BIGINT ( 0x95, 0x6a, 0xc5, 0xe7, 0x2e, 0x5b,
+					0x44, 0xed, 0xbf, 0x7e, 0xfe, 0x8d,
+					0xf4, 0x5a, 0x48, 0xc1 ),
+			       BIGINT ( 0xad, 0xb8, 0x3d, 0x85, 0x10, 0xdf,
+					0xea, 0x70, 0x71, 0x2c, 0x80, 0xf4,
+					0x6e, 0x66, 0x47, 0x41 ) );
+	bigint_mod_invert_ok ( BIGINT ( 0x35, 0xe4, 0x80, 0x48, 0xdd, 0xa1,
+					0x46, 0xc0, 0x84, 0x63, 0xc1, 0xe4,
+					0xf7, 0xbf, 0xb3, 0x05 ),
+			       BIGINT ( 0xf2, 0x9c, 0x63, 0x29, 0xfa, 0xe4,
+					0xbf, 0x90, 0xa6, 0x9a, 0xec, 0xcf,
+					0x5f, 0xe2, 0x21, 0xcd ) );
+	bigint_mod_invert_ok ( BIGINT ( 0xb9, 0xbb, 0x7f, 0x9c, 0x7a, 0x32,
+					0x43, 0xed, 0x9d, 0xd4, 0x0d, 0x6f,
+					0x32, 0xfa, 0x4b, 0x62, 0x38, 0x3a,
+					0xbf, 0x4c, 0xbd, 0xa8, 0x47, 0xce,
+					0xa2, 0x30, 0x34, 0xe0, 0x2c, 0x09,
+					0x14, 0x89 ),
+			       BIGINT ( 0xfc, 0x05, 0xc4, 0x2a, 0x90, 0x99,
+					0x82, 0xf8, 0x81, 0x1d, 0x87, 0xb8,
+					0xca, 0xe4, 0x95, 0xe2, 0xac, 0x18,
+					0xb3, 0xe1, 0x3e, 0xc6, 0x5a, 0x03,
+					0x51, 0x6f, 0xb7, 0xe3, 0xa5, 0xd6,
+					0xa1, 0xb9 ) );
+	bigint_mod_invert_ok ( BIGINT ( 0xfe, 0x43, 0xf6, 0xa0, 0x32, 0x02,
+					0x47, 0xaa, 0xaa, 0x0e, 0x33, 0x19,
+					0x2e, 0xe6, 0x22, 0x07 ),
+			       BIGINT ( 0x7b, 0xd1, 0x0f, 0x78, 0x0c, 0x65,
+					0xab, 0xb7 ) );
+	bigint_montgomery_ok ( BIGINT ( 0x74, 0xdf, 0xd1, 0xb8, 0x14, 0xf7,
+					0x05, 0x83 ),
+			       BIGINT ( 0x50, 0x6a, 0x38, 0x55, 0x9f, 0xb9,
+					0x9d, 0xba, 0xff, 0x23, 0x86, 0x65,
+					0xe3, 0x2c, 0x3f, 0x17 ),
+			       BIGINT ( 0x45, 0x1f, 0x51, 0x44, 0x6f, 0x3c,
+					0x09, 0x6b ) );
+	bigint_montgomery_ok ( BIGINT ( 0x2e, 0x32, 0x90, 0x69, 0x6e, 0xa8,
+					0x47, 0x4c, 0xad, 0xe4, 0xe7, 0x4c,
+					0x03, 0xcb, 0xe6, 0x55 ),
+			       BIGINT ( 0x1e, 0x43, 0xf9, 0xc2, 0x61, 0xdd,
+					0xe8, 0xbf, 0xb8, 0xea, 0xe0, 0xdb,
+					0xed, 0x66, 0x80, 0x1e, 0xe8, 0xf8,
+					0xd1, 0x1d, 0xca, 0x8d, 0x45, 0xe9,
+					0xc5, 0xeb, 0x77, 0x21, 0x34, 0xe0,
+					0xf5, 0x5a ),
+			       BIGINT ( 0x03, 0x38, 0xfb, 0xb6, 0xf3, 0x80,
+					0x91, 0xb2, 0x68, 0x2f, 0x81, 0x44,
+					0xbf, 0x43, 0x0a, 0x4e ) );
 	bigint_mod_exp_ok ( BIGINT ( 0xcd ),
 			    BIGINT ( 0xbb ),
 			    BIGINT ( 0x25 ),
@@ -1810,6 +2050,14 @@ static void bigint_test_exec ( void ) {
 			    BIGINT ( 0xb9 ),
 			    BIGINT ( 0x39, 0x68, 0xba, 0x7d ),
 			    BIGINT ( 0x17 ) );
+	bigint_mod_exp_ok ( BIGINT ( 0x71, 0x4d, 0x02, 0xe9 ),
+			    BIGINT ( 0x00, 0x00, 0x00, 0x00 ),
+			    BIGINT ( 0x91, 0x7f, 0x4e, 0x3a, 0x5d, 0x5c ),
+			    BIGINT ( 0x00, 0x00, 0x00, 0x00 ) );
+	bigint_mod_exp_ok ( BIGINT ( 0x2b, 0xf5, 0x07, 0xaf ),
+			    BIGINT ( 0x6e, 0xb5, 0xda, 0x5a ),
+			    BIGINT ( 0x00, 0x00, 0x00, 0x00, 0x00 ),
+			    BIGINT ( 0x00, 0x00, 0x00, 0x01 ) );
 	bigint_mod_exp_ok ( BIGINT ( 0x2e ),
 			    BIGINT ( 0xb7 ),
 			    BIGINT ( 0x39, 0x07, 0x1b, 0x49, 0x5b, 0xea,
@@ -2514,6 +2762,25 @@ static void bigint_test_exec ( void ) {
 				     0xfa, 0x83, 0xd4, 0x7c, 0xe9, 0x77,
 				     0x46, 0x91, 0x3a, 0x50, 0x0d, 0x6a,
 				     0x25, 0xd0 ) );
+	bigint_mod_exp_ok ( BIGINT ( 0x5b, 0x80, 0xc5, 0x03, 0xb3, 0x1e,
+				     0x46, 0x9b, 0xa3, 0x0a, 0x70, 0x43,
+				     0x51, 0x2a, 0x4a, 0x44, 0xcb, 0x87,
+				     0x3e, 0x00, 0x2a, 0x48, 0x46, 0xf5,
+				     0xb3, 0xb9, 0x73, 0xa7, 0x77, 0xfc,
+				     0x2a, 0x1d ),
+			    BIGINT ( 0x5e, 0x8c, 0x80, 0x03, 0xe7, 0xb0,
+				     0x45, 0x23, 0x8f, 0xe0, 0x77, 0x02,
+				     0xc0, 0x7e, 0xfb, 0xc4, 0xbe, 0x7b,
+				     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+				     0x00, 0x00 ),
+			    BIGINT ( 0x71, 0xd9, 0x38, 0xb6 ),
+			    BIGINT ( 0x52, 0xfc, 0x73, 0x55, 0x2f, 0x86,
+				     0x0f, 0xde, 0x04, 0xbc, 0x6d, 0xb8,
+				     0xfd, 0x48, 0xf8, 0x8c, 0x91, 0x1c,
+				     0xa0, 0x8a, 0x70, 0xa8, 0xc6, 0x20,
+				     0x0a, 0x0d, 0x3b, 0x2a, 0x92, 0x65,
+				     0x9c, 0x59 ) );
 }
 
 /** Big integer self-test */

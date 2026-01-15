@@ -13,19 +13,27 @@
 
 FILE_LICENCE ( GPL2_OR_LATER );
 
+#include <config/defaults.h>
+
 #define	COMCONSOLE	COM1		/* I/O port address */
 
 /* Keep settings from a previous user of the serial port (e.g. lilo or
- * LinuxBIOS), ignoring COMSPEED, COMDATA, COMPARITY and COMSTOP.
+ * LinuxBIOS), ignoring COMSPEED.
  */
 #undef	COMPRESERVE
 
 #ifndef COMPRESERVE
 #define	COMSPEED	115200		/* Baud rate */
-#define	COMDATA		8		/* Data bits */
-#define	COMPARITY	0		/* Parity: 0=None, 1=Odd, 2=Even */
-#define	COMSTOP		1		/* Stop bits */
 #endif
+
+/* Uncomment these to ignore the ACPI SPCR table (if present) */
+//#undef SERIAL_SPCR
+//#define SERIAL_FIXED
+
+/* Early UART configuration (for bare metal prefix debugging only) */
+//#define EARLY_UART_MODEL	8250
+//#define EARLY_UART_REG_BASE	0x10000000
+//#define EARLY_UART_REG_SHIFT	0
 
 #include <config/named.h>
 #include NAMED_CONFIG(serial.h)

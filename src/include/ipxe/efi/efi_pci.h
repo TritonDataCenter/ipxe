@@ -7,6 +7,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_SECBOOT ( PERMITTED );
 
 #include <ipxe/pci.h>
 #include <ipxe/efi/efi.h>
@@ -25,9 +26,6 @@ struct efi_pci_device {
 	EFI_PCI_IO_PROTOCOL *io;
 };
 
-extern int efipci_open ( EFI_HANDLE device, UINT32 attributes,
-			 struct efi_pci_device *efipci );
-extern void efipci_close ( EFI_HANDLE device );
 extern int efipci_info ( EFI_HANDLE device, struct efi_pci_device *efipci );
 
 #endif /* _IPXE_EFI_PCI_H */

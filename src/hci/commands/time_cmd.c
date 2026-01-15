@@ -21,6 +21,7 @@
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
+FILE_SECBOOT ( PERMITTED );
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,7 +78,4 @@ static int time_exec ( int argc, char **argv ) {
 }
 
 /** "time" command */
-struct command time_command __command = {
-	.name = "time",
-	.exec = time_exec,
-};
+COMMAND ( time, time_exec );

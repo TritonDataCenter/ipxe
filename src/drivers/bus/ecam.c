@@ -23,8 +23,8 @@
 
 FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
+#include <string.h>
 #include <errno.h>
-#include <ipxe/uaccess.h>
 #include <ipxe/ecam.h>
 
 /** @file
@@ -46,49 +46,43 @@ static struct ecam_mapping ecam;
  */
 static int ecam_find ( uint32_t busdevfn, struct pci_range *range,
 		       struct ecam_allocation *alloc ) {
-	struct ecam_allocation tmp;
+	struct ecam_table *mcfg;
+	struct ecam_allocation *tmp;
 	unsigned int best = 0;
-	unsigned int offset;
 	unsigned int count;
 	unsigned int index;
-	userptr_t mcfg;
-	uint32_t length;
+	unsigned int i;
 	uint32_t start;
 
 	/* Return empty range on error */
 	range->count = 0;
 
 	/* Locate MCFG table */
-	mcfg = acpi_table ( ECAM_SIGNATURE, 0 );
+	mcfg = container_of ( acpi_table ( ECAM_SIGNATURE, 0 ),
+			      struct ecam_table, acpi );
 	if ( ! mcfg ) {
 		DBGC ( &ecam, "ECAM found no MCFG table\n" );
 		return -ENOTSUP;
 	}
 
-	/* Get length of table */
-	copy_from_user ( &length, mcfg,
-			 offsetof ( struct ecam_table, acpi.length ),
-			 sizeof ( length ) );
-
 	/* Iterate over allocations */
-	for ( offset = offsetof ( struct ecam_table, alloc ) ;
-	      ( offset + sizeof ( tmp ) ) <= le32_to_cpu ( length ) ;
-	      offset += sizeof ( tmp ) ) {
+	for ( i = 0 ; ( offsetof ( typeof ( *mcfg ), alloc[ i + 1 ] ) <=
+			le32_to_cpu ( mcfg->acpi.length ) ) ; i++ ) {
 
 		/* Read allocation */
-		copy_from_user ( &tmp, mcfg, offset, sizeof ( tmp ) );
+		tmp = &mcfg->alloc[i];
 		DBGC2 ( &ecam, "ECAM %04x:[%02x-%02x] has base %08llx\n",
-			le16_to_cpu ( tmp.segment ), tmp.start, tmp.end,
-			( ( unsigned long long ) le64_to_cpu ( tmp.base ) ) );
-		start = PCI_BUSDEVFN ( le16_to_cpu ( tmp.segment ),
-				       tmp.start, 0, 0 );
-		count = PCI_BUSDEVFN ( 0, ( tmp.end - tmp.start + 1 ), 0, 0 );
+			le16_to_cpu ( tmp->segment ), tmp->start, tmp->end,
+			( ( unsigned long long ) le64_to_cpu ( tmp->base ) ) );
+		start = PCI_BUSDEVFN ( le16_to_cpu ( tmp->segment ),
+				       tmp->start, 0, 0 );
+		count = PCI_BUSDEVFN ( 0, ( tmp->end - tmp->start + 1 ), 0, 0 );
 
 		/* Check for a matching or new closest allocation */
 		index = ( busdevfn - start );
 		if ( ( index < count ) || ( index > best ) ) {
 			if ( alloc )
-				memcpy ( alloc, &tmp, sizeof ( *alloc ) );
+				memcpy ( alloc, tmp, sizeof ( *alloc ) );
 			range->start = start;
 			range->count = count;
 			best = index;
@@ -276,6 +270,7 @@ int ecam_write ( struct pci_device *pci, unsigned int location,
 	return 0;
 }
 
+PROVIDE_PCIAPI_INLINE ( ecam, pci_can_probe );
 PROVIDE_PCIAPI ( ecam, pci_discover, ecam_discover );
 PROVIDE_PCIAPI_INLINE ( ecam, pci_read_config_byte );
 PROVIDE_PCIAPI_INLINE ( ecam, pci_read_config_word );
@@ -284,5 +279,4 @@ PROVIDE_PCIAPI_INLINE ( ecam, pci_write_config_byte );
 PROVIDE_PCIAPI_INLINE ( ecam, pci_write_config_word );
 PROVIDE_PCIAPI_INLINE ( ecam, pci_write_config_dword );
 PROVIDE_PCIAPI_INLINE ( ecam, pci_ioremap );
-
-struct pci_api ecam_api = PCIAPI_RUNTIME ( ecam );
+PROVIDE_PCIAPI_RUNTIME ( ecam, PCIAPI_PRIORITY_ECAM );
