@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 #
 # Copyright 2020 Joyent, Inc.
+# Copyright 2026 Edgecast Cloud LLC.
 #
 
 NAME = ipxe
