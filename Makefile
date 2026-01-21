@@ -101,10 +101,10 @@ $(BOOT_ROOT)/%: boot/% | $(BOOT_ROOT)
 	$(INS.file)
 
 src/bin/%:
-	(cd src && $(MAKE) bin/$(@F) $(IPXE_ENV))
+	(cd src && $(MAKE) -j 6 bin/$(@F) $(IPXE_ENV))
 
 src/bin-x86_64-efi/%:
-	 (cd src && $(MAKE) bin-x86_64-efi/$(@F) $(IPXE_ENV))
+	 (cd src && $(MAKE) -j 6 bin-x86_64-efi/$(@F) $(IPXE_ENV))
 
 .PHONY: test
 test:
