@@ -34,11 +34,15 @@ get_byte() {
 get_word() {
     local FILENAME
     local OFFSET
+    local LSB
+    local MSB
 
     FILENAME="${1}"
     OFFSET="${2}"
 
-    od -j "${OFFSET}" -N 2 -A n -t x1 -- "${FILENAME}" | tr -d " "
+    LSB=$(get_byte "${FILENAME}" $(( ${OFFSET} + 0 )) )
+    MSB=$(get_byte "${FILENAME}" $(( ${OFFSET} + 1 )) )
+    echo "${MSB}${LSB}"
 }
 
 # Get appropriate EFI boot filename for CPU architecture
@@ -51,37 +55,37 @@ efi_boot_name() {
     FILENAME="${1}"
 
     MZSIG=$(get_word "${FILENAME}" 0)
-    if [ "${MZSIG}" != "4d5a" ] ; then
+    if [ "${MZSIG}" != "5a4d" ] ; then
 	echo "${FILENAME}: invalid MZ header" >&2
 	exit 1
     fi
     PEOFF=$(get_byte "${FILENAME}" 0x3c)
     PESIG=$(get_word "${FILENAME}" 0x${PEOFF})
-    if [ "${PESIG}" != "5045" ] ; then
+    if [ "${PESIG}" != "4550" ] ; then
 	echo "${FILENAME}: invalid PE header" >&2
 	exit 1
     fi
     ARCH=$(get_word "${FILENAME}" $(( 0x${PEOFF} + 4 )) )
     case "${ARCH}" in
-	"4c01" )
+	"014c" )
 	    echo "BOOTIA32.EFI"
 	    ;;
-	"6486" )
+	"8664" )
 	    echo "BOOTX64.EFI"
 	    ;;
-	"c201" )
+	"01c2" )
 	    echo "BOOTARM.EFI"
 	    ;;
-	"6462" )
+	"6264" )
 	    echo "BOOTLOONGARCH64.EFI"
 	    ;;
-	"64aa" )
+	"aa64" )
 	    echo "BOOTAA64.EFI"
 	    ;;
-	"6450" )
+	"5064" )
 	    echo "BOOTRISCV64.EFI"
 	    ;;
-	"3250" )
+	"5032" )
 	    echo "BOOTRISCV32.EFI"
 	    ;;
 	* )
