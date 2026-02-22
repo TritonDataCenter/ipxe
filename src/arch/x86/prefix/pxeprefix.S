@@ -24,6 +24,16 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
 #define EB_MAGIC_1 ( 'E' + ( 't' << 8 ) + ( 'h' << 16 ) + ( 'e' << 24 ) )
 #define EB_MAGIC_2 ( 'r' + ( 'b' << 8 ) + ( 'o' << 16 ) + ( 'o' << 24 ) )
 
+/* Magic signature word */
+#define IPXE_NBP_MAGIC 0x18ae
+
+/* Architecture byte */
+#ifdef __x86_64__
+#define IPXE_NBP_ARCH 0x64
+#else
+#define IPXE_NBP_ARCH 0x32
+#endif
+
 /* Prefix memory layout:
  *
  *     iPXE binary image
@@ -44,7 +54,21 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
 	.section ".prefix", "ax", @progbits
 	.globl	_pxe_start
 _pxe_start:
+	/* iPXE NBP magic header:
+	 *
+	 * Offset	Content
+	 * ------	-------
+	 * 0		ljmp instruction (0xea)
+	 * 1-2		ljmp offset (and therefore length of header)
+	 * 3-4		ljmp segment (0x07c0)
+	 * 5+		Metadata fields
+	 * \_ 5		CPU architecture (0x32=i386, 0x64=x86_64)
+	 * \_ 6-7	Magic value (0x18ae)
+	 *
+	 */
 	jmp	$0x7c0, $1f
+	.byte	IPXE_NBP_ARCH
+	.word	IPXE_NBP_MAGIC
 1:
 	/* Preserve registers for possible return to PXE */
 	pushfl
