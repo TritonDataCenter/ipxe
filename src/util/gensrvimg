@@ -1,0 +1,325 @@
+#!/bin/sh
+#
+# Generate a network bootable directory image
+
+set -e
+set -u
+
+# Print usage message
+#
+help() {
+    echo "usage: ${0} [OPTIONS] foo.[k]pxe|foo.efi [bar.[k]pxe|bar.efi,...]"
+    echo
+    echo "where OPTIONS are:"
+    echo " -h         show this help"
+    echo " -a ARCH    select default CPU architecture [x86_64]"
+    echo " -d DIR     install images to directory"
+    echo " -e SHIM    specify an EFI shim helper"
+    echo " -o FILE    save image archive to file"
+}
+
+# Get hex byte from binary file
+#
+get_byte() {
+    local FILENAME
+    local OFFSET
+
+    FILENAME="${1}"
+    OFFSET="${2}"
+
+    od -j "${OFFSET}" -N 1 -A n -t x1 -- "${FILENAME}" | tr -d " "
+}
+
+# Get hex word from binary file
+#
+get_word() {
+    local FILENAME
+    local OFFSET
+    local LSB
+    local MSB
+
+    FILENAME="${1}"
+    OFFSET="${2}"
+
+    LSB=$(get_byte "${FILENAME}" $(( ${OFFSET} + 0 )) )
+    MSB=$(get_byte "${FILENAME}" $(( ${OFFSET} + 1 )) )
+    echo "${MSB}${LSB}"
+}
+
+# Get hex dword from binary file
+#
+get_dword() {
+    local FILENAME
+    local OFFSET
+    local LSW
+    local MSW
+
+    FILENAME="${1}"
+    OFFSET="${2}"
+
+    LSW=$(get_word "${FILENAME}" $(( ${OFFSET} + 0 )) )
+    MSW=$(get_word "${FILENAME}" $(( ${OFFSET} + 2 )) )
+    echo "${MSW}${LSW}"
+}
+
+# Get appropriate subdirectory name for CPU architecture from EFI binary
+#
+efi_subdir_name() {
+    local FILENAME
+    local MZSIG
+    local PEOFF
+    local PESIG
+    local ARCH
+    local OPTSIG
+    local SECSIZE
+    local SBSUFFIX
+
+    FILENAME="${1}"
+
+    MZSIG=$(get_word "${FILENAME}" 0)
+    if [ "${MZSIG}" != "5a4d" ] ; then
+	echo "${FILENAME}: invalid MZ header" >&2
+	exit 1
+    fi
+    PEOFF=$(get_byte "${FILENAME}" 0x3c)
+    PESIG=$(get_word "${FILENAME}" 0x${PEOFF})
+    if [ "${PESIG}" != "4550" ] ; then
+	echo "${FILENAME}: invalid PE header" >&2
+	exit 1
+    fi
+    ARCH=$(get_word "${FILENAME}" $(( 0x${PEOFF} + 4 )) )
+    OPTSIG=$(get_word "${FILENAME}" $(( 0x${PEOFF} + 24 )) )
+    case "${OPTSIG}" in
+	"010b" )
+	    SECSIZE=$(get_dword "${FILENAME}" $(( 0x${PEOFF} + 156 )) )
+	    ;;
+	"020b" )
+	    SECSIZE=$(get_dword "${FILENAME}" $(( 0x${PEOFF} + 172 )) )
+	    ;;
+	* )
+	    echo "${FILENAME}: unrecognised optional header ${OPTSIG}" >&2
+	    exit 1
+	    ;;
+    esac
+    if [ "${SECSIZE}" != "00000000" ] ; then
+	SBSUFFIX="-sb"
+    else
+	SBSUFFIX=""
+    fi
+    case "${ARCH}" in
+	"014c" )
+	    echo "i386${SBSUFFIX}"
+	    ;;
+	"8664" )
+	    echo "x86_64${SBSUFFIX}"
+	    ;;
+	"01c2" )
+	    echo "arm32${SBSUFFIX}"
+	    ;;
+	"6264" )
+	    echo "loong64${SBSUFFIX}"
+	    ;;
+	"aa64" )
+	    echo "arm64${SBSUFFIX}"
+	    ;;
+	"5064" )
+	    echo "riscv64${SBSUFFIX}"
+	    ;;
+	"5032" )
+	    echo "riscv32${SBSUFFIX}"
+	    ;;
+	* )
+	    echo "${FILENAME}: unrecognised EFI architecture ${ARCH}" >&2
+	    exit 1
+    esac
+}
+
+# Get appropriate subdirectory name for CPU architecture from iPXE NBP
+#
+nbp_subdir_name() {
+    local FILENAME
+    local LJMP
+    local SEGMENT
+    local MAGIC
+    local ARCH
+
+    FILENAME="${1}"
+
+    LJMP=$(get_byte "${FILENAME}" 0)
+    if [ "${LJMP}" != "ea" ] ; then
+	echo "${FILENAME}: invalid LJMP instruction" >&2
+	exit 1
+    fi
+    SEGMENT=$(get_word "${FILENAME}" 3)
+    if [ "${SEGMENT}" != "07c0" ] ; then
+	echo "${FILENAME}: invalid LJMP segment" >&2
+	exit 1
+    fi
+    MAGIC=$(get_word "${FILENAME}" 6)
+    if [ "${MAGIC}" != "18ae" ] ; then
+	echo "${FILENAME}: invalid iPXE magic" >&2
+	exit 1
+    fi
+    ARCH=$(get_byte "${FILENAME}" 5)
+    case "${ARCH}" in
+	"32" )
+	    echo "i386"
+	    ;;
+	"64" )
+	    echo "x86_64"
+	    ;;
+	* )
+	    echo "${FILENAME}: unrecognised NBP architecture ${ARCH}" >&2
+	    exit 1
+    esac
+}
+
+# Get appropriate subdirectory name for CPU architecture
+#
+subdir_name() {
+    local FILENAME
+    local BYTE
+
+    FILENAME="${1}"
+
+    BYTE=$(get_byte "${FILENAME}" 0)
+    case "${BYTE}" in
+	"4d" )
+	    efi_subdir_name "${FILENAME}"
+	    ;;
+	"ea" )
+	    nbp_subdir_name "${FILENAME}"
+	    ;;
+	* )
+	    echo "${FILENAME}: unrecognised format" >&2
+	    exit 1
+    esac
+}
+
+# Parse command-line options
+#
+DEFARCH=x86_64
+OUTDIR=
+OUTFILE=
+SHIMAA64=
+SHIMX64=
+while getopts "ha:d:e:o:" OPTION ; do
+    case "${OPTION}" in
+	h)
+	    help
+	    exit 0
+	    ;;
+	a)
+	    DEFARCH="${OPTARG}"
+	    ;;
+	d)
+	    OUTDIR="${OPTARG}"
+	    ;;
+	e)
+	    SHIM="${OPTARG}"
+	    SHIMARCH=$(subdir_name "${SHIM}")
+	    case "${SHIMARCH}" in
+		arm64* )
+		    SHIMAA64="${SHIM}"
+		    ;;
+		x86_64* )
+		    SHIMX64="${SHIM}"
+		    ;;
+		* )
+		    echo "${SHIM}: unsupported shim architecture" >&2
+		    exit 1
+	    esac
+	    ;;
+	o)
+	    OUTFILE="${OPTARG}"
+	    ;;
+	*)
+	    help
+	    exit 1
+	    ;;
+    esac
+done
+if [ -z "${OUTDIR}" -a -z "${OUTFILE}" ] ; then
+    echo "${0}: no output directory or file given" >&2
+    help
+    exit 1
+fi
+shift $(( OPTIND - 1 ))
+if [ $# -eq 0 ] ; then
+    echo "${0}: no input files given" >&2
+    help
+    exit 1
+fi
+
+# Create temporary working directory, if applicable
+#
+WORKDIR=
+if [ -z "${OUTDIR}" ] ; then
+    WORKDIR=$(mktemp -d "${OUTFILE}.XXXXXX")
+    OUTDIR="${WORKDIR}/ipxeboot"
+fi
+mkdir -p "${OUTDIR}"
+
+# Copy files to output directory
+#
+for FILENAME ; do
+    SUBDIR=$(subdir_name "${FILENAME}")
+    ARCH="${SUBDIR%-sb}"
+    DESTDIR="${OUTDIR}/${SUBDIR}"
+    BASENAME=$(basename "${FILENAME}")
+    SHIMLINK="${BASENAME%.efi}-shim.efi"
+    mkdir -p "${DESTDIR}"
+    install -m 644 "${FILENAME}" "${DESTDIR}/${BASENAME}"
+    case "${SUBDIR}" in
+	arm64-sb )
+	    if [ -n "${SHIMAA64}" ] ; then
+		install -m 644 "${SHIMAA64}" "${DESTDIR}/shimaa64.efi"
+		ln -sfn "shimaa64.efi" "${DESTDIR}/${SHIMLINK}"
+	    fi
+	    ;;
+	x86_64-sb )
+	    if [ -n "${SHIMX64}" ] ; then
+		install -m 644 "${SHIMX64}" "${DESTDIR}/shimx64.efi"
+		ln -sfn "shimx64.efi" "${DESTDIR}/${SHIMLINK}"
+	    fi
+	    ;;
+    esac
+    if [ "${ARCH}" = "${DEFARCH}" ] ; then
+	if [ "${ARCH}" = "${SUBDIR}" ] ; then
+	    ln -sfn "${SUBDIR}/${BASENAME}" "${OUTDIR}/${BASENAME}"
+	else
+	    ln -sfn "${SUBDIR}" "${OUTDIR}/sb"
+	fi
+    fi
+done
+
+# Create output archive file, if applicable
+#
+if [ -n "${OUTFILE}" ] ; then
+    TOPDIR=$(dirname "${OUTDIR}")
+    BASENAME=$(basename "${OUTDIR}")
+    case "${OUTFILE}" in
+	*.tar )
+	    tar cf "${OUTFILE}" -C "${TOPDIR}" "${BASENAME}"
+	    ;;
+	*.tar.gz | *.tgz )
+	    tar czf "${OUTFILE}" -C "${TOPDIR}" "${BASENAME}"
+	    ;;
+	*.tar.bz2 )
+	    tar cjf "${OUTFILE}" -C "${TOPDIR}" "${BASENAME}"
+	    ;;
+	*.tar.xz )
+	    tar cJf "${OUTFILE}" -C "${TOPDIR}" "${BASENAME}"
+	    ;;
+	* )
+	    echo "${OUTFILE}: unrecognised archive format" >&2
+	    exit 1
+	    ;;
+    esac
+fi
+
+# Clean up temporary working directory
+#
+if [ -n "${WORKDIR}" ] ; then
+    rm -rf "${WORKDIR}"
+fi

@@ -49,6 +49,8 @@ get_word() {
 #
 efi_boot_name() {
     local FILENAME
+    local MZSIG
+    local PEOFF
     local PESIG
     local ARCH
 
