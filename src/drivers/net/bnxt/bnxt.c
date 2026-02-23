@@ -2816,18 +2816,18 @@ static int bnxt_init_one ( struct pci_device *pci )
 	bnxt_get_pci_info ( bp );
 
 	/* Allocate HWRM memory */
-	bnxt_alloc_hwrm_mem ( bp );
+	if ( ( err = bnxt_alloc_hwrm_mem ( bp ) ) != 0 )
+		goto err_alloc_hwrm;
 
 	bp->link_status 	= STATUS_LINK_DOWN;
 	bp->wait_link_timeout 	= LINK_DEFAULT_TIMEOUT;
-	if ( bnxt_up_init ( bp ) != 0 ) {
-		goto err_down_chip;
-	}
+	if ( ( err = bnxt_up_init ( bp ) ) != 0 )
+		goto err_up_init;
 
 	/* Register Network device */
 	if ( ( err = register_netdev ( netdev ) ) != 0 ) {
 		DBGP ( "- %s (  ): register_netdev Failed\n", __func__ );
-		goto err_down_chip;
+		goto err_register_netdev;
 	}
 
 	/* Set Initial Link State */
@@ -2836,12 +2836,13 @@ static int bnxt_init_one ( struct pci_device *pci )
 	return 0;
 
 	unregister_netdev ( netdev );
-
-err_down_chip:
+err_register_netdev:
+err_up_init:
+	bnxt_free_hwrm_mem ( bp );
+err_alloc_hwrm:
 	bnxt_down_pci ( bp );
 	netdev_nullify ( netdev );
 	netdev_put ( netdev );
-
 disable_pdev:
 	pci_set_drvdata ( pci, NULL );
 	return err;
