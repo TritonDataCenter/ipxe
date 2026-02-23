@@ -1432,7 +1432,7 @@ static int bnxt_hwrm_backing_store_qcfg ( struct bnxt *bp )
 	struct hwrm_func_backing_store_qcfg_input *req;
 
 	DBGP ( "%s\n", __func__ );
-	if ( ! ( FLAG_TEST ( bp->flags, BNXT_FLAG_IS_CHIP_P5_PLUS ) ) )
+	if ( ! ( FLAG_TEST ( bp->flags, BNXT_FLAG_IS_CHIP_P5_PLUS ) ) || bp->vf )
 		return STATUS_SUCCESS;
 
 	req = ( struct hwrm_func_backing_store_qcfg_input * ) REQ_DMA_ADDR ( bp );
@@ -1447,7 +1447,7 @@ static int bnxt_hwrm_backing_store_cfg ( struct bnxt *bp )
 	struct hwrm_func_backing_store_cfg_input *req;
 
 	DBGP ( "%s\n", __func__ );
-	if ( ! ( FLAG_TEST ( bp->flags, BNXT_FLAG_IS_CHIP_P5_PLUS ) ) )
+	if ( ! ( FLAG_TEST ( bp->flags, BNXT_FLAG_IS_CHIP_P5_PLUS ) ) || bp->vf )
 		return STATUS_SUCCESS;
 
 	req = ( struct hwrm_func_backing_store_cfg_input * ) REQ_DMA_ADDR ( bp );
