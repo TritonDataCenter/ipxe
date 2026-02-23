@@ -1046,6 +1046,16 @@ static int ndp_register_settings ( struct net_device *netdev,
 	return rc;
 }
 
+/** MTU setting */
+const struct setting ndp_mtu_setting __setting ( SETTING_NETDEV, mtu ) = {
+	.name = "mtu",
+	.description = "MTU",
+	.tag = NDP_TAG ( NDP_OPT_MTU, offsetof ( struct ndp_mtu_option, mtu ),
+			 sizeof ( uint32_t ) ),
+	.type = &setting_type_int16,
+	.scope = &ndp_settings_scope,
+};
+
 /** DNS server setting */
 const struct setting ndp_dns6_setting __setting ( SETTING_IP6_EXTRA, dns6 ) = {
 	.name = "dns6",
