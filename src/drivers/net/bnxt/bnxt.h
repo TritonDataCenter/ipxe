@@ -236,6 +236,18 @@
 #define NS_LINK_SPEED_DRV_100G                                  0x6
 #define LINK_SPEED_DRV_200G                                     0x7
 #define NS_LINK_SPEED_DRV_200G                                  0x7
+#define LINK_SPEED_DRV_50G_PAM4                                 0x8
+#define NS_LINK_SPEED_DRV_50G_PAM4                              0x8
+#define LINK_SPEED_DRV_100G_PAM4                                0x9
+#define NS_LINK_SPEED_DRV_100G_PAM4                             0x9
+#define LINK_SPEED_DRV_100G_PAM4_112                            0xA
+#define NS_LINK_SPEED_DRV_100G_PAM4_112                         0xA
+#define LINK_SPEED_DRV_200G_PAM4_112                            0xB
+#define NS_LINK_SPEED_DRV_200G_PAM4_112                         0xB
+#define LINK_SPEED_DRV_400G_PAM4                                0xC
+#define NS_LINK_SPEED_DRV_400G_PAM4                             0xC
+#define LINK_SPEED_DRV_400G_PAM4_112                            0xD
+#define NS_LINK_SPEED_DRV_400G_PAM4_112                         0xD
 #define LINK_SPEED_DRV_2_5G                                     0xE
 #define NS_LINK_SPEED_DRV_2_5G                                  0xE
 #define LINK_SPEED_DRV_100M                                     0xF
@@ -342,20 +354,6 @@
 #define NS_D3_LINK_SPEED_FW_2_5G                                (0xE)
 #define D3_LINK_SPEED_FW_100M                                   (0xFL << 16)
 #define NS_D3_LINK_SPEED_FW_100M                                (0xF)
-/* nvm cfg 211 */
-#define D3_FLOW_CONTROL_FW_NUM                                  211
-#define D3_FLOW_CONTROL_FW_MASK                                 0x00700000
-#define D3_FLOW_CONTROL_FW_SHIFT                                20
-#define D3_FLOW_CONTROL_FW_AUTO                                 (0x0L << 20)
-#define NS_D3_FLOW_CONTROL_FW_AUTO                              (0x0)
-#define D3_FLOW_CONTROL_FW_TX                                   (0x1L << 20)
-#define NS_D3_FLOW_CONTROL_FW_TX                                (0x1)
-#define D3_FLOW_CONTROL_FW_RX                                   (0x2L << 20)
-#define NS_D3_FLOW_CONTROL_FW_RX                                (0x2)
-#define D3_FLOW_CONTROL_FW_BOTH                                 (0x3L << 20)
-#define NS_D3_FLOW_CONTROL_FW_BOTH                              (0x3)
-#define D3_FLOW_CONTROL_FW_NONE                                 (0x4L << 20)
-#define NS_D3_FLOW_CONTROL_FW_NONE                              (0x4)
 /* nvm cfg 213 */
 #define PORT_CFG_LINK_SETTINGS_MEDIA_AUTO_DETECT_NUM            213
 #define PORT_CFG_LINK_SETTINGS_MEDIA_AUTO_DETECT_MASK           0x02000000
