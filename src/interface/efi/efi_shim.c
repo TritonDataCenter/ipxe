@@ -144,19 +144,44 @@ static int efi_shim_is_sbatlevel ( const CHAR16 *name, const EFI_GUID *guid ) {
  */
 static void efi_shim_unlock ( void ) {
 	EFI_BOOT_SERVICES *bs = efi_systab->BootServices;
+	EFI_GUID *protocol = &efi_shim_lock_protocol_guid;
+	EFI_SHIM_LOCK_PROTOCOL *lock;
 	uint8_t empty[0];
-	union {
-		EFI_SHIM_LOCK_PROTOCOL *lock;
-		void *interface;
-	} u;
+	EFI_HANDLE *handles;
+	UINTN num_handles;
+	unsigned int i;
 	EFI_STATUS efirc;
+	int rc;
 
-	/* Locate shim lock protocol */
-	if ( ( efirc = bs->LocateProtocol ( &efi_shim_lock_protocol_guid,
-					    NULL, &u.interface ) ) == 0 ) {
-		u.lock->Verify ( empty, sizeof ( empty ) );
-		DBGC ( &efi_shim, "SHIM unlocked via %p\n", u.lock );
+	/* Locate shim lock protocol(s) */
+	if ( ( efirc = bs->LocateHandleBuffer ( ByProtocol, protocol,
+						NULL, &num_handles,
+						&handles ) ) != 0 ) {
+		rc = -EEFI ( efirc );
+		DBGC ( &efi_shim, "SHIM could not locate shim locks: %s\n",
+		       strerror ( rc ) );
+		goto err_locate;
 	}
+
+	/* Unlock each shim lock */
+	for ( i = 0 ; i < num_handles ; i++ ) {
+
+		/* Open shim lock protocol */
+		if ( ( rc = efi_open ( handles[i], protocol, &lock ) ) != 0 ) {
+			DBGC ( &efi_shim, "SHIM could not open lock %d (%p): "
+			       "%s\n", i, handles[i], strerror ( rc ) );
+			continue;
+		}
+
+		/* Unlock shim lock */
+		lock->Verify ( empty, sizeof ( empty ) );
+		DBGC ( &efi_shim, "SHIM unlocked lock %d (%p) via %p\n",
+		       i, handles[i], lock );
+	}
+
+	bs->FreePool ( handles );
+ err_locate:
+	return;
 }
 
 /**
