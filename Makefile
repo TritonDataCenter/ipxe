@@ -67,13 +67,14 @@ $(BOOT_ROOT)/ipxe.lkrn :	FILEMODE = 755
 $(BOOT_ROOT)/default.ipxe :	FILEMODE = 644
 $(BOOT_ROOT)/undionly.kpxe :	FILEMODE = 644
 
-# our base image is triton-origin-x86_64-19.4.0
-BASE_IMAGE_UUID = 59ba2e5e-976f-4e09-8aac-a4a7ef0395f5
-
 ENGBLD_USE_BUILDIMAGE = false
 ENGBLD_REQUIRE := $(shell git submodule update --init deps/eng)
 include ./deps/eng/tools/mk/Makefile.defs
 TOP ?= $(error Unable to access eng.git submodule Makefiles.)
+
+# our base image is triton-origin-x86_64-24.4.1
+BASE_IMAGE_UUID = 41bd4100-eb86-409a-85b0-e649aadf6f62
+BUILD_PLATFORM = 20210826T002459Z
 
 .PHONY: all
 all: src/bin/ipxe.lkrn $(EFI_TARGETS)
