@@ -21,6 +21,8 @@ struct xfer_buffer {
 	void *data;
 	/** Size of data */
 	size_t len;
+	/** Maximum required size of data */
+	size_t max;
 	/** Current offset within data */
 	size_t pos;
 	/** Data transfer buffer operations */
