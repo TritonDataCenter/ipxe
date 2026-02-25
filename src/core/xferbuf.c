@@ -129,13 +129,10 @@ int xferbuf_write ( struct xfer_buffer *xferbuf, size_t offset,
 	if ( ( rc = xferbuf_ensure_size ( xferbuf, max_len ) ) != 0 )
 		return rc;
 
-	/* Check that buffer is non-void */
-	if ( len && ( ! xferbuf->data ) )
-		return -ENOTTY;
-
-	/* Copy data to buffer */
+	/* Copy data to buffer (if non-void) */
 	profile_start ( &xferbuf_write_profiler );
-	memcpy ( ( xferbuf->data + offset ), data, len );
+	if ( xferbuf->data )
+		memcpy ( ( xferbuf->data + offset ), data, len );
 	profile_stop ( &xferbuf_write_profiler );
 
 	return 0;
